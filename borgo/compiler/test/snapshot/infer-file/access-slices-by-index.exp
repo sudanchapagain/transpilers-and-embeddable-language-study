@@ -1,0 +1,305 @@
+Access slices by index
+
+SOURCE:
+fn main() -> string {
+    let xs = ["a"]
+    xs[0]
+}
+
+OUTPUT:
+fn () -> string
+---
+No errors.
+---
+[
+  {
+    "Closure": {
+      "fun": {
+        "name": "main",
+        "generics": [],
+        "args": [],
+        "ret": {
+          "Con": {
+            "id": "string",
+            "args": []
+          }
+        },
+        "ann": {
+          "Con": {
+            "name": "string",
+            "args": []
+          }
+        },
+        "body": {
+          "Block": {
+            "stmts": [
+              {
+                "Let": {
+                  "binding": {
+                    "pat": {
+                      "Type": {
+                        "ident": "xs",
+                        "is_mut": false,
+                        "ann": "Unknown",
+                        "span": {
+                          "start": {
+                            "line": 2,
+                            "col": 9
+                          },
+                          "end": {
+                            "line": 2,
+                            "col": 11
+                          },
+                          "file": 99
+                        }
+                      }
+                    },
+                    "ann": "Unknown",
+                    "ty": {
+                      "Con": {
+                        "id": "Slice",
+                        "args": [
+                          {
+                            "Con": {
+                              "id": "string",
+                              "args": []
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "value": {
+                    "Literal": {
+                      "lit": {
+                        "Slice": [
+                          {
+                            "Literal": {
+                              "lit": {
+                                "String": {
+                                  "Single": "a"
+                                }
+                              },
+                              "ty": {
+                                "Con": {
+                                  "id": "string",
+                                  "args": []
+                                }
+                              },
+                              "span": {
+                                "start": {
+                                  "line": 2,
+                                  "col": 15
+                                },
+                                "end": {
+                                  "line": 2,
+                                  "col": 18
+                                },
+                                "file": 99
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      "ty": {
+                        "Con": {
+                          "id": "Slice",
+                          "args": [
+                            {
+                              "Con": {
+                                "id": "string",
+                                "args": []
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 2,
+                          "col": 14
+                        },
+                        "end": {
+                          "line": 2,
+                          "col": 18
+                        },
+                        "file": 99
+                      }
+                    }
+                  },
+                  "mutable": false,
+                  "ty": {
+                    "Con": {
+                      "id": "Slice",
+                      "args": [
+                        {
+                          "Con": {
+                            "id": "string",
+                            "args": []
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 2,
+                      "col": 5
+                    },
+                    "end": {
+                      "line": 2,
+                      "col": 18
+                    },
+                    "file": 99
+                  }
+                }
+              },
+              {
+                "Index": {
+                  "expr": {
+                    "Var": {
+                      "value": "xs",
+                      "decl": {
+                        "start": {
+                          "line": 2,
+                          "col": 9
+                        },
+                        "end": {
+                          "line": 2,
+                          "col": 11
+                        },
+                        "file": 99
+                      },
+                      "generics_instantiated": [],
+                      "ty": {
+                        "Con": {
+                          "id": "Slice",
+                          "args": [
+                            {
+                              "Con": {
+                                "id": "string",
+                                "args": []
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 3,
+                          "col": 5
+                        },
+                        "end": {
+                          "line": 3,
+                          "col": 7
+                        },
+                        "file": 99
+                      }
+                    }
+                  },
+                  "index": {
+                    "Literal": {
+                      "lit": {
+                        "Int": 0
+                      },
+                      "ty": {
+                        "Con": {
+                          "id": "int",
+                          "args": []
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 3,
+                          "col": 8
+                        },
+                        "end": {
+                          "line": 3,
+                          "col": 9
+                        },
+                        "file": 99
+                      }
+                    }
+                  },
+                  "ty": {
+                    "Con": {
+                      "id": "string",
+                      "args": []
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 3,
+                      "col": 7
+                    },
+                    "end": {
+                      "line": 3,
+                      "col": 9
+                    },
+                    "file": 99
+                  }
+                }
+              }
+            ],
+            "ty": {
+              "Con": {
+                "id": "string",
+                "args": []
+              }
+            },
+            "span": {
+              "start": {
+                "line": 1,
+                "col": 21
+              },
+              "end": {
+                "line": 4,
+                "col": 1
+              },
+              "file": 99
+            }
+          }
+        },
+        "bounded_ty": {
+          "generics": [],
+          "ty": {
+            "Fun": {
+              "args": [],
+              "bounds": [],
+              "ret": {
+                "Con": {
+                  "id": "string",
+                  "args": []
+                }
+              }
+            }
+          }
+        }
+      },
+      "kind": "TopLevel",
+      "ty": {
+        "Fun": {
+          "args": [],
+          "bounds": [],
+          "ret": {
+            "Con": {
+              "id": "string",
+              "args": []
+            }
+          }
+        }
+      },
+      "span": {
+        "start": {
+          "line": 1,
+          "col": 1
+        },
+        "end": {
+          "line": 4,
+          "col": 1
+        },
+        "file": 99
+      }
+    }
+  }
+]

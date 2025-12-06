@@ -1,0 +1,18 @@
+Index must be K for maps
+
+SOURCE:
+fn main() {
+    let xs = Map.new()
+    xs.Insert("a", 1)
+    xs[false]
+}
+
+OUTPUT:
+Type mismatch
+Expected:
+    string
+Got:
+    bool
+
+4|      xs[false]
+          ^^^^^^

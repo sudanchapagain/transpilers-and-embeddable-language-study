@@ -1,0 +1,85 @@
+Return statement
+
+SOURCE:
+fn foo() -> int {
+    let x = match 1 {
+        1 => return 12
+        _ => 5
+    }
+
+    if true {
+        let _ = x + 40
+    } else {
+        return 9
+    }
+
+    return 4
+}
+
+fn bar() {
+    if false {
+        return
+    }
+}
+
+fn main() {
+    assertEq(foo(), 12)
+}
+
+OUTPUT:
+
+---
+package main
+
+func foo() int {
+	var x int
+
+	var1_subject := 1
+	var2_matches := 0
+
+	if var2_matches != 2 {
+		var2_matches = 0
+
+		if var2_matches != 1 && 1 == var1_subject {
+			var2_matches = 2
+		} else {
+			var2_matches = 1
+		}
+		_ = var1_subject
+
+		if var2_matches == 2 {
+			return 12
+		}
+	}
+
+	if var2_matches != 2 {
+		var2_matches = 0
+
+		if var2_matches != 1 {
+			var2_matches = 2 /* wildcard */
+		}
+		_ = var1_subject
+
+		if var2_matches == 2 {
+			x = 5
+		}
+	}
+
+	if true {
+		_ = x + 40
+	} else {
+		return 9
+	}
+
+	return 4
+}
+
+func bar() {
+	if false {
+		return
+	}
+}
+
+func main() {
+	assertEq[int](foo(), 12)
+}

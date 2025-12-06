@@ -1,0 +1,476 @@
+Tuple fields II
+
+SOURCE:
+{
+  struct Foo<T> { x: int, y: [T] }
+  let a = Foo { x: 1, y: ["yo"] }
+
+  @ensure a.x, int
+  a.y
+}
+
+OUTPUT:
+[string]
+---
+No errors.
+---
+{
+  "Block": {
+    "stmts": [
+      {
+        "StructDef": {
+          "def": {
+            "name": "Foo",
+            "generics": [
+              {
+                "name": "T",
+                "bounds": [],
+                "span": {
+                  "start": {
+                    "line": 2,
+                    "col": 14
+                  },
+                  "end": {
+                    "line": 2,
+                    "col": 15
+                  },
+                  "file": 99
+                }
+              }
+            ],
+            "fields": [
+              {
+                "name": "x",
+                "ann": {
+                  "Con": {
+                    "name": "int",
+                    "args": []
+                  }
+                },
+                "ty": {
+                  "generics": [],
+                  "ty": {
+                    "Con": {
+                      "id": "int",
+                      "args": []
+                    }
+                  }
+                }
+              },
+              {
+                "name": "y",
+                "ann": {
+                  "Con": {
+                    "name": "Slice",
+                    "args": [
+                      {
+                        "Con": {
+                          "name": "T",
+                          "args": []
+                        }
+                      }
+                    ]
+                  }
+                },
+                "ty": {
+                  "generics": [],
+                  "ty": {
+                    "Con": {
+                      "id": "Slice",
+                      "args": [
+                        {
+                          "Con": {
+                            "id": "T",
+                            "args": []
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "col": 3
+            },
+            "end": {
+              "line": 2,
+              "col": 34
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "Let": {
+          "binding": {
+            "pat": {
+              "Type": {
+                "ident": "a",
+                "is_mut": false,
+                "ann": "Unknown",
+                "span": {
+                  "start": {
+                    "line": 3,
+                    "col": 7
+                  },
+                  "end": {
+                    "line": 3,
+                    "col": 8
+                  },
+                  "file": 99
+                }
+              }
+            },
+            "ann": "Unknown",
+            "ty": {
+              "Con": {
+                "id": "Foo",
+                "args": [
+                  {
+                    "Con": {
+                      "id": "string",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "value": {
+            "StructCall": {
+              "name": "Foo",
+              "fields": [
+                {
+                  "name": "x",
+                  "value": {
+                    "Literal": {
+                      "lit": {
+                        "Int": 1
+                      },
+                      "ty": {
+                        "Con": {
+                          "id": "int",
+                          "args": []
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 3,
+                          "col": 20
+                        },
+                        "end": {
+                          "line": 3,
+                          "col": 21
+                        },
+                        "file": 99
+                      }
+                    }
+                  }
+                },
+                {
+                  "name": "y",
+                  "value": {
+                    "Literal": {
+                      "lit": {
+                        "Slice": [
+                          {
+                            "Literal": {
+                              "lit": {
+                                "String": {
+                                  "Single": "yo"
+                                }
+                              },
+                              "ty": {
+                                "Con": {
+                                  "id": "string",
+                                  "args": []
+                                }
+                              },
+                              "span": {
+                                "start": {
+                                  "line": 3,
+                                  "col": 27
+                                },
+                                "end": {
+                                  "line": 3,
+                                  "col": 31
+                                },
+                                "file": 99
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      "ty": {
+                        "Con": {
+                          "id": "Slice",
+                          "args": [
+                            {
+                              "Con": {
+                                "id": "string",
+                                "args": []
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 3,
+                          "col": 26
+                        },
+                        "end": {
+                          "line": 3,
+                          "col": 31
+                        },
+                        "file": 99
+                      }
+                    }
+                  }
+                }
+              ],
+              "rest": null,
+              "ty": {
+                "Con": {
+                  "id": "Foo",
+                  "args": [
+                    {
+                      "Con": {
+                        "id": "string",
+                        "args": []
+                      }
+                    }
+                  ]
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 3,
+                  "col": 15
+                },
+                "end": {
+                  "line": 3,
+                  "col": 33
+                },
+                "file": 99
+              }
+            }
+          },
+          "mutable": false,
+          "ty": {
+            "Con": {
+              "id": "Foo",
+              "args": [
+                {
+                  "Con": {
+                    "id": "string",
+                    "args": []
+                  }
+                }
+              ]
+            }
+          },
+          "span": {
+            "start": {
+              "line": 3,
+              "col": 3
+            },
+            "end": {
+              "line": 3,
+              "col": 33
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "CheckType": {
+          "expr": {
+            "FieldAccess": {
+              "expr": {
+                "Var": {
+                  "value": "a",
+                  "decl": {
+                    "start": {
+                      "line": 3,
+                      "col": 7
+                    },
+                    "end": {
+                      "line": 3,
+                      "col": 8
+                    },
+                    "file": 99
+                  },
+                  "generics_instantiated": [],
+                  "ty": {
+                    "Con": {
+                      "id": "Foo",
+                      "args": [
+                        {
+                          "Con": {
+                            "id": "string",
+                            "args": []
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 5,
+                      "col": 11
+                    },
+                    "end": {
+                      "line": 5,
+                      "col": 12
+                    },
+                    "file": 99
+                  }
+                }
+              },
+              "field": "x",
+              "ty": {
+                "Con": {
+                  "id": "int",
+                  "args": []
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 5,
+                  "col": 13
+                },
+                "end": {
+                  "line": 5,
+                  "col": 14
+                },
+                "file": 99
+              }
+            }
+          },
+          "ann": {
+            "Con": {
+              "name": "int",
+              "args": []
+            }
+          },
+          "ty": {
+            "Con": {
+              "id": "int",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 5,
+              "col": 3
+            },
+            "end": {
+              "line": 5,
+              "col": 19
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "FieldAccess": {
+          "expr": {
+            "Var": {
+              "value": "a",
+              "decl": {
+                "start": {
+                  "line": 3,
+                  "col": 7
+                },
+                "end": {
+                  "line": 3,
+                  "col": 8
+                },
+                "file": 99
+              },
+              "generics_instantiated": [],
+              "ty": {
+                "Con": {
+                  "id": "Foo",
+                  "args": [
+                    {
+                      "Con": {
+                        "id": "string",
+                        "args": []
+                      }
+                    }
+                  ]
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 6,
+                  "col": 3
+                },
+                "end": {
+                  "line": 6,
+                  "col": 4
+                },
+                "file": 99
+              }
+            }
+          },
+          "field": "y",
+          "ty": {
+            "Con": {
+              "id": "Slice",
+              "args": [
+                {
+                  "Con": {
+                    "id": "string",
+                    "args": []
+                  }
+                }
+              ]
+            }
+          },
+          "span": {
+            "start": {
+              "line": 6,
+              "col": 5
+            },
+            "end": {
+              "line": 6,
+              "col": 6
+            },
+            "file": 99
+          }
+        }
+      }
+    ],
+    "ty": {
+      "Con": {
+        "id": "Slice",
+        "args": [
+          {
+            "Con": {
+              "id": "string",
+              "args": []
+            }
+          }
+        ]
+      }
+    },
+    "span": {
+      "start": {
+        "line": 1,
+        "col": 1
+      },
+      "end": {
+        "line": 7,
+        "col": 1
+      },
+      "file": 99
+    }
+  }
+}

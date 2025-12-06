@@ -1,0 +1,76 @@
+Control flow in loops
+
+SOURCE:
+fn main() {
+    let mut n = 0
+    let mut check = false
+
+    loop {
+        if n <= 5 {
+            n = n + 1
+            assertEq(check, false)
+            continue
+        }
+
+        check = true
+        break
+    }
+
+    assertEq(check, true)
+    assertEq(n, 6)
+
+    n = 0
+
+    for x in [1,2,3] {
+        if x == 2 {
+            continue
+        }
+        n = n + 1
+    }
+
+    assertEq(n, 2)
+}
+
+OUTPUT:
+
+---
+package main
+
+func main() {
+	n := 0
+
+	check := false
+
+	for {
+
+		if n <= 5 {
+			{
+
+				n = n + 1
+
+				assertEq[bool](check, false)
+				continue
+			}
+		}
+
+		check = true
+		break
+	}
+
+	assertEq[bool](check, true)
+
+	assertEq[int](n, 6)
+
+	n = 0
+
+	for _, x := range []int{1, 2, 3} {
+
+		if x == 2 {
+			continue
+		}
+
+		n = n + 1
+	}
+
+	assertEq[int](n, 2)
+}

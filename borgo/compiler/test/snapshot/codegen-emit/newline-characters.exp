@@ -1,0 +1,36 @@
+Newline characters
+
+SOURCE:
+use fmt
+
+fn main() {
+    let x = '\n'
+    fmt.Printf("a%sb\n", x)
+
+    let y = \\a string
+        \\ with " quotes and \ backslashes
+    fmt.Println(y)
+}
+
+OUTPUT:
+a%!s(int32=10)b
+a string
+ with " quotes and \ backslashes
+
+---
+package main
+
+import (
+	"fmt"
+)
+
+func main() {
+	x := '\n'
+
+	fmt.Printf("a%sb\n", x)
+
+	y := `a string
+ with " quotes and \ backslashes`
+
+	fmt.Println(y)
+}

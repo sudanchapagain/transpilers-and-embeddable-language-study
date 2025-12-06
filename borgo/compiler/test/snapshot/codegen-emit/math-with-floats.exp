@@ -1,0 +1,18 @@
+Math with floats
+
+SOURCE:
+fn main() {
+    let x = 5.3 * 1.2
+    assertEq(true, x > 6.35 && x <= 6.36)
+}
+
+OUTPUT:
+
+---
+package main
+
+func main() {
+	x := 5.3 * 1.2
+
+	assertEq[bool](true, x > 6.35 && x <= 6.36)
+}

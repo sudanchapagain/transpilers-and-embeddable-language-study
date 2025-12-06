@@ -1,0 +1,29 @@
+Early returns in blocks.
+
+SOURCE:
+fn foo() -> int {
+    {
+        return 5
+    }
+
+    999
+}
+
+fn main() {
+    assertEq(foo(), 5)
+}
+
+OUTPUT:
+
+---
+package main
+
+func foo() int {
+	return 5
+
+	return 999
+}
+
+func main() {
+	assertEq[int](foo(), 5)
+}

@@ -1,0 +1,13 @@
+Inference of numeric operators
+
+SOURCE:
+fn main() -> int {
+    false > true
+    1
+}
+
+OUTPUT:
+Expected numeric type
+
+2|      false > true
+        ^^^^^^^^^^^^

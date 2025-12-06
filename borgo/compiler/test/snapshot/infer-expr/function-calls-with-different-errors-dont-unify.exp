@@ -1,0 +1,22 @@
+Function calls with different errors don't unify.
+
+SOURCE:
+{
+  fn foo1() -> Result<int, ErrFoo> { Err(ErrFoo.A) }
+  fn foo2() -> Result<int, ErrFoo> { Err(ErrBar.X) }
+  fn bar() -> Result<int, ErrFoo> {
+    foo1()?
+    foo2()?
+    Ok(1)
+  }
+}
+
+OUTPUT:
+Type mismatch
+Expected:
+    Result<int, ErrFoo>
+Got:
+    Result<int, ErrBar>
+
+3|    fn foo2() -> Result<int, ErrFoo> { Err(ErrBar.X) }
+                                            ^^^^^^^^^

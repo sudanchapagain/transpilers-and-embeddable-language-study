@@ -1,0 +1,1246 @@
+Nested pattern matching is supported.
+
+SOURCE:
+{
+  enum Maybe<T> { Just(T), None }
+  enum Color { Red, Blue(string, bool) }
+
+  let c = Color.Blue("foo", false)
+  let x = Maybe.Just(c)
+
+  let n = match x {
+    Maybe.Just(Color.Blue(s, b)) => {
+      @ensure s, string
+      @ensure b, bool
+      1
+    },
+    Maybe.None => 2,
+  }
+
+  @ensure n, int
+
+  match x {
+    Maybe.Just(x) => x,
+    Maybe.None => Color.Red,
+  }
+}
+
+OUTPUT:
+Color
+---
+No errors.
+---
+{
+  "Block": {
+    "stmts": [
+      {
+        "EnumDef": {
+          "def": {
+            "name": "Maybe",
+            "generics": [
+              {
+                "name": "T",
+                "bounds": [],
+                "span": {
+                  "start": {
+                    "line": 2,
+                    "col": 14
+                  },
+                  "end": {
+                    "line": 2,
+                    "col": 15
+                  },
+                  "file": 99
+                }
+              }
+            ],
+            "cons": [
+              {
+                "name": "Just",
+                "fields": [
+                  {
+                    "name": "field0",
+                    "ann": {
+                      "Con": {
+                        "name": "T",
+                        "args": []
+                      }
+                    },
+                    "ty": {
+                      "Con": {
+                        "id": "T",
+                        "args": []
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "None",
+                "fields": []
+              }
+            ]
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "col": 3
+            },
+            "end": {
+              "line": 2,
+              "col": 33
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "EnumDef": {
+          "def": {
+            "name": "Color",
+            "generics": [],
+            "cons": [
+              {
+                "name": "Red",
+                "fields": []
+              },
+              {
+                "name": "Blue",
+                "fields": [
+                  {
+                    "name": "field0",
+                    "ann": {
+                      "Con": {
+                        "name": "string",
+                        "args": []
+                      }
+                    },
+                    "ty": {
+                      "Con": {
+                        "id": "string",
+                        "args": []
+                      }
+                    }
+                  },
+                  {
+                    "name": "field1",
+                    "ann": {
+                      "Con": {
+                        "name": "bool",
+                        "args": []
+                      }
+                    },
+                    "ty": {
+                      "Con": {
+                        "id": "bool",
+                        "args": []
+                      }
+                    }
+                  }
+                ]
+              }
+            ]
+          },
+          "span": {
+            "start": {
+              "line": 3,
+              "col": 3
+            },
+            "end": {
+              "line": 3,
+              "col": 40
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "Let": {
+          "binding": {
+            "pat": {
+              "Type": {
+                "ident": "c",
+                "is_mut": false,
+                "ann": "Unknown",
+                "span": {
+                  "start": {
+                    "line": 5,
+                    "col": 7
+                  },
+                  "end": {
+                    "line": 5,
+                    "col": 8
+                  },
+                  "file": 99
+                }
+              }
+            },
+            "ann": "Unknown",
+            "ty": {
+              "Con": {
+                "id": "Color",
+                "args": []
+              }
+            }
+          },
+          "value": {
+            "Call": {
+              "func": {
+                "Var": {
+                  "value": "Color.Blue",
+                  "decl": {
+                    "start": {
+                      "line": 3,
+                      "col": 3
+                    },
+                    "end": {
+                      "line": 3,
+                      "col": 40
+                    },
+                    "file": 99
+                  },
+                  "generics_instantiated": [],
+                  "ty": {
+                    "Fun": {
+                      "args": [
+                        {
+                          "Con": {
+                            "id": "string",
+                            "args": []
+                          }
+                        },
+                        {
+                          "Con": {
+                            "id": "bool",
+                            "args": []
+                          }
+                        }
+                      ],
+                      "bounds": [],
+                      "ret": {
+                        "Con": {
+                          "id": "Color",
+                          "args": []
+                        }
+                      }
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 5,
+                      "col": 17
+                    },
+                    "end": {
+                      "line": 5,
+                      "col": 21
+                    },
+                    "file": 99
+                  }
+                }
+              },
+              "args": [
+                {
+                  "Literal": {
+                    "lit": {
+                      "String": {
+                        "Single": "foo"
+                      }
+                    },
+                    "ty": {
+                      "Con": {
+                        "id": "string",
+                        "args": []
+                      }
+                    },
+                    "span": {
+                      "start": {
+                        "line": 5,
+                        "col": 22
+                      },
+                      "end": {
+                        "line": 5,
+                        "col": 27
+                      },
+                      "file": 99
+                    }
+                  }
+                },
+                {
+                  "Literal": {
+                    "lit": {
+                      "Bool": false
+                    },
+                    "ty": {
+                      "Con": {
+                        "id": "bool",
+                        "args": []
+                      }
+                    },
+                    "span": {
+                      "start": {
+                        "line": 5,
+                        "col": 29
+                      },
+                      "end": {
+                        "line": 5,
+                        "col": 34
+                      },
+                      "file": 99
+                    }
+                  }
+                }
+              ],
+              "ty": {
+                "Con": {
+                  "id": "Color",
+                  "args": []
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 5,
+                  "col": 21
+                },
+                "end": {
+                  "line": 5,
+                  "col": 34
+                },
+                "file": 99
+              }
+            }
+          },
+          "mutable": false,
+          "ty": {
+            "Con": {
+              "id": "Color",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 5,
+              "col": 3
+            },
+            "end": {
+              "line": 5,
+              "col": 34
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "Let": {
+          "binding": {
+            "pat": {
+              "Type": {
+                "ident": "x",
+                "is_mut": false,
+                "ann": "Unknown",
+                "span": {
+                  "start": {
+                    "line": 6,
+                    "col": 7
+                  },
+                  "end": {
+                    "line": 6,
+                    "col": 8
+                  },
+                  "file": 99
+                }
+              }
+            },
+            "ann": "Unknown",
+            "ty": {
+              "Con": {
+                "id": "Maybe",
+                "args": [
+                  {
+                    "Con": {
+                      "id": "Color",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "value": {
+            "Call": {
+              "func": {
+                "Var": {
+                  "value": "Maybe.Just",
+                  "decl": {
+                    "start": {
+                      "line": 2,
+                      "col": 3
+                    },
+                    "end": {
+                      "line": 2,
+                      "col": 33
+                    },
+                    "file": 99
+                  },
+                  "generics_instantiated": [
+                    {
+                      "Con": {
+                        "id": "Color",
+                        "args": []
+                      }
+                    }
+                  ],
+                  "ty": {
+                    "Fun": {
+                      "args": [
+                        {
+                          "Con": {
+                            "id": "Color",
+                            "args": []
+                          }
+                        }
+                      ],
+                      "bounds": [],
+                      "ret": {
+                        "Con": {
+                          "id": "Maybe",
+                          "args": [
+                            {
+                              "Con": {
+                                "id": "Color",
+                                "args": []
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 6,
+                      "col": 17
+                    },
+                    "end": {
+                      "line": 6,
+                      "col": 21
+                    },
+                    "file": 99
+                  }
+                }
+              },
+              "args": [
+                {
+                  "Var": {
+                    "value": "c",
+                    "decl": {
+                      "start": {
+                        "line": 5,
+                        "col": 7
+                      },
+                      "end": {
+                        "line": 5,
+                        "col": 8
+                      },
+                      "file": 99
+                    },
+                    "generics_instantiated": [],
+                    "ty": {
+                      "Con": {
+                        "id": "Color",
+                        "args": []
+                      }
+                    },
+                    "span": {
+                      "start": {
+                        "line": 6,
+                        "col": 22
+                      },
+                      "end": {
+                        "line": 6,
+                        "col": 23
+                      },
+                      "file": 99
+                    }
+                  }
+                }
+              ],
+              "ty": {
+                "Con": {
+                  "id": "Maybe",
+                  "args": [
+                    {
+                      "Con": {
+                        "id": "Color",
+                        "args": []
+                      }
+                    }
+                  ]
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 6,
+                  "col": 21
+                },
+                "end": {
+                  "line": 6,
+                  "col": 23
+                },
+                "file": 99
+              }
+            }
+          },
+          "mutable": false,
+          "ty": {
+            "Con": {
+              "id": "Maybe",
+              "args": [
+                {
+                  "Con": {
+                    "id": "Color",
+                    "args": []
+                  }
+                }
+              ]
+            }
+          },
+          "span": {
+            "start": {
+              "line": 6,
+              "col": 3
+            },
+            "end": {
+              "line": 6,
+              "col": 23
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "Let": {
+          "binding": {
+            "pat": {
+              "Type": {
+                "ident": "n",
+                "is_mut": false,
+                "ann": "Unknown",
+                "span": {
+                  "start": {
+                    "line": 8,
+                    "col": 7
+                  },
+                  "end": {
+                    "line": 8,
+                    "col": 8
+                  },
+                  "file": 99
+                }
+              }
+            },
+            "ann": "Unknown",
+            "ty": {
+              "Con": {
+                "id": "int",
+                "args": []
+              }
+            }
+          },
+          "value": {
+            "Match": {
+              "subject": {
+                "Var": {
+                  "value": "x",
+                  "decl": {
+                    "start": {
+                      "line": 6,
+                      "col": 7
+                    },
+                    "end": {
+                      "line": 6,
+                      "col": 8
+                    },
+                    "file": 99
+                  },
+                  "generics_instantiated": [],
+                  "ty": {
+                    "Con": {
+                      "id": "Maybe",
+                      "args": [
+                        {
+                          "Con": {
+                            "id": "Color",
+                            "args": []
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 8,
+                      "col": 17
+                    },
+                    "end": {
+                      "line": 8,
+                      "col": 18
+                    },
+                    "file": 99
+                  }
+                }
+              },
+              "arms": [
+                {
+                  "pat": {
+                    "Pat": {
+                      "ident": "Maybe.Just",
+                      "elems": [
+                        {
+                          "Pat": {
+                            "ident": "Color.Blue",
+                            "elems": [
+                              {
+                                "Type": {
+                                  "ident": "s",
+                                  "is_mut": false,
+                                  "ann": "Unknown",
+                                  "span": {
+                                    "start": {
+                                      "line": 9,
+                                      "col": 27
+                                    },
+                                    "end": {
+                                      "line": 9,
+                                      "col": 28
+                                    },
+                                    "file": 99
+                                  }
+                                }
+                              },
+                              {
+                                "Type": {
+                                  "ident": "b",
+                                  "is_mut": false,
+                                  "ann": "Unknown",
+                                  "span": {
+                                    "start": {
+                                      "line": 9,
+                                      "col": 30
+                                    },
+                                    "end": {
+                                      "line": 9,
+                                      "col": 31
+                                    },
+                                    "file": 99
+                                  }
+                                }
+                              }
+                            ],
+                            "ty": {
+                              "Con": {
+                                "id": "Color",
+                                "args": []
+                              }
+                            },
+                            "span": {
+                              "start": {
+                                "line": 9,
+                                "col": 16
+                              },
+                              "end": {
+                                "line": 9,
+                                "col": 21
+                              },
+                              "file": 99
+                            }
+                          }
+                        }
+                      ],
+                      "ty": {
+                        "Con": {
+                          "id": "Maybe",
+                          "args": [
+                            {
+                              "Con": {
+                                "id": "Color",
+                                "args": []
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 9,
+                          "col": 5
+                        },
+                        "end": {
+                          "line": 9,
+                          "col": 10
+                        },
+                        "file": 99
+                      }
+                    }
+                  },
+                  "expr": {
+                    "Block": {
+                      "stmts": [
+                        {
+                          "CheckType": {
+                            "expr": {
+                              "Var": {
+                                "value": "s",
+                                "decl": {
+                                  "start": {
+                                    "line": 9,
+                                    "col": 27
+                                  },
+                                  "end": {
+                                    "line": 9,
+                                    "col": 28
+                                  },
+                                  "file": 99
+                                },
+                                "generics_instantiated": [],
+                                "ty": {
+                                  "Con": {
+                                    "id": "string",
+                                    "args": []
+                                  }
+                                },
+                                "span": {
+                                  "start": {
+                                    "line": 10,
+                                    "col": 15
+                                  },
+                                  "end": {
+                                    "line": 10,
+                                    "col": 16
+                                  },
+                                  "file": 99
+                                }
+                              }
+                            },
+                            "ann": {
+                              "Con": {
+                                "name": "string",
+                                "args": []
+                              }
+                            },
+                            "ty": {
+                              "Con": {
+                                "id": "string",
+                                "args": []
+                              }
+                            },
+                            "span": {
+                              "start": {
+                                "line": 10,
+                                "col": 7
+                              },
+                              "end": {
+                                "line": 10,
+                                "col": 24
+                              },
+                              "file": 99
+                            }
+                          }
+                        },
+                        {
+                          "CheckType": {
+                            "expr": {
+                              "Var": {
+                                "value": "b",
+                                "decl": {
+                                  "start": {
+                                    "line": 9,
+                                    "col": 30
+                                  },
+                                  "end": {
+                                    "line": 9,
+                                    "col": 31
+                                  },
+                                  "file": 99
+                                },
+                                "generics_instantiated": [],
+                                "ty": {
+                                  "Con": {
+                                    "id": "bool",
+                                    "args": []
+                                  }
+                                },
+                                "span": {
+                                  "start": {
+                                    "line": 11,
+                                    "col": 15
+                                  },
+                                  "end": {
+                                    "line": 11,
+                                    "col": 16
+                                  },
+                                  "file": 99
+                                }
+                              }
+                            },
+                            "ann": {
+                              "Con": {
+                                "name": "bool",
+                                "args": []
+                              }
+                            },
+                            "ty": {
+                              "Con": {
+                                "id": "bool",
+                                "args": []
+                              }
+                            },
+                            "span": {
+                              "start": {
+                                "line": 11,
+                                "col": 7
+                              },
+                              "end": {
+                                "line": 11,
+                                "col": 22
+                              },
+                              "file": 99
+                            }
+                          }
+                        },
+                        {
+                          "Literal": {
+                            "lit": {
+                              "Int": 1
+                            },
+                            "ty": {
+                              "Con": {
+                                "id": "int",
+                                "args": []
+                              }
+                            },
+                            "span": {
+                              "start": {
+                                "line": 12,
+                                "col": 7
+                              },
+                              "end": {
+                                "line": 12,
+                                "col": 8
+                              },
+                              "file": 99
+                            }
+                          }
+                        }
+                      ],
+                      "ty": {
+                        "Con": {
+                          "id": "int",
+                          "args": []
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 9,
+                          "col": 37
+                        },
+                        "end": {
+                          "line": 13,
+                          "col": 5
+                        },
+                        "file": 99
+                      }
+                    }
+                  }
+                },
+                {
+                  "pat": {
+                    "Pat": {
+                      "ident": "Maybe.None",
+                      "elems": [],
+                      "ty": {
+                        "Con": {
+                          "id": "Maybe",
+                          "args": [
+                            {
+                              "Con": {
+                                "id": "Color",
+                                "args": []
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 14,
+                          "col": 5
+                        },
+                        "end": {
+                          "line": 14,
+                          "col": 10
+                        },
+                        "file": 99
+                      }
+                    }
+                  },
+                  "expr": {
+                    "Literal": {
+                      "lit": {
+                        "Int": 2
+                      },
+                      "ty": {
+                        "Con": {
+                          "id": "int",
+                          "args": []
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 14,
+                          "col": 19
+                        },
+                        "end": {
+                          "line": 14,
+                          "col": 20
+                        },
+                        "file": 99
+                      }
+                    }
+                  }
+                }
+              ],
+              "ty": {
+                "Con": {
+                  "id": "int",
+                  "args": []
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 8,
+                  "col": 11
+                },
+                "end": {
+                  "line": 15,
+                  "col": 3
+                },
+                "file": 99
+              }
+            }
+          },
+          "mutable": false,
+          "ty": {
+            "Con": {
+              "id": "int",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 8,
+              "col": 3
+            },
+            "end": {
+              "line": 15,
+              "col": 3
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "CheckType": {
+          "expr": {
+            "Var": {
+              "value": "n",
+              "decl": {
+                "start": {
+                  "line": 8,
+                  "col": 7
+                },
+                "end": {
+                  "line": 8,
+                  "col": 8
+                },
+                "file": 99
+              },
+              "generics_instantiated": [],
+              "ty": {
+                "Con": {
+                  "id": "int",
+                  "args": []
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 17,
+                  "col": 11
+                },
+                "end": {
+                  "line": 17,
+                  "col": 12
+                },
+                "file": 99
+              }
+            }
+          },
+          "ann": {
+            "Con": {
+              "name": "int",
+              "args": []
+            }
+          },
+          "ty": {
+            "Con": {
+              "id": "int",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 17,
+              "col": 3
+            },
+            "end": {
+              "line": 17,
+              "col": 17
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "Match": {
+          "subject": {
+            "Var": {
+              "value": "x",
+              "decl": {
+                "start": {
+                  "line": 6,
+                  "col": 7
+                },
+                "end": {
+                  "line": 6,
+                  "col": 8
+                },
+                "file": 99
+              },
+              "generics_instantiated": [],
+              "ty": {
+                "Con": {
+                  "id": "Maybe",
+                  "args": [
+                    {
+                      "Con": {
+                        "id": "Color",
+                        "args": []
+                      }
+                    }
+                  ]
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 19,
+                  "col": 9
+                },
+                "end": {
+                  "line": 19,
+                  "col": 10
+                },
+                "file": 99
+              }
+            }
+          },
+          "arms": [
+            {
+              "pat": {
+                "Pat": {
+                  "ident": "Maybe.Just",
+                  "elems": [
+                    {
+                      "Type": {
+                        "ident": "x",
+                        "is_mut": false,
+                        "ann": "Unknown",
+                        "span": {
+                          "start": {
+                            "line": 20,
+                            "col": 16
+                          },
+                          "end": {
+                            "line": 20,
+                            "col": 17
+                          },
+                          "file": 99
+                        }
+                      }
+                    }
+                  ],
+                  "ty": {
+                    "Con": {
+                      "id": "Maybe",
+                      "args": [
+                        {
+                          "Con": {
+                            "id": "Color",
+                            "args": []
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 20,
+                      "col": 5
+                    },
+                    "end": {
+                      "line": 20,
+                      "col": 10
+                    },
+                    "file": 99
+                  }
+                }
+              },
+              "expr": {
+                "Var": {
+                  "value": "x",
+                  "decl": {
+                    "start": {
+                      "line": 20,
+                      "col": 16
+                    },
+                    "end": {
+                      "line": 20,
+                      "col": 17
+                    },
+                    "file": 99
+                  },
+                  "generics_instantiated": [],
+                  "ty": {
+                    "Con": {
+                      "id": "Color",
+                      "args": []
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 20,
+                      "col": 22
+                    },
+                    "end": {
+                      "line": 20,
+                      "col": 23
+                    },
+                    "file": 99
+                  }
+                }
+              }
+            },
+            {
+              "pat": {
+                "Pat": {
+                  "ident": "Maybe.None",
+                  "elems": [],
+                  "ty": {
+                    "Con": {
+                      "id": "Maybe",
+                      "args": [
+                        {
+                          "Con": {
+                            "id": "Color",
+                            "args": []
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 21,
+                      "col": 5
+                    },
+                    "end": {
+                      "line": 21,
+                      "col": 10
+                    },
+                    "file": 99
+                  }
+                }
+              },
+              "expr": {
+                "Var": {
+                  "value": "Color.Red",
+                  "decl": {
+                    "start": {
+                      "line": 3,
+                      "col": 3
+                    },
+                    "end": {
+                      "line": 3,
+                      "col": 40
+                    },
+                    "file": 99
+                  },
+                  "generics_instantiated": [],
+                  "ty": {
+                    "Con": {
+                      "id": "Color",
+                      "args": []
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 21,
+                      "col": 25
+                    },
+                    "end": {
+                      "line": 21,
+                      "col": 28
+                    },
+                    "file": 99
+                  }
+                }
+              }
+            }
+          ],
+          "ty": {
+            "Con": {
+              "id": "Color",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 19,
+              "col": 3
+            },
+            "end": {
+              "line": 22,
+              "col": 3
+            },
+            "file": 99
+          }
+        }
+      }
+    ],
+    "ty": {
+      "Con": {
+        "id": "Color",
+        "args": []
+      }
+    },
+    "span": {
+      "start": {
+        "line": 1,
+        "col": 1
+      },
+      "end": {
+        "line": 23,
+        "col": 1
+      },
+      "file": 99
+    }
+  }
+}

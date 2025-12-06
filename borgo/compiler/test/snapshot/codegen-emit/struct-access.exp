@@ -1,0 +1,47 @@
+Struct access
+
+SOURCE:
+struct Foo {
+    a: int,
+    b: string,
+    c: bool,
+}
+
+fn main() {
+    let x = Foo { a: 1, b: "hi", c: true }
+    assertEq(x.a, 1)
+    let y = Foo { a: 5, c: false, ..x }
+    assertEq(y.a, 5)
+    assertEq(x.a, 1)
+}
+
+OUTPUT:
+
+---
+package main
+
+type Foo struct {
+	a int
+	b string
+	c bool
+}
+
+func main() {
+	x := Foo{
+		a: 1,
+		b: "hi",
+		c: true,
+	}
+
+	assertEq[int](x.a, 1)
+
+	y := func(data Foo) Foo {
+		data.a = 5
+		data.c = false
+		return data
+	}(x)
+
+	assertEq[int](y.a, 5)
+
+	assertEq[int](x.a, 1)
+}

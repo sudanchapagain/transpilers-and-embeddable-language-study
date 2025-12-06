@@ -1,0 +1,33 @@
+Recursive functions are supported in files.
+
+SOURCE:
+file: main.brg
+
+fn foo(n: int) -> int {
+    if n != 5 {
+        return foo(n + 1)
+    }
+
+    n
+}
+
+fn main() {
+    assertEq(foo(1), 5)
+}
+
+OUTPUT:
+
+---
+package main
+
+func foo(n int) int {
+	if n != 5 {
+		return foo(n + 1)
+	}
+
+	return n
+}
+
+func main() {
+	assertEq[int](foo(1), 5)
+}

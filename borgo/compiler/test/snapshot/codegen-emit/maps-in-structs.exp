@@ -1,0 +1,69 @@
+Maps in structs
+
+SOURCE:
+struct Foo {
+    bar: Map<string, int>
+}
+
+fn main() {
+    let mut bar = Map.new()
+    let foo = Foo { bar }
+    assertEq(foo.bar.Len(), 0)
+
+    bar.Insert("yo", 1)
+    assertEq(foo.bar.Len(), 1)
+
+    assertEq(bar.Get("yo"), Some(1))
+    assertEq(bar.Get("nope"), None)
+    assertEq(bar["yo"], 1)
+
+    bar["yo"] = 3
+    assertEq(bar["yo"], 3)
+}
+
+OUTPUT:
+
+---
+package main
+
+type Foo struct {
+	bar map[string]int
+}
+
+func main() {
+	bar := Map_new[string, int]()
+
+	foo := Foo{bar: bar}
+
+	assertEq[int](Map_Len[string, int](foo.bar), 0)
+
+	Map_Insert[string, int](bar, "yo", 1)
+
+	assertEq[int](Map_Len[string, int](foo.bar), 1)
+
+	var3_result := func() Option[int] {
+		var1_check, var2_err := Map_Get[string, int](bar, "yo")
+		if var2_err == false {
+			return make_Option_None[int]()
+		}
+		return make_Option_Some[int](var1_check)
+	}()
+
+	assertEq[Option[int]](var3_result, make_Option_Some[int](1))
+
+	var6_result := func() Option[int] {
+		var4_check, var5_err := Map_Get[string, int](bar, "nope")
+		if var5_err == false {
+			return make_Option_None[int]()
+		}
+		return make_Option_Some[int](var4_check)
+	}()
+
+	assertEq[Option[int]](var6_result, make_Option_None[int]())
+
+	assertEq[int](bar["yo"], 1)
+
+	bar["yo"] = 3
+
+	assertEq[int](bar["yo"], 3)
+}

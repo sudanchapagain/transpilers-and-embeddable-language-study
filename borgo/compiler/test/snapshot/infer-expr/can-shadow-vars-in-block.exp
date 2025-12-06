@@ -1,0 +1,246 @@
+Can shadow vars in block
+
+SOURCE:
+{
+  let a = "mutable"
+  {
+    let a = "block"
+  }
+  a
+}
+
+OUTPUT:
+string
+---
+No errors.
+---
+{
+  "Block": {
+    "stmts": [
+      {
+        "Let": {
+          "binding": {
+            "pat": {
+              "Type": {
+                "ident": "a",
+                "is_mut": false,
+                "ann": "Unknown",
+                "span": {
+                  "start": {
+                    "line": 2,
+                    "col": 7
+                  },
+                  "end": {
+                    "line": 2,
+                    "col": 8
+                  },
+                  "file": 99
+                }
+              }
+            },
+            "ann": "Unknown",
+            "ty": {
+              "Con": {
+                "id": "string",
+                "args": []
+              }
+            }
+          },
+          "value": {
+            "Literal": {
+              "lit": {
+                "String": {
+                  "Single": "mutable"
+                }
+              },
+              "ty": {
+                "Con": {
+                  "id": "string",
+                  "args": []
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 2,
+                  "col": 11
+                },
+                "end": {
+                  "line": 2,
+                  "col": 20
+                },
+                "file": 99
+              }
+            }
+          },
+          "mutable": false,
+          "ty": {
+            "Con": {
+              "id": "string",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "col": 3
+            },
+            "end": {
+              "line": 2,
+              "col": 20
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "Block": {
+          "stmts": [
+            {
+              "Let": {
+                "binding": {
+                  "pat": {
+                    "Type": {
+                      "ident": "a",
+                      "is_mut": false,
+                      "ann": "Unknown",
+                      "span": {
+                        "start": {
+                          "line": 4,
+                          "col": 9
+                        },
+                        "end": {
+                          "line": 4,
+                          "col": 10
+                        },
+                        "file": 99
+                      }
+                    }
+                  },
+                  "ann": "Unknown",
+                  "ty": {
+                    "Con": {
+                      "id": "string",
+                      "args": []
+                    }
+                  }
+                },
+                "value": {
+                  "Literal": {
+                    "lit": {
+                      "String": {
+                        "Single": "block"
+                      }
+                    },
+                    "ty": {
+                      "Con": {
+                        "id": "string",
+                        "args": []
+                      }
+                    },
+                    "span": {
+                      "start": {
+                        "line": 4,
+                        "col": 13
+                      },
+                      "end": {
+                        "line": 4,
+                        "col": 20
+                      },
+                      "file": 99
+                    }
+                  }
+                },
+                "mutable": false,
+                "ty": {
+                  "Con": {
+                    "id": "string",
+                    "args": []
+                  }
+                },
+                "span": {
+                  "start": {
+                    "line": 4,
+                    "col": 5
+                  },
+                  "end": {
+                    "line": 4,
+                    "col": 20
+                  },
+                  "file": 99
+                }
+              }
+            }
+          ],
+          "ty": {
+            "Con": {
+              "id": "string",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 3,
+              "col": 3
+            },
+            "end": {
+              "line": 5,
+              "col": 3
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "Var": {
+          "value": "a",
+          "decl": {
+            "start": {
+              "line": 2,
+              "col": 7
+            },
+            "end": {
+              "line": 2,
+              "col": 8
+            },
+            "file": 99
+          },
+          "generics_instantiated": [],
+          "ty": {
+            "Con": {
+              "id": "string",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 6,
+              "col": 3
+            },
+            "end": {
+              "line": 6,
+              "col": 4
+            },
+            "file": 99
+          }
+        }
+      }
+    ],
+    "ty": {
+      "Con": {
+        "id": "string",
+        "args": []
+      }
+    },
+    "span": {
+      "start": {
+        "line": 1,
+        "col": 1
+      },
+      "end": {
+        "line": 7,
+        "col": 1
+      },
+      "file": 99
+    }
+  }
+}

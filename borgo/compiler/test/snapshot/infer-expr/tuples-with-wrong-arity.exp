@@ -1,0 +1,14 @@
+Tuples with wrong arity.
+
+SOURCE:
+@ensure (1, 2, 3), (int, int)
+
+OUTPUT:
+Type mismatch
+Expected:
+    (int, int, int)
+Got:
+    (int, int)
+
+1|  @ensure (1, 2, 3), (int, int)
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^

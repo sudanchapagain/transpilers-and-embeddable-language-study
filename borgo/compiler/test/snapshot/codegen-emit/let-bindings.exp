@@ -1,0 +1,18 @@
+Let bindings
+
+SOURCE:
+fn main() {
+    let a = 5 + 5
+    assertEq(a, 10)
+}
+
+OUTPUT:
+
+---
+package main
+
+func main() {
+	a := 5 + 5
+
+	assertEq[int](a, 10)
+}

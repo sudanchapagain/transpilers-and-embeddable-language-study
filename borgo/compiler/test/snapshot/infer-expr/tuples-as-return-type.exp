@@ -1,0 +1,298 @@
+Tuples as return type.
+
+SOURCE:
+{
+  fn foo() -> (string, bool) {
+    ("foo", true)
+  }
+}
+
+OUTPUT:
+fn () -> (string, bool)
+---
+No errors.
+---
+{
+  "Block": {
+    "stmts": [
+      {
+        "Closure": {
+          "fun": {
+            "name": "foo",
+            "generics": [],
+            "args": [],
+            "ret": {
+              "Con": {
+                "id": "Tuple2",
+                "args": [
+                  {
+                    "Con": {
+                      "id": "string",
+                      "args": []
+                    }
+                  },
+                  {
+                    "Con": {
+                      "id": "bool",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            },
+            "ann": {
+              "Con": {
+                "name": "Tuple2",
+                "args": [
+                  {
+                    "Con": {
+                      "name": "string",
+                      "args": []
+                    }
+                  },
+                  {
+                    "Con": {
+                      "name": "bool",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            },
+            "body": {
+              "Block": {
+                "stmts": [
+                  {
+                    "StructCall": {
+                      "name": "Tuple2",
+                      "fields": [
+                        {
+                          "name": "first",
+                          "value": {
+                            "Literal": {
+                              "lit": {
+                                "String": {
+                                  "Single": "foo"
+                                }
+                              },
+                              "ty": {
+                                "Con": {
+                                  "id": "string",
+                                  "args": []
+                                }
+                              },
+                              "span": {
+                                "start": {
+                                  "line": 3,
+                                  "col": 6
+                                },
+                                "end": {
+                                  "line": 3,
+                                  "col": 11
+                                },
+                                "file": 99
+                              }
+                            }
+                          }
+                        },
+                        {
+                          "name": "second",
+                          "value": {
+                            "Literal": {
+                              "lit": {
+                                "Bool": true
+                              },
+                              "ty": {
+                                "Con": {
+                                  "id": "bool",
+                                  "args": []
+                                }
+                              },
+                              "span": {
+                                "start": {
+                                  "line": 3,
+                                  "col": 13
+                                },
+                                "end": {
+                                  "line": 3,
+                                  "col": 17
+                                },
+                                "file": 99
+                              }
+                            }
+                          }
+                        }
+                      ],
+                      "rest": null,
+                      "ty": {
+                        "Con": {
+                          "id": "Tuple2",
+                          "args": [
+                            {
+                              "Con": {
+                                "id": "string",
+                                "args": []
+                              }
+                            },
+                            {
+                              "Con": {
+                                "id": "bool",
+                                "args": []
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 3,
+                          "col": 5
+                        },
+                        "end": {
+                          "line": 3,
+                          "col": 17
+                        },
+                        "file": 99
+                      }
+                    }
+                  }
+                ],
+                "ty": {
+                  "Con": {
+                    "id": "Tuple2",
+                    "args": [
+                      {
+                        "Con": {
+                          "id": "string",
+                          "args": []
+                        }
+                      },
+                      {
+                        "Con": {
+                          "id": "bool",
+                          "args": []
+                        }
+                      }
+                    ]
+                  }
+                },
+                "span": {
+                  "start": {
+                    "line": 2,
+                    "col": 30
+                  },
+                  "end": {
+                    "line": 4,
+                    "col": 3
+                  },
+                  "file": 99
+                }
+              }
+            },
+            "bounded_ty": {
+              "generics": [],
+              "ty": {
+                "Fun": {
+                  "args": [],
+                  "bounds": [],
+                  "ret": {
+                    "Con": {
+                      "id": "Tuple2",
+                      "args": [
+                        {
+                          "Con": {
+                            "id": "string",
+                            "args": []
+                          }
+                        },
+                        {
+                          "Con": {
+                            "id": "bool",
+                            "args": []
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "kind": "Inline",
+          "ty": {
+            "Fun": {
+              "args": [],
+              "bounds": [],
+              "ret": {
+                "Con": {
+                  "id": "Tuple2",
+                  "args": [
+                    {
+                      "Con": {
+                        "id": "string",
+                        "args": []
+                      }
+                    },
+                    {
+                      "Con": {
+                        "id": "bool",
+                        "args": []
+                      }
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "col": 3
+            },
+            "end": {
+              "line": 4,
+              "col": 3
+            },
+            "file": 99
+          }
+        }
+      }
+    ],
+    "ty": {
+      "Fun": {
+        "args": [],
+        "bounds": [],
+        "ret": {
+          "Con": {
+            "id": "Tuple2",
+            "args": [
+              {
+                "Con": {
+                  "id": "string",
+                  "args": []
+                }
+              },
+              {
+                "Con": {
+                  "id": "bool",
+                  "args": []
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 1,
+        "col": 1
+      },
+      "end": {
+        "line": 5,
+        "col": 1
+      },
+      "file": 99
+    }
+  }
+}

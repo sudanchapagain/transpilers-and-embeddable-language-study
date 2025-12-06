@@ -1,0 +1,54 @@
+Exhaustiveness checking on bools
+
+SOURCE:
+fn main() {
+    let x = match false {
+        true => @unreachable()
+        false => 2
+    }
+    assertEq(x, 2)
+}
+
+OUTPUT:
+
+---
+package main
+
+func main() {
+	var x int
+
+	var1_subject := false
+	var2_matches := 0
+
+	if var2_matches != 2 {
+		var2_matches = 0
+
+		if var2_matches != 1 && true == var1_subject {
+			var2_matches = 2
+		} else {
+			var2_matches = 1
+		}
+		_ = var1_subject
+
+		if var2_matches == 2 {
+			x = Debug_unreachable[int]()
+		}
+	}
+
+	if var2_matches != 2 {
+		var2_matches = 0
+
+		if var2_matches != 1 && false == var1_subject {
+			var2_matches = 2
+		} else {
+			var2_matches = 1
+		}
+		_ = var1_subject
+
+		if var2_matches == 2 {
+			x = 2
+		}
+	}
+
+	assertEq[int](x, 2)
+}

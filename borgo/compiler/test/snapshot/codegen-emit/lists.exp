@@ -1,0 +1,40 @@
+Lists
+
+SOURCE:
+fn main() {
+    let mut x = [1, 2, 5 + 5]
+
+    inspect(x)
+    assertEq(x.Len(), 3)
+    assertEq(x[1], 2)
+
+    x[1] = 8
+    assertEq(x[1], 8)
+
+    x = x.Append(9)
+    assertEq(x[3], 9)
+}
+
+OUTPUT:
+[1 2 10]
+
+---
+package main
+
+func main() {
+	x := []int{1, 2, 5 + 5}
+
+	inspect[[]int](x)
+
+	assertEq[int](Slice_Len[int](x), 3)
+
+	assertEq[int](x[1], 2)
+
+	x[1] = 8
+
+	assertEq[int](x[1], 8)
+
+	x = Slice_Append[int](x, 9)
+
+	assertEq[int](x[3], 9)
+}

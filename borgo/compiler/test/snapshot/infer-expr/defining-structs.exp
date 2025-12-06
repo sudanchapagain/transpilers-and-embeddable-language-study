@@ -1,0 +1,128 @@
+Defining structs.
+
+SOURCE:
+{
+  struct Foo { a: int }
+
+  Foo { a: 1 }
+}
+
+OUTPUT:
+Foo
+---
+No errors.
+---
+{
+  "Block": {
+    "stmts": [
+      {
+        "StructDef": {
+          "def": {
+            "name": "Foo",
+            "generics": [],
+            "fields": [
+              {
+                "name": "a",
+                "ann": {
+                  "Con": {
+                    "name": "int",
+                    "args": []
+                  }
+                },
+                "ty": {
+                  "generics": [],
+                  "ty": {
+                    "Con": {
+                      "id": "int",
+                      "args": []
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "col": 3
+            },
+            "end": {
+              "line": 2,
+              "col": 23
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "StructCall": {
+          "name": "Foo",
+          "fields": [
+            {
+              "name": "a",
+              "value": {
+                "Literal": {
+                  "lit": {
+                    "Int": 1
+                  },
+                  "ty": {
+                    "Con": {
+                      "id": "int",
+                      "args": []
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 4,
+                      "col": 12
+                    },
+                    "end": {
+                      "line": 4,
+                      "col": 13
+                    },
+                    "file": 99
+                  }
+                }
+              }
+            }
+          ],
+          "rest": null,
+          "ty": {
+            "Con": {
+              "id": "Foo",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 4,
+              "col": 7
+            },
+            "end": {
+              "line": 4,
+              "col": 14
+            },
+            "file": 99
+          }
+        }
+      }
+    ],
+    "ty": {
+      "Con": {
+        "id": "Foo",
+        "args": []
+      }
+    },
+    "span": {
+      "start": {
+        "line": 1,
+        "col": 1
+      },
+      "end": {
+        "line": 5,
+        "col": 1
+      },
+      "file": 99
+    }
+  }
+}

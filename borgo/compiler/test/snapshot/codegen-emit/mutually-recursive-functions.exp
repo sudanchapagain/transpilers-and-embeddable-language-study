@@ -1,0 +1,62 @@
+Mutually recursive functions
+
+SOURCE:
+file: main.brg
+
+fn abs(n: int) -> int {
+    if n < 0 { return -n }
+    n
+}
+
+fn even(n: int) -> bool {
+    if n == 0 {
+        return true
+    }
+
+    odd(abs(n) - 1)
+}
+
+fn odd(n: int) -> bool {
+    if n == 0 {
+        return false
+    }
+
+    even(abs(n) - 1)
+}
+
+fn main() {
+    assertEq(even(10), true)
+}
+
+OUTPUT:
+
+---
+package main
+
+func abs(n int) int {
+	if n < 0 {
+		return -n
+	}
+
+	return n
+}
+
+func even(n int) bool {
+	if n == 0 {
+		return true
+	}
+
+	return odd(abs(n) - 1)
+}
+
+func odd(n int) bool {
+	if n == 0 {
+		return false
+	}
+
+	return even(abs(n) - 1)
+}
+
+func main() {
+	assertEq[bool](even(10), true)
+}

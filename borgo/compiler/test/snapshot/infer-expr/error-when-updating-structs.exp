@@ -1,0 +1,19 @@
+Error when updating structs.
+
+SOURCE:
+{
+  struct Foo { a: int }
+
+  let mut x = Foo { a: 1 }
+  x.a = "foo"
+}
+
+OUTPUT:
+Type mismatch
+Expected:
+    int
+Got:
+    string
+
+5|    x.a = "foo"
+      ^^^^^^^^^^^

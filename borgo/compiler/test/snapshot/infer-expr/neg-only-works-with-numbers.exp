@@ -1,0 +1,10 @@
+Neg only works with numbers
+
+SOURCE:
+-false
+
+OUTPUT:
+Expected numeric type
+
+1|  -false
+    ^^^^^^

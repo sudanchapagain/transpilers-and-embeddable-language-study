@@ -1,0 +1,14 @@
+Not only works on bools
+
+SOURCE:
+!"asf"
+
+OUTPUT:
+Type mismatch
+Expected:
+    bool
+Got:
+    string
+
+1|  !"asf"
+     ^^^^^

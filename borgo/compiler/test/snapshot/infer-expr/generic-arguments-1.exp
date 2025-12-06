@@ -1,0 +1,15 @@
+Generic arguments 1
+
+SOURCE:
+{ fn foo(bar: Result<string, int, bool>) {} }
+
+OUTPUT:
+Wrong arity
+
+Expected:
+    (T, E)
+Got:
+    (string, int, bool)
+
+1|  { fn foo(bar: Result<string, int, bool>) {} }
+             ^^^

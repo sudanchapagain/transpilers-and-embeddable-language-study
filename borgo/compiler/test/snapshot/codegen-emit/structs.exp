@@ -1,0 +1,35 @@
+Structs
+
+SOURCE:
+struct Bar<T> {
+    name: string,
+    age: int,
+    v: T,
+}
+
+fn main() {
+    let x = Bar { name: "yo", age: 99, v: false }
+    inspect(x)
+}
+
+OUTPUT:
+{name:yo age:99 v:false}
+
+---
+package main
+
+type Bar[T any] struct {
+	name string
+	age  int
+	v    T
+}
+
+func main() {
+	x := Bar[bool]{
+		name: "yo",
+		age:  99,
+		v:    false,
+	}
+
+	inspect[Bar[bool]](x)
+}

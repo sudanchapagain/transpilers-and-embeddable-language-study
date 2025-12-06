@@ -1,0 +1,739 @@
+Match and If are still expressions.
+
+SOURCE:
+{
+  let x = "foo"
+
+  let a = match x {
+    "foo" => 1,
+    _ => 99,
+  }
+
+  let cond = false
+
+  let b = if cond {
+    0
+  } else {
+    1
+  }
+
+  sum(a, b)
+}
+
+OUTPUT:
+int
+---
+No errors.
+---
+{
+  "Block": {
+    "stmts": [
+      {
+        "Let": {
+          "binding": {
+            "pat": {
+              "Type": {
+                "ident": "x",
+                "is_mut": false,
+                "ann": "Unknown",
+                "span": {
+                  "start": {
+                    "line": 2,
+                    "col": 7
+                  },
+                  "end": {
+                    "line": 2,
+                    "col": 8
+                  },
+                  "file": 99
+                }
+              }
+            },
+            "ann": "Unknown",
+            "ty": {
+              "Con": {
+                "id": "string",
+                "args": []
+              }
+            }
+          },
+          "value": {
+            "Literal": {
+              "lit": {
+                "String": {
+                  "Single": "foo"
+                }
+              },
+              "ty": {
+                "Con": {
+                  "id": "string",
+                  "args": []
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 2,
+                  "col": 11
+                },
+                "end": {
+                  "line": 2,
+                  "col": 16
+                },
+                "file": 99
+              }
+            }
+          },
+          "mutable": false,
+          "ty": {
+            "Con": {
+              "id": "string",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "col": 3
+            },
+            "end": {
+              "line": 2,
+              "col": 16
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "Let": {
+          "binding": {
+            "pat": {
+              "Type": {
+                "ident": "a",
+                "is_mut": false,
+                "ann": "Unknown",
+                "span": {
+                  "start": {
+                    "line": 4,
+                    "col": 7
+                  },
+                  "end": {
+                    "line": 4,
+                    "col": 8
+                  },
+                  "file": 99
+                }
+              }
+            },
+            "ann": "Unknown",
+            "ty": {
+              "Con": {
+                "id": "int",
+                "args": []
+              }
+            }
+          },
+          "value": {
+            "Match": {
+              "subject": {
+                "Var": {
+                  "value": "x",
+                  "decl": {
+                    "start": {
+                      "line": 2,
+                      "col": 7
+                    },
+                    "end": {
+                      "line": 2,
+                      "col": 8
+                    },
+                    "file": 99
+                  },
+                  "generics_instantiated": [],
+                  "ty": {
+                    "Con": {
+                      "id": "string",
+                      "args": []
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 4,
+                      "col": 17
+                    },
+                    "end": {
+                      "line": 4,
+                      "col": 18
+                    },
+                    "file": 99
+                  }
+                }
+              },
+              "arms": [
+                {
+                  "pat": {
+                    "Lit": {
+                      "lit": {
+                        "String": {
+                          "Single": "foo"
+                        }
+                      },
+                      "ty": {
+                        "Con": {
+                          "id": "string",
+                          "args": []
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 5,
+                          "col": 5
+                        },
+                        "end": {
+                          "line": 5,
+                          "col": 10
+                        },
+                        "file": 99
+                      }
+                    }
+                  },
+                  "expr": {
+                    "Literal": {
+                      "lit": {
+                        "Int": 1
+                      },
+                      "ty": {
+                        "Con": {
+                          "id": "int",
+                          "args": []
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 5,
+                          "col": 14
+                        },
+                        "end": {
+                          "line": 5,
+                          "col": 15
+                        },
+                        "file": 99
+                      }
+                    }
+                  }
+                },
+                {
+                  "pat": {
+                    "Wild": {
+                      "span": {
+                        "start": {
+                          "line": 6,
+                          "col": 5
+                        },
+                        "end": {
+                          "line": 6,
+                          "col": 6
+                        },
+                        "file": 99
+                      }
+                    }
+                  },
+                  "expr": {
+                    "Literal": {
+                      "lit": {
+                        "Int": 99
+                      },
+                      "ty": {
+                        "Con": {
+                          "id": "int",
+                          "args": []
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 6,
+                          "col": 10
+                        },
+                        "end": {
+                          "line": 6,
+                          "col": 12
+                        },
+                        "file": 99
+                      }
+                    }
+                  }
+                }
+              ],
+              "ty": {
+                "Con": {
+                  "id": "int",
+                  "args": []
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 4,
+                  "col": 11
+                },
+                "end": {
+                  "line": 7,
+                  "col": 3
+                },
+                "file": 99
+              }
+            }
+          },
+          "mutable": false,
+          "ty": {
+            "Con": {
+              "id": "int",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 4,
+              "col": 3
+            },
+            "end": {
+              "line": 7,
+              "col": 3
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "Let": {
+          "binding": {
+            "pat": {
+              "Type": {
+                "ident": "cond",
+                "is_mut": false,
+                "ann": "Unknown",
+                "span": {
+                  "start": {
+                    "line": 9,
+                    "col": 7
+                  },
+                  "end": {
+                    "line": 9,
+                    "col": 11
+                  },
+                  "file": 99
+                }
+              }
+            },
+            "ann": "Unknown",
+            "ty": {
+              "Con": {
+                "id": "bool",
+                "args": []
+              }
+            }
+          },
+          "value": {
+            "Literal": {
+              "lit": {
+                "Bool": false
+              },
+              "ty": {
+                "Con": {
+                  "id": "bool",
+                  "args": []
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 9,
+                  "col": 14
+                },
+                "end": {
+                  "line": 9,
+                  "col": 19
+                },
+                "file": 99
+              }
+            }
+          },
+          "mutable": false,
+          "ty": {
+            "Con": {
+              "id": "bool",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 9,
+              "col": 3
+            },
+            "end": {
+              "line": 9,
+              "col": 19
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "Let": {
+          "binding": {
+            "pat": {
+              "Type": {
+                "ident": "b",
+                "is_mut": false,
+                "ann": "Unknown",
+                "span": {
+                  "start": {
+                    "line": 11,
+                    "col": 7
+                  },
+                  "end": {
+                    "line": 11,
+                    "col": 8
+                  },
+                  "file": 99
+                }
+              }
+            },
+            "ann": "Unknown",
+            "ty": {
+              "Con": {
+                "id": "int",
+                "args": []
+              }
+            }
+          },
+          "value": {
+            "If": {
+              "cond": {
+                "Var": {
+                  "value": "cond",
+                  "decl": {
+                    "start": {
+                      "line": 9,
+                      "col": 7
+                    },
+                    "end": {
+                      "line": 9,
+                      "col": 11
+                    },
+                    "file": 99
+                  },
+                  "generics_instantiated": [],
+                  "ty": {
+                    "Con": {
+                      "id": "bool",
+                      "args": []
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 11,
+                      "col": 14
+                    },
+                    "end": {
+                      "line": 11,
+                      "col": 18
+                    },
+                    "file": 99
+                  }
+                }
+              },
+              "then": {
+                "Block": {
+                  "stmts": [
+                    {
+                      "Literal": {
+                        "lit": {
+                          "Int": 0
+                        },
+                        "ty": {
+                          "Con": {
+                            "id": "int",
+                            "args": []
+                          }
+                        },
+                        "span": {
+                          "start": {
+                            "line": 12,
+                            "col": 5
+                          },
+                          "end": {
+                            "line": 12,
+                            "col": 6
+                          },
+                          "file": 99
+                        }
+                      }
+                    }
+                  ],
+                  "ty": {
+                    "Con": {
+                      "id": "int",
+                      "args": []
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 11,
+                      "col": 19
+                    },
+                    "end": {
+                      "line": 13,
+                      "col": 3
+                    },
+                    "file": 99
+                  }
+                }
+              },
+              "els": {
+                "Block": {
+                  "stmts": [
+                    {
+                      "Literal": {
+                        "lit": {
+                          "Int": 1
+                        },
+                        "ty": {
+                          "Con": {
+                            "id": "int",
+                            "args": []
+                          }
+                        },
+                        "span": {
+                          "start": {
+                            "line": 14,
+                            "col": 5
+                          },
+                          "end": {
+                            "line": 14,
+                            "col": 6
+                          },
+                          "file": 99
+                        }
+                      }
+                    }
+                  ],
+                  "ty": {
+                    "Con": {
+                      "id": "int",
+                      "args": []
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 13,
+                      "col": 10
+                    },
+                    "end": {
+                      "line": 15,
+                      "col": 3
+                    },
+                    "file": 99
+                  }
+                }
+              },
+              "ty": {
+                "Con": {
+                  "id": "int",
+                  "args": []
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 11,
+                  "col": 11
+                },
+                "end": {
+                  "line": 15,
+                  "col": 3
+                },
+                "file": 99
+              }
+            }
+          },
+          "mutable": false,
+          "ty": {
+            "Con": {
+              "id": "int",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 11,
+              "col": 3
+            },
+            "end": {
+              "line": 15,
+              "col": 3
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "Call": {
+          "func": {
+            "Var": {
+              "value": "sum",
+              "decl": {
+                "start": {
+                  "line": 21,
+                  "col": 1
+                },
+                "end": {
+                  "line": 23,
+                  "col": 1
+                },
+                "file": 99
+              },
+              "generics_instantiated": [],
+              "ty": {
+                "Fun": {
+                  "args": [
+                    {
+                      "Con": {
+                        "id": "int",
+                        "args": []
+                      }
+                    },
+                    {
+                      "Con": {
+                        "id": "int",
+                        "args": []
+                      }
+                    }
+                  ],
+                  "bounds": [],
+                  "ret": {
+                    "Con": {
+                      "id": "int",
+                      "args": []
+                    }
+                  }
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 17,
+                  "col": 3
+                },
+                "end": {
+                  "line": 17,
+                  "col": 6
+                },
+                "file": 99
+              }
+            }
+          },
+          "args": [
+            {
+              "Var": {
+                "value": "a",
+                "decl": {
+                  "start": {
+                    "line": 4,
+                    "col": 7
+                  },
+                  "end": {
+                    "line": 4,
+                    "col": 8
+                  },
+                  "file": 99
+                },
+                "generics_instantiated": [],
+                "ty": {
+                  "Con": {
+                    "id": "int",
+                    "args": []
+                  }
+                },
+                "span": {
+                  "start": {
+                    "line": 17,
+                    "col": 7
+                  },
+                  "end": {
+                    "line": 17,
+                    "col": 8
+                  },
+                  "file": 99
+                }
+              }
+            },
+            {
+              "Var": {
+                "value": "b",
+                "decl": {
+                  "start": {
+                    "line": 11,
+                    "col": 7
+                  },
+                  "end": {
+                    "line": 11,
+                    "col": 8
+                  },
+                  "file": 99
+                },
+                "generics_instantiated": [],
+                "ty": {
+                  "Con": {
+                    "id": "int",
+                    "args": []
+                  }
+                },
+                "span": {
+                  "start": {
+                    "line": 17,
+                    "col": 10
+                  },
+                  "end": {
+                    "line": 17,
+                    "col": 11
+                  },
+                  "file": 99
+                }
+              }
+            }
+          ],
+          "ty": {
+            "Con": {
+              "id": "int",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 17,
+              "col": 6
+            },
+            "end": {
+              "line": 17,
+              "col": 11
+            },
+            "file": 99
+          }
+        }
+      }
+    ],
+    "ty": {
+      "Con": {
+        "id": "int",
+        "args": []
+      }
+    },
+    "span": {
+      "start": {
+        "line": 1,
+        "col": 1
+      },
+      "end": {
+        "line": 18,
+        "col": 1
+      },
+      "file": 99
+    }
+  }
+}

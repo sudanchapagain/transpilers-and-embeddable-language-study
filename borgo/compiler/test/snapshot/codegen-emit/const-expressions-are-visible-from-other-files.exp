@@ -1,0 +1,26 @@
+Const expressions are visible from other files
+
+SOURCE:
+file: foo.brg
+
+fn check() -> bool {
+    foo == 2
+}
+
+file: main.brg
+
+const foo: int = 1 + 1
+fn main() { assertEq(check(), true) }
+
+OUTPUT:
+
+---
+package main
+
+var foo = func() int {
+	return 1 + 1
+}()
+
+func main() {
+	assertEq[bool](check(), true)
+}

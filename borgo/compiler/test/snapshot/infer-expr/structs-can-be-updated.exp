@@ -1,0 +1,308 @@
+Structs can be updated
+
+SOURCE:
+{
+  struct Foo { a: int }
+
+  let mut x = Foo { a: 1 }
+  x.a = 3
+  x
+}
+
+OUTPUT:
+Foo
+---
+No errors.
+---
+{
+  "Block": {
+    "stmts": [
+      {
+        "StructDef": {
+          "def": {
+            "name": "Foo",
+            "generics": [],
+            "fields": [
+              {
+                "name": "a",
+                "ann": {
+                  "Con": {
+                    "name": "int",
+                    "args": []
+                  }
+                },
+                "ty": {
+                  "generics": [],
+                  "ty": {
+                    "Con": {
+                      "id": "int",
+                      "args": []
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "col": 3
+            },
+            "end": {
+              "line": 2,
+              "col": 23
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "Let": {
+          "binding": {
+            "pat": {
+              "Type": {
+                "ident": "x",
+                "is_mut": false,
+                "ann": "Unknown",
+                "span": {
+                  "start": {
+                    "line": 4,
+                    "col": 11
+                  },
+                  "end": {
+                    "line": 4,
+                    "col": 12
+                  },
+                  "file": 99
+                }
+              }
+            },
+            "ann": "Unknown",
+            "ty": {
+              "Con": {
+                "id": "Foo",
+                "args": []
+              }
+            }
+          },
+          "value": {
+            "StructCall": {
+              "name": "Foo",
+              "fields": [
+                {
+                  "name": "a",
+                  "value": {
+                    "Literal": {
+                      "lit": {
+                        "Int": 1
+                      },
+                      "ty": {
+                        "Con": {
+                          "id": "int",
+                          "args": []
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 4,
+                          "col": 24
+                        },
+                        "end": {
+                          "line": 4,
+                          "col": 25
+                        },
+                        "file": 99
+                      }
+                    }
+                  }
+                }
+              ],
+              "rest": null,
+              "ty": {
+                "Con": {
+                  "id": "Foo",
+                  "args": []
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 4,
+                  "col": 19
+                },
+                "end": {
+                  "line": 4,
+                  "col": 26
+                },
+                "file": 99
+              }
+            }
+          },
+          "mutable": true,
+          "ty": {
+            "Con": {
+              "id": "Foo",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 4,
+              "col": 3
+            },
+            "end": {
+              "line": 4,
+              "col": 26
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "VarUpdate": {
+          "target": {
+            "FieldAccess": {
+              "expr": {
+                "Var": {
+                  "value": "x",
+                  "decl": {
+                    "start": {
+                      "line": 4,
+                      "col": 11
+                    },
+                    "end": {
+                      "line": 4,
+                      "col": 12
+                    },
+                    "file": 99
+                  },
+                  "generics_instantiated": [],
+                  "ty": {
+                    "Con": {
+                      "id": "Foo",
+                      "args": []
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 5,
+                      "col": 3
+                    },
+                    "end": {
+                      "line": 5,
+                      "col": 4
+                    },
+                    "file": 99
+                  }
+                }
+              },
+              "field": "a",
+              "ty": {
+                "Con": {
+                  "id": "int",
+                  "args": []
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 5,
+                  "col": 5
+                },
+                "end": {
+                  "line": 5,
+                  "col": 6
+                },
+                "file": 99
+              }
+            }
+          },
+          "value": {
+            "Literal": {
+              "lit": {
+                "Int": 3
+              },
+              "ty": {
+                "Con": {
+                  "id": "int",
+                  "args": []
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 5,
+                  "col": 9
+                },
+                "end": {
+                  "line": 5,
+                  "col": 10
+                },
+                "file": 99
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 5,
+              "col": 3
+            },
+            "end": {
+              "line": 5,
+              "col": 10
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "Var": {
+          "value": "x",
+          "decl": {
+            "start": {
+              "line": 4,
+              "col": 11
+            },
+            "end": {
+              "line": 4,
+              "col": 12
+            },
+            "file": 99
+          },
+          "generics_instantiated": [],
+          "ty": {
+            "Con": {
+              "id": "Foo",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 6,
+              "col": 3
+            },
+            "end": {
+              "line": 6,
+              "col": 4
+            },
+            "file": 99
+          }
+        }
+      }
+    ],
+    "ty": {
+      "Con": {
+        "id": "Foo",
+        "args": []
+      }
+    },
+    "span": {
+      "start": {
+        "line": 1,
+        "col": 1
+      },
+      "end": {
+        "line": 7,
+        "col": 1
+      },
+      "file": 99
+    }
+  }
+}

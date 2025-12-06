@@ -1,0 +1,29 @@
+Primitive types are casted in struct call
+
+SOURCE:
+struct Foo {
+    bar: int,
+}
+
+fn main() {
+    let x = 1
+    let y = Foo { bar: x }
+    assertEq(y.bar, 1)
+}
+
+OUTPUT:
+
+---
+package main
+
+type Foo struct {
+	bar int
+}
+
+func main() {
+	x := 1
+
+	y := Foo{bar: x}
+
+	assertEq[int](y.bar, 1)
+}

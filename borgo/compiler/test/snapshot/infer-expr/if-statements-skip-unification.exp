@@ -1,0 +1,358 @@
+If statements skip unification
+
+SOURCE:
+{
+  let n = 0
+
+  if true {
+    n + 1
+  }
+
+  if false {
+  }
+
+  1
+}
+
+OUTPUT:
+int
+---
+No errors.
+---
+{
+  "Block": {
+    "stmts": [
+      {
+        "Let": {
+          "binding": {
+            "pat": {
+              "Type": {
+                "ident": "n",
+                "is_mut": false,
+                "ann": "Unknown",
+                "span": {
+                  "start": {
+                    "line": 2,
+                    "col": 7
+                  },
+                  "end": {
+                    "line": 2,
+                    "col": 8
+                  },
+                  "file": 99
+                }
+              }
+            },
+            "ann": "Unknown",
+            "ty": {
+              "Con": {
+                "id": "int",
+                "args": []
+              }
+            }
+          },
+          "value": {
+            "Literal": {
+              "lit": {
+                "Int": 0
+              },
+              "ty": {
+                "Con": {
+                  "id": "int",
+                  "args": []
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 2,
+                  "col": 11
+                },
+                "end": {
+                  "line": 2,
+                  "col": 12
+                },
+                "file": 99
+              }
+            }
+          },
+          "mutable": false,
+          "ty": {
+            "Con": {
+              "id": "int",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "col": 3
+            },
+            "end": {
+              "line": 2,
+              "col": 12
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "If": {
+          "cond": {
+            "Literal": {
+              "lit": {
+                "Bool": true
+              },
+              "ty": {
+                "Con": {
+                  "id": "bool",
+                  "args": []
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 4,
+                  "col": 6
+                },
+                "end": {
+                  "line": 4,
+                  "col": 10
+                },
+                "file": 99
+              }
+            }
+          },
+          "then": {
+            "Block": {
+              "stmts": [
+                {
+                  "Binary": {
+                    "op": "Add",
+                    "left": {
+                      "Var": {
+                        "value": "n",
+                        "decl": {
+                          "start": {
+                            "line": 2,
+                            "col": 7
+                          },
+                          "end": {
+                            "line": 2,
+                            "col": 8
+                          },
+                          "file": 99
+                        },
+                        "generics_instantiated": [],
+                        "ty": {
+                          "Con": {
+                            "id": "int",
+                            "args": []
+                          }
+                        },
+                        "span": {
+                          "start": {
+                            "line": 5,
+                            "col": 5
+                          },
+                          "end": {
+                            "line": 5,
+                            "col": 6
+                          },
+                          "file": 99
+                        }
+                      }
+                    },
+                    "right": {
+                      "Literal": {
+                        "lit": {
+                          "Int": 1
+                        },
+                        "ty": {
+                          "Con": {
+                            "id": "int",
+                            "args": []
+                          }
+                        },
+                        "span": {
+                          "start": {
+                            "line": 5,
+                            "col": 9
+                          },
+                          "end": {
+                            "line": 5,
+                            "col": 10
+                          },
+                          "file": 99
+                        }
+                      }
+                    },
+                    "ty": {
+                      "Con": {
+                        "id": "int",
+                        "args": []
+                      }
+                    },
+                    "span": {
+                      "start": {
+                        "line": 5,
+                        "col": 5
+                      },
+                      "end": {
+                        "line": 5,
+                        "col": 10
+                      },
+                      "file": 99
+                    }
+                  }
+                }
+              ],
+              "ty": {
+                "Con": {
+                  "id": "int",
+                  "args": []
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 4,
+                  "col": 11
+                },
+                "end": {
+                  "line": 6,
+                  "col": 3
+                },
+                "file": 99
+              }
+            }
+          },
+          "els": "Noop",
+          "ty": {
+            "Con": {
+              "id": "int",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 4,
+              "col": 3
+            },
+            "end": {
+              "line": 6,
+              "col": 3
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "If": {
+          "cond": {
+            "Literal": {
+              "lit": {
+                "Bool": false
+              },
+              "ty": {
+                "Con": {
+                  "id": "bool",
+                  "args": []
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 8,
+                  "col": 6
+                },
+                "end": {
+                  "line": 8,
+                  "col": 11
+                },
+                "file": 99
+              }
+            }
+          },
+          "then": {
+            "Block": {
+              "stmts": [],
+              "ty": {
+                "Con": {
+                  "id": "Unit",
+                  "args": []
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 8,
+                  "col": 12
+                },
+                "end": {
+                  "line": 9,
+                  "col": 3
+                },
+                "file": 99
+              }
+            }
+          },
+          "els": "Noop",
+          "ty": {
+            "Con": {
+              "id": "Unit",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 8,
+              "col": 3
+            },
+            "end": {
+              "line": 9,
+              "col": 3
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "Literal": {
+          "lit": {
+            "Int": 1
+          },
+          "ty": {
+            "Con": {
+              "id": "int",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 11,
+              "col": 3
+            },
+            "end": {
+              "line": 11,
+              "col": 4
+            },
+            "file": 99
+          }
+        }
+      }
+    ],
+    "ty": {
+      "Con": {
+        "id": "int",
+        "args": []
+      }
+    },
+    "span": {
+      "start": {
+        "line": 1,
+        "col": 1
+      },
+      "end": {
+        "line": 12,
+        "col": 1
+      },
+      "file": 99
+    }
+  }
+}

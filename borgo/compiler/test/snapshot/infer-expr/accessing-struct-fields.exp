@@ -1,0 +1,234 @@
+Accessing struct fields.
+
+SOURCE:
+{
+  struct Foo { a: int }
+
+  let x = Foo { a: 1 }
+  x.a
+}
+
+OUTPUT:
+int
+---
+No errors.
+---
+{
+  "Block": {
+    "stmts": [
+      {
+        "StructDef": {
+          "def": {
+            "name": "Foo",
+            "generics": [],
+            "fields": [
+              {
+                "name": "a",
+                "ann": {
+                  "Con": {
+                    "name": "int",
+                    "args": []
+                  }
+                },
+                "ty": {
+                  "generics": [],
+                  "ty": {
+                    "Con": {
+                      "id": "int",
+                      "args": []
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "col": 3
+            },
+            "end": {
+              "line": 2,
+              "col": 23
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "Let": {
+          "binding": {
+            "pat": {
+              "Type": {
+                "ident": "x",
+                "is_mut": false,
+                "ann": "Unknown",
+                "span": {
+                  "start": {
+                    "line": 4,
+                    "col": 7
+                  },
+                  "end": {
+                    "line": 4,
+                    "col": 8
+                  },
+                  "file": 99
+                }
+              }
+            },
+            "ann": "Unknown",
+            "ty": {
+              "Con": {
+                "id": "Foo",
+                "args": []
+              }
+            }
+          },
+          "value": {
+            "StructCall": {
+              "name": "Foo",
+              "fields": [
+                {
+                  "name": "a",
+                  "value": {
+                    "Literal": {
+                      "lit": {
+                        "Int": 1
+                      },
+                      "ty": {
+                        "Con": {
+                          "id": "int",
+                          "args": []
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 4,
+                          "col": 20
+                        },
+                        "end": {
+                          "line": 4,
+                          "col": 21
+                        },
+                        "file": 99
+                      }
+                    }
+                  }
+                }
+              ],
+              "rest": null,
+              "ty": {
+                "Con": {
+                  "id": "Foo",
+                  "args": []
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 4,
+                  "col": 15
+                },
+                "end": {
+                  "line": 4,
+                  "col": 22
+                },
+                "file": 99
+              }
+            }
+          },
+          "mutable": false,
+          "ty": {
+            "Con": {
+              "id": "Foo",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 4,
+              "col": 3
+            },
+            "end": {
+              "line": 4,
+              "col": 22
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "FieldAccess": {
+          "expr": {
+            "Var": {
+              "value": "x",
+              "decl": {
+                "start": {
+                  "line": 4,
+                  "col": 7
+                },
+                "end": {
+                  "line": 4,
+                  "col": 8
+                },
+                "file": 99
+              },
+              "generics_instantiated": [],
+              "ty": {
+                "Con": {
+                  "id": "Foo",
+                  "args": []
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 5,
+                  "col": 3
+                },
+                "end": {
+                  "line": 5,
+                  "col": 4
+                },
+                "file": 99
+              }
+            }
+          },
+          "field": "a",
+          "ty": {
+            "Con": {
+              "id": "int",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 5,
+              "col": 5
+            },
+            "end": {
+              "line": 5,
+              "col": 6
+            },
+            "file": 99
+          }
+        }
+      }
+    ],
+    "ty": {
+      "Con": {
+        "id": "int",
+        "args": []
+      }
+    },
+    "span": {
+      "start": {
+        "line": 1,
+        "col": 1
+      },
+      "end": {
+        "line": 6,
+        "col": 1
+      },
+      "file": 99
+    }
+  }
+}

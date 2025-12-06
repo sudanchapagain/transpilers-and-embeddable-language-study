@@ -1,0 +1,28 @@
+Generics should get instantiated to the same type in pattern match
+
+SOURCE:
+{
+  enum Foo<T> {
+    Bar(T),
+    Baz(T),
+  }
+
+  match Foo.Bar(12) {
+    Bar(x) => {
+      let a = x + 1
+      int_to_string(a)
+    },
+
+    Baz(y) => str_concat(y, "doh"),
+  }
+}
+
+OUTPUT:
+Type mismatch
+Expected:
+    string
+Got:
+    int
+
+13|      Baz(y) => str_concat(y, "doh"),
+                              ^

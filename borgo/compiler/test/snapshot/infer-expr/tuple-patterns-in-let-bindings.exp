@@ -1,0 +1,300 @@
+Tuple patterns in let bindings
+
+SOURCE:
+{
+  let (x, y) = (1, "a")
+  x
+}
+
+OUTPUT:
+int
+---
+No errors.
+---
+{
+  "Block": {
+    "stmts": [
+      {
+        "Let": {
+          "binding": {
+            "pat": {
+              "Struct": {
+                "ident": "Tuple2",
+                "fields": [
+                  {
+                    "name": "first",
+                    "value": {
+                      "Type": {
+                        "ident": "x",
+                        "is_mut": false,
+                        "ann": "Unknown",
+                        "span": {
+                          "start": {
+                            "line": 2,
+                            "col": 8
+                          },
+                          "end": {
+                            "line": 2,
+                            "col": 9
+                          },
+                          "file": 99
+                        }
+                      }
+                    }
+                  },
+                  {
+                    "name": "second",
+                    "value": {
+                      "Type": {
+                        "ident": "y",
+                        "is_mut": false,
+                        "ann": "Unknown",
+                        "span": {
+                          "start": {
+                            "line": 2,
+                            "col": 11
+                          },
+                          "end": {
+                            "line": 2,
+                            "col": 12
+                          },
+                          "file": 99
+                        }
+                      }
+                    }
+                  }
+                ],
+                "ty": {
+                  "Con": {
+                    "id": "Tuple2",
+                    "args": [
+                      {
+                        "Con": {
+                          "id": "int",
+                          "args": []
+                        }
+                      },
+                      {
+                        "Con": {
+                          "id": "string",
+                          "args": []
+                        }
+                      }
+                    ]
+                  }
+                },
+                "span": {
+                  "start": {
+                    "line": 2,
+                    "col": 7
+                  },
+                  "end": {
+                    "line": 2,
+                    "col": 12
+                  },
+                  "file": 99
+                }
+              }
+            },
+            "ann": "Unknown",
+            "ty": {
+              "Con": {
+                "id": "Tuple2",
+                "args": [
+                  {
+                    "Con": {
+                      "id": "int",
+                      "args": []
+                    }
+                  },
+                  {
+                    "Con": {
+                      "id": "string",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            }
+          },
+          "value": {
+            "StructCall": {
+              "name": "Tuple2",
+              "fields": [
+                {
+                  "name": "first",
+                  "value": {
+                    "Literal": {
+                      "lit": {
+                        "Int": 1
+                      },
+                      "ty": {
+                        "Con": {
+                          "id": "int",
+                          "args": []
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 2,
+                          "col": 17
+                        },
+                        "end": {
+                          "line": 2,
+                          "col": 18
+                        },
+                        "file": 99
+                      }
+                    }
+                  }
+                },
+                {
+                  "name": "second",
+                  "value": {
+                    "Literal": {
+                      "lit": {
+                        "String": {
+                          "Single": "a"
+                        }
+                      },
+                      "ty": {
+                        "Con": {
+                          "id": "string",
+                          "args": []
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 2,
+                          "col": 20
+                        },
+                        "end": {
+                          "line": 2,
+                          "col": 23
+                        },
+                        "file": 99
+                      }
+                    }
+                  }
+                }
+              ],
+              "rest": null,
+              "ty": {
+                "Con": {
+                  "id": "Tuple2",
+                  "args": [
+                    {
+                      "Con": {
+                        "id": "int",
+                        "args": []
+                      }
+                    },
+                    {
+                      "Con": {
+                        "id": "string",
+                        "args": []
+                      }
+                    }
+                  ]
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 2,
+                  "col": 16
+                },
+                "end": {
+                  "line": 2,
+                  "col": 23
+                },
+                "file": 99
+              }
+            }
+          },
+          "mutable": false,
+          "ty": {
+            "Con": {
+              "id": "Tuple2",
+              "args": [
+                {
+                  "Con": {
+                    "id": "int",
+                    "args": []
+                  }
+                },
+                {
+                  "Con": {
+                    "id": "string",
+                    "args": []
+                  }
+                }
+              ]
+            }
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "col": 3
+            },
+            "end": {
+              "line": 2,
+              "col": 23
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "Var": {
+          "value": "x",
+          "decl": {
+            "start": {
+              "line": 2,
+              "col": 8
+            },
+            "end": {
+              "line": 2,
+              "col": 9
+            },
+            "file": 99
+          },
+          "generics_instantiated": [],
+          "ty": {
+            "Con": {
+              "id": "int",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 3,
+              "col": 3
+            },
+            "end": {
+              "line": 3,
+              "col": 4
+            },
+            "file": 99
+          }
+        }
+      }
+    ],
+    "ty": {
+      "Con": {
+        "id": "int",
+        "args": []
+      }
+    },
+    "span": {
+      "start": {
+        "line": 1,
+        "col": 1
+      },
+      "end": {
+        "line": 4,
+        "col": 1
+      },
+      "file": 99
+    }
+  }
+}

@@ -1,0 +1,19 @@
+Match Type.Fun with Type.Con
+
+SOURCE:
+{
+  fn bar() -> bool { false }
+  fn foo() -> int {
+    bar
+  }
+}
+
+OUTPUT:
+Type mismatch
+Expected:
+    int
+Got:
+    fn () -> bool
+
+4|      bar
+        ^^^

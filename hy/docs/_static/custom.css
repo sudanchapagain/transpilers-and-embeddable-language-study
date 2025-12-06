@@ -1,0 +1,29 @@
+div.body, div.related, div.footer, code, div.code-block-caption,
+div.body h1, div.body h2, div.body h3, div.body h4, div.body h5, div.body h6,
+a.toc-backref
+   {color: black}
+
+div.body p, div.body dd, div.body li, div.body blockquote
+   {hyphens: manual}
+
+div.related
+   {background: none;
+    text-shadow: none;
+    line-height: normal;
+    padding-bottom: .25em;
+    border-bottom: thin solid black;}
+
+a, div.related a
+   {color: navy}
+a:visited, div.related a:visited
+   {color: purple}
+
+code
+   {background-color: #dfd}
+
+.highlight .s, .highlight .s2
+   {color: #060}
+.highlight .ss
+   {color: #040}
+.highlight .c1
+   {color: #630}

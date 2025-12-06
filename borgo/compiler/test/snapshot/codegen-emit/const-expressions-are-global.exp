@@ -1,0 +1,21 @@
+Const expressions are global
+
+SOURCE:
+file: main.brg
+
+const a: int = 1
+
+fn main() { assertEq(a + 5, 6) }
+
+OUTPUT:
+
+---
+package main
+
+var a = func() int {
+	return 1
+}()
+
+func main() {
+	assertEq[int](a+5, 6)
+}

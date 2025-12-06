@@ -1,0 +1,14 @@
+Tuples with wrong type annotation.
+
+SOURCE:
+@ensure ("foo", 2), (bool, int)
+
+OUTPUT:
+Type mismatch
+Expected:
+    (string, int)
+Got:
+    (bool, int)
+
+1|  @ensure ("foo", 2), (bool, int)
+    ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^

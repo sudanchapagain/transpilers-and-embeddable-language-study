@@ -1,0 +1,787 @@
+Enums can be returned from functions.
+
+SOURCE:
+{
+  enum Maybe<T> { Just(T), None }
+
+  fn ok<T>(v: T) -> Maybe<T> {
+    Maybe.Just(v)
+  }
+
+  @ensure ok(1), Maybe<int>
+  @ensure ok("foo"), Maybe<string>
+
+  ok
+}
+
+OUTPUT:
+fn <A>(A) -> Maybe<A>
+---
+No errors.
+---
+{
+  "Block": {
+    "stmts": [
+      {
+        "EnumDef": {
+          "def": {
+            "name": "Maybe",
+            "generics": [
+              {
+                "name": "T",
+                "bounds": [],
+                "span": {
+                  "start": {
+                    "line": 2,
+                    "col": 14
+                  },
+                  "end": {
+                    "line": 2,
+                    "col": 15
+                  },
+                  "file": 99
+                }
+              }
+            ],
+            "cons": [
+              {
+                "name": "Just",
+                "fields": [
+                  {
+                    "name": "field0",
+                    "ann": {
+                      "Con": {
+                        "name": "T",
+                        "args": []
+                      }
+                    },
+                    "ty": {
+                      "Con": {
+                        "id": "T",
+                        "args": []
+                      }
+                    }
+                  }
+                ]
+              },
+              {
+                "name": "None",
+                "fields": []
+              }
+            ]
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "col": 3
+            },
+            "end": {
+              "line": 2,
+              "col": 33
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "Closure": {
+          "fun": {
+            "name": "ok",
+            "generics": [
+              {
+                "name": "T",
+                "bounds": [],
+                "span": {
+                  "start": {
+                    "line": 4,
+                    "col": 9
+                  },
+                  "end": {
+                    "line": 4,
+                    "col": 10
+                  },
+                  "file": 99
+                }
+              }
+            ],
+            "args": [
+              {
+                "pat": {
+                  "Type": {
+                    "ident": "v",
+                    "is_mut": false,
+                    "ann": "Unknown",
+                    "span": {
+                      "start": {
+                        "line": 4,
+                        "col": 12
+                      },
+                      "end": {
+                        "line": 4,
+                        "col": 13
+                      },
+                      "file": 99
+                    }
+                  }
+                },
+                "ann": {
+                  "Con": {
+                    "name": "T",
+                    "args": []
+                  }
+                },
+                "ty": {
+                  "Con": {
+                    "id": "T",
+                    "args": []
+                  }
+                }
+              }
+            ],
+            "ret": {
+              "Con": {
+                "id": "Maybe",
+                "args": [
+                  {
+                    "Con": {
+                      "id": "T",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            },
+            "ann": {
+              "Con": {
+                "name": "Maybe",
+                "args": [
+                  {
+                    "Con": {
+                      "name": "T",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            },
+            "body": {
+              "Block": {
+                "stmts": [
+                  {
+                    "Call": {
+                      "func": {
+                        "Var": {
+                          "value": "Maybe.Just",
+                          "decl": {
+                            "start": {
+                              "line": 2,
+                              "col": 3
+                            },
+                            "end": {
+                              "line": 2,
+                              "col": 33
+                            },
+                            "file": 99
+                          },
+                          "generics_instantiated": [
+                            {
+                              "Con": {
+                                "id": "T",
+                                "args": []
+                              }
+                            }
+                          ],
+                          "ty": {
+                            "Fun": {
+                              "args": [
+                                {
+                                  "Con": {
+                                    "id": "T",
+                                    "args": []
+                                  }
+                                }
+                              ],
+                              "bounds": [],
+                              "ret": {
+                                "Con": {
+                                  "id": "Maybe",
+                                  "args": [
+                                    {
+                                      "Con": {
+                                        "id": "T",
+                                        "args": []
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          },
+                          "span": {
+                            "start": {
+                              "line": 5,
+                              "col": 11
+                            },
+                            "end": {
+                              "line": 5,
+                              "col": 15
+                            },
+                            "file": 99
+                          }
+                        }
+                      },
+                      "args": [
+                        {
+                          "Var": {
+                            "value": "v",
+                            "decl": {
+                              "start": {
+                                "line": 4,
+                                "col": 12
+                              },
+                              "end": {
+                                "line": 4,
+                                "col": 13
+                              },
+                              "file": 99
+                            },
+                            "generics_instantiated": [],
+                            "ty": {
+                              "Con": {
+                                "id": "T",
+                                "args": []
+                              }
+                            },
+                            "span": {
+                              "start": {
+                                "line": 5,
+                                "col": 16
+                              },
+                              "end": {
+                                "line": 5,
+                                "col": 17
+                              },
+                              "file": 99
+                            }
+                          }
+                        }
+                      ],
+                      "ty": {
+                        "Con": {
+                          "id": "Maybe",
+                          "args": [
+                            {
+                              "Con": {
+                                "id": "T",
+                                "args": []
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 5,
+                          "col": 15
+                        },
+                        "end": {
+                          "line": 5,
+                          "col": 17
+                        },
+                        "file": 99
+                      }
+                    }
+                  }
+                ],
+                "ty": {
+                  "Con": {
+                    "id": "Maybe",
+                    "args": [
+                      {
+                        "Con": {
+                          "id": "T",
+                          "args": []
+                        }
+                      }
+                    ]
+                  }
+                },
+                "span": {
+                  "start": {
+                    "line": 4,
+                    "col": 30
+                  },
+                  "end": {
+                    "line": 6,
+                    "col": 3
+                  },
+                  "file": 99
+                }
+              }
+            },
+            "bounded_ty": {
+              "generics": [
+                "T"
+              ],
+              "ty": {
+                "Fun": {
+                  "args": [
+                    {
+                      "Con": {
+                        "id": "T",
+                        "args": []
+                      }
+                    }
+                  ],
+                  "bounds": [],
+                  "ret": {
+                    "Con": {
+                      "id": "Maybe",
+                      "args": [
+                        {
+                          "Con": {
+                            "id": "T",
+                            "args": []
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "kind": "Inline",
+          "ty": {
+            "Fun": {
+              "args": [
+                {
+                  "Var": 99
+                }
+              ],
+              "bounds": [],
+              "ret": {
+                "Con": {
+                  "id": "Maybe",
+                  "args": [
+                    {
+                      "Var": 99
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 4,
+              "col": 3
+            },
+            "end": {
+              "line": 6,
+              "col": 3
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "CheckType": {
+          "expr": {
+            "Call": {
+              "func": {
+                "Var": {
+                  "value": "ok",
+                  "decl": {
+                    "start": {
+                      "line": 4,
+                      "col": 3
+                    },
+                    "end": {
+                      "line": 6,
+                      "col": 3
+                    },
+                    "file": 99
+                  },
+                  "generics_instantiated": [
+                    {
+                      "Con": {
+                        "id": "int",
+                        "args": []
+                      }
+                    }
+                  ],
+                  "ty": {
+                    "Fun": {
+                      "args": [
+                        {
+                          "Con": {
+                            "id": "int",
+                            "args": []
+                          }
+                        }
+                      ],
+                      "bounds": [],
+                      "ret": {
+                        "Con": {
+                          "id": "Maybe",
+                          "args": [
+                            {
+                              "Con": {
+                                "id": "int",
+                                "args": []
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 8,
+                      "col": 11
+                    },
+                    "end": {
+                      "line": 8,
+                      "col": 13
+                    },
+                    "file": 99
+                  }
+                }
+              },
+              "args": [
+                {
+                  "Literal": {
+                    "lit": {
+                      "Int": 1
+                    },
+                    "ty": {
+                      "Con": {
+                        "id": "int",
+                        "args": []
+                      }
+                    },
+                    "span": {
+                      "start": {
+                        "line": 8,
+                        "col": 14
+                      },
+                      "end": {
+                        "line": 8,
+                        "col": 15
+                      },
+                      "file": 99
+                    }
+                  }
+                }
+              ],
+              "ty": {
+                "Con": {
+                  "id": "Maybe",
+                  "args": [
+                    {
+                      "Con": {
+                        "id": "int",
+                        "args": []
+                      }
+                    }
+                  ]
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 8,
+                  "col": 13
+                },
+                "end": {
+                  "line": 8,
+                  "col": 15
+                },
+                "file": 99
+              }
+            }
+          },
+          "ann": {
+            "Con": {
+              "name": "Maybe",
+              "args": [
+                {
+                  "Con": {
+                    "name": "int",
+                    "args": []
+                  }
+                }
+              ]
+            }
+          },
+          "ty": {
+            "Con": {
+              "id": "Maybe",
+              "args": [
+                {
+                  "Con": {
+                    "id": "int",
+                    "args": []
+                  }
+                }
+              ]
+            }
+          },
+          "span": {
+            "start": {
+              "line": 8,
+              "col": 3
+            },
+            "end": {
+              "line": 8,
+              "col": 27
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "CheckType": {
+          "expr": {
+            "Call": {
+              "func": {
+                "Var": {
+                  "value": "ok",
+                  "decl": {
+                    "start": {
+                      "line": 4,
+                      "col": 3
+                    },
+                    "end": {
+                      "line": 6,
+                      "col": 3
+                    },
+                    "file": 99
+                  },
+                  "generics_instantiated": [
+                    {
+                      "Con": {
+                        "id": "string",
+                        "args": []
+                      }
+                    }
+                  ],
+                  "ty": {
+                    "Fun": {
+                      "args": [
+                        {
+                          "Con": {
+                            "id": "string",
+                            "args": []
+                          }
+                        }
+                      ],
+                      "bounds": [],
+                      "ret": {
+                        "Con": {
+                          "id": "Maybe",
+                          "args": [
+                            {
+                              "Con": {
+                                "id": "string",
+                                "args": []
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 9,
+                      "col": 11
+                    },
+                    "end": {
+                      "line": 9,
+                      "col": 13
+                    },
+                    "file": 99
+                  }
+                }
+              },
+              "args": [
+                {
+                  "Literal": {
+                    "lit": {
+                      "String": {
+                        "Single": "foo"
+                      }
+                    },
+                    "ty": {
+                      "Con": {
+                        "id": "string",
+                        "args": []
+                      }
+                    },
+                    "span": {
+                      "start": {
+                        "line": 9,
+                        "col": 14
+                      },
+                      "end": {
+                        "line": 9,
+                        "col": 19
+                      },
+                      "file": 99
+                    }
+                  }
+                }
+              ],
+              "ty": {
+                "Con": {
+                  "id": "Maybe",
+                  "args": [
+                    {
+                      "Con": {
+                        "id": "string",
+                        "args": []
+                      }
+                    }
+                  ]
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 9,
+                  "col": 13
+                },
+                "end": {
+                  "line": 9,
+                  "col": 19
+                },
+                "file": 99
+              }
+            }
+          },
+          "ann": {
+            "Con": {
+              "name": "Maybe",
+              "args": [
+                {
+                  "Con": {
+                    "name": "string",
+                    "args": []
+                  }
+                }
+              ]
+            }
+          },
+          "ty": {
+            "Con": {
+              "id": "Maybe",
+              "args": [
+                {
+                  "Con": {
+                    "id": "string",
+                    "args": []
+                  }
+                }
+              ]
+            }
+          },
+          "span": {
+            "start": {
+              "line": 9,
+              "col": 3
+            },
+            "end": {
+              "line": 9,
+              "col": 34
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "Var": {
+          "value": "ok",
+          "decl": {
+            "start": {
+              "line": 4,
+              "col": 3
+            },
+            "end": {
+              "line": 6,
+              "col": 3
+            },
+            "file": 99
+          },
+          "generics_instantiated": [
+            {
+              "Var": 99
+            }
+          ],
+          "ty": {
+            "Fun": {
+              "args": [
+                {
+                  "Var": 99
+                }
+              ],
+              "bounds": [],
+              "ret": {
+                "Con": {
+                  "id": "Maybe",
+                  "args": [
+                    {
+                      "Var": 99
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 11,
+              "col": 3
+            },
+            "end": {
+              "line": 11,
+              "col": 5
+            },
+            "file": 99
+          }
+        }
+      }
+    ],
+    "ty": {
+      "Fun": {
+        "args": [
+          {
+            "Var": 99
+          }
+        ],
+        "bounds": [],
+        "ret": {
+          "Con": {
+            "id": "Maybe",
+            "args": [
+              {
+                "Var": 99
+              }
+            ]
+          }
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 1,
+        "col": 1
+      },
+      "end": {
+        "line": 12,
+        "col": 1
+      },
+      "file": 99
+    }
+  }
+}

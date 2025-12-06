@@ -1,0 +1,14 @@
+Const expressions are type checked
+
+SOURCE:
+const a: string = 1
+
+OUTPUT:
+Type mismatch
+Expected:
+    string
+Got:
+    int
+
+1|  const a: string = 1
+    ^^^^^^^^^^^^^^^^^^^

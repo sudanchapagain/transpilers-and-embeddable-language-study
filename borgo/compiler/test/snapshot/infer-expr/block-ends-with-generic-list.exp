@@ -1,0 +1,324 @@
+Block ends with generic list
+
+SOURCE:
+{ fn foo<Y>(bar: Y) -> [Y] { [bar, bar] } }
+
+OUTPUT:
+fn <A>(A) -> [A]
+---
+No errors.
+---
+{
+  "Block": {
+    "stmts": [
+      {
+        "Closure": {
+          "fun": {
+            "name": "foo",
+            "generics": [
+              {
+                "name": "Y",
+                "bounds": [],
+                "span": {
+                  "start": {
+                    "line": 1,
+                    "col": 10
+                  },
+                  "end": {
+                    "line": 1,
+                    "col": 11
+                  },
+                  "file": 99
+                }
+              }
+            ],
+            "args": [
+              {
+                "pat": {
+                  "Type": {
+                    "ident": "bar",
+                    "is_mut": false,
+                    "ann": "Unknown",
+                    "span": {
+                      "start": {
+                        "line": 1,
+                        "col": 13
+                      },
+                      "end": {
+                        "line": 1,
+                        "col": 16
+                      },
+                      "file": 99
+                    }
+                  }
+                },
+                "ann": {
+                  "Con": {
+                    "name": "Y",
+                    "args": []
+                  }
+                },
+                "ty": {
+                  "Con": {
+                    "id": "Y",
+                    "args": []
+                  }
+                }
+              }
+            ],
+            "ret": {
+              "Con": {
+                "id": "Slice",
+                "args": [
+                  {
+                    "Con": {
+                      "id": "Y",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            },
+            "ann": {
+              "Con": {
+                "name": "Slice",
+                "args": [
+                  {
+                    "Con": {
+                      "name": "Y",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            },
+            "body": {
+              "Block": {
+                "stmts": [
+                  {
+                    "Literal": {
+                      "lit": {
+                        "Slice": [
+                          {
+                            "Var": {
+                              "value": "bar",
+                              "decl": {
+                                "start": {
+                                  "line": 1,
+                                  "col": 13
+                                },
+                                "end": {
+                                  "line": 1,
+                                  "col": 16
+                                },
+                                "file": 99
+                              },
+                              "generics_instantiated": [],
+                              "ty": {
+                                "Con": {
+                                  "id": "Y",
+                                  "args": []
+                                }
+                              },
+                              "span": {
+                                "start": {
+                                  "line": 1,
+                                  "col": 31
+                                },
+                                "end": {
+                                  "line": 1,
+                                  "col": 34
+                                },
+                                "file": 99
+                              }
+                            }
+                          },
+                          {
+                            "Var": {
+                              "value": "bar",
+                              "decl": {
+                                "start": {
+                                  "line": 1,
+                                  "col": 13
+                                },
+                                "end": {
+                                  "line": 1,
+                                  "col": 16
+                                },
+                                "file": 99
+                              },
+                              "generics_instantiated": [],
+                              "ty": {
+                                "Con": {
+                                  "id": "Y",
+                                  "args": []
+                                }
+                              },
+                              "span": {
+                                "start": {
+                                  "line": 1,
+                                  "col": 36
+                                },
+                                "end": {
+                                  "line": 1,
+                                  "col": 39
+                                },
+                                "file": 99
+                              }
+                            }
+                          }
+                        ]
+                      },
+                      "ty": {
+                        "Con": {
+                          "id": "Slice",
+                          "args": [
+                            {
+                              "Con": {
+                                "id": "Y",
+                                "args": []
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 1,
+                          "col": 30
+                        },
+                        "end": {
+                          "line": 1,
+                          "col": 39
+                        },
+                        "file": 99
+                      }
+                    }
+                  }
+                ],
+                "ty": {
+                  "Con": {
+                    "id": "Slice",
+                    "args": [
+                      {
+                        "Con": {
+                          "id": "Y",
+                          "args": []
+                        }
+                      }
+                    ]
+                  }
+                },
+                "span": {
+                  "start": {
+                    "line": 1,
+                    "col": 28
+                  },
+                  "end": {
+                    "line": 1,
+                    "col": 41
+                  },
+                  "file": 99
+                }
+              }
+            },
+            "bounded_ty": {
+              "generics": [
+                "Y"
+              ],
+              "ty": {
+                "Fun": {
+                  "args": [
+                    {
+                      "Con": {
+                        "id": "Y",
+                        "args": []
+                      }
+                    }
+                  ],
+                  "bounds": [],
+                  "ret": {
+                    "Con": {
+                      "id": "Slice",
+                      "args": [
+                        {
+                          "Con": {
+                            "id": "Y",
+                            "args": []
+                          }
+                        }
+                      ]
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "kind": "Inline",
+          "ty": {
+            "Fun": {
+              "args": [
+                {
+                  "Var": 99
+                }
+              ],
+              "bounds": [],
+              "ret": {
+                "Con": {
+                  "id": "Slice",
+                  "args": [
+                    {
+                      "Var": 99
+                    }
+                  ]
+                }
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 1,
+              "col": 3
+            },
+            "end": {
+              "line": 1,
+              "col": 41
+            },
+            "file": 99
+          }
+        }
+      }
+    ],
+    "ty": {
+      "Fun": {
+        "args": [
+          {
+            "Var": 99
+          }
+        ],
+        "bounds": [],
+        "ret": {
+          "Con": {
+            "id": "Slice",
+            "args": [
+              {
+                "Var": 99
+              }
+            ]
+          }
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 1,
+        "col": 1
+      },
+      "end": {
+        "line": 1,
+        "col": 43
+      },
+      "file": 99
+    }
+  }
+}

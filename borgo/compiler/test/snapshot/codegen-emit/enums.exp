@@ -1,0 +1,46 @@
+Enums
+
+SOURCE:
+enum Foo {
+    Bar(int, bool),
+    Baz,
+}
+
+fn main() {
+    inspect(Foo.Bar(2, false))
+    inspect(Foo.Baz)
+}
+
+OUTPUT:
+{tag:0 Bar0:2 Bar1:false}
+{tag:1 Bar0:0 Bar1:false}
+
+---
+package main
+
+func make_Foo_Bar(arg_0 int, arg_1 bool) Foo {
+	return Foo{tag: Foo_Bar, Bar0: arg_0, Bar1: arg_1}
+}
+
+func make_Foo_Baz() Foo {
+	return Foo{tag: Foo_Baz}
+}
+
+type FooTag int
+
+const (
+	Foo_Bar FooTag = iota
+	Foo_Baz
+)
+
+type Foo struct {
+	tag  FooTag
+	Bar0 int
+	Bar1 bool
+}
+
+func main() {
+	inspect[Foo](make_Foo_Bar(2, false))
+
+	inspect[Foo](make_Foo_Baz())
+}

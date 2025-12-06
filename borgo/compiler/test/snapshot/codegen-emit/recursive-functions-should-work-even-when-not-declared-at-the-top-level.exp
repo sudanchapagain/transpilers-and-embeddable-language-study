@@ -1,0 +1,45 @@
+Recursive functions should work even when not declared at the top-level.
+
+SOURCE:
+fn main() {
+    fn foo(n: int, acc: int) -> int {
+        if n == 0 {
+            return acc
+        }
+
+        let new_acc = if n % 2 == 0 {
+            acc + n
+        } else {
+            acc
+        }
+
+        foo(n - 1, new_acc)
+    }
+
+    assertEq(foo(10, 0), 30)
+}
+
+OUTPUT:
+
+---
+package main
+
+func main() {
+	var foo func(int, int) int
+	foo = func(n int, acc int) int {
+		if n == 0 {
+			return acc
+		}
+		var new_acc int
+
+		if n%2 == 0 {
+			new_acc = acc + n
+		} else {
+			new_acc = acc
+		}
+
+		return foo(n-1, new_acc)
+	}
+
+	assertEq[int](foo(10, 0), 30)
+}

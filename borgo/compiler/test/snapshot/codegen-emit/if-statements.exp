@@ -1,0 +1,24 @@
+If statements
+
+SOURCE:
+fn main() {
+    let x = if true { 6 } else { 0 }
+    assertEq(x, 6)
+}
+
+OUTPUT:
+
+---
+package main
+
+func main() {
+	var x int
+
+	if true {
+		x = 6
+	} else {
+		x = 0
+	}
+
+	assertEq[int](x, 6)
+}

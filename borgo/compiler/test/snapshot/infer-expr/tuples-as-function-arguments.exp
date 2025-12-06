@@ -1,0 +1,388 @@
+Tuples as function arguments.
+
+SOURCE:
+{
+  fn foo(t: (int, bool)) -> int {
+    fst(t)
+  }
+}
+
+OUTPUT:
+fn ((int, bool)) -> int
+---
+No errors.
+---
+{
+  "Block": {
+    "stmts": [
+      {
+        "Closure": {
+          "fun": {
+            "name": "foo",
+            "generics": [],
+            "args": [
+              {
+                "pat": {
+                  "Type": {
+                    "ident": "t",
+                    "is_mut": false,
+                    "ann": "Unknown",
+                    "span": {
+                      "start": {
+                        "line": 2,
+                        "col": 10
+                      },
+                      "end": {
+                        "line": 2,
+                        "col": 11
+                      },
+                      "file": 99
+                    }
+                  }
+                },
+                "ann": {
+                  "Con": {
+                    "name": "Tuple2",
+                    "args": [
+                      {
+                        "Con": {
+                          "name": "int",
+                          "args": []
+                        }
+                      },
+                      {
+                        "Con": {
+                          "name": "bool",
+                          "args": []
+                        }
+                      }
+                    ]
+                  }
+                },
+                "ty": {
+                  "Con": {
+                    "id": "Tuple2",
+                    "args": [
+                      {
+                        "Con": {
+                          "id": "int",
+                          "args": []
+                        }
+                      },
+                      {
+                        "Con": {
+                          "id": "bool",
+                          "args": []
+                        }
+                      }
+                    ]
+                  }
+                }
+              }
+            ],
+            "ret": {
+              "Con": {
+                "id": "int",
+                "args": []
+              }
+            },
+            "ann": {
+              "Con": {
+                "name": "int",
+                "args": []
+              }
+            },
+            "body": {
+              "Block": {
+                "stmts": [
+                  {
+                    "Call": {
+                      "func": {
+                        "Var": {
+                          "value": "fst",
+                          "decl": {
+                            "start": {
+                              "line": 42,
+                              "col": 1
+                            },
+                            "end": {
+                              "line": 44,
+                              "col": 1
+                            },
+                            "file": 99
+                          },
+                          "generics_instantiated": [
+                            {
+                              "Con": {
+                                "id": "int",
+                                "args": []
+                              }
+                            },
+                            {
+                              "Con": {
+                                "id": "bool",
+                                "args": []
+                              }
+                            }
+                          ],
+                          "ty": {
+                            "Fun": {
+                              "args": [
+                                {
+                                  "Con": {
+                                    "id": "Tuple2",
+                                    "args": [
+                                      {
+                                        "Con": {
+                                          "id": "int",
+                                          "args": []
+                                        }
+                                      },
+                                      {
+                                        "Con": {
+                                          "id": "bool",
+                                          "args": []
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              ],
+                              "bounds": [],
+                              "ret": {
+                                "Con": {
+                                  "id": "int",
+                                  "args": []
+                                }
+                              }
+                            }
+                          },
+                          "span": {
+                            "start": {
+                              "line": 3,
+                              "col": 5
+                            },
+                            "end": {
+                              "line": 3,
+                              "col": 8
+                            },
+                            "file": 99
+                          }
+                        }
+                      },
+                      "args": [
+                        {
+                          "Var": {
+                            "value": "t",
+                            "decl": {
+                              "start": {
+                                "line": 2,
+                                "col": 10
+                              },
+                              "end": {
+                                "line": 2,
+                                "col": 11
+                              },
+                              "file": 99
+                            },
+                            "generics_instantiated": [],
+                            "ty": {
+                              "Con": {
+                                "id": "Tuple2",
+                                "args": [
+                                  {
+                                    "Con": {
+                                      "id": "int",
+                                      "args": []
+                                    }
+                                  },
+                                  {
+                                    "Con": {
+                                      "id": "bool",
+                                      "args": []
+                                    }
+                                  }
+                                ]
+                              }
+                            },
+                            "span": {
+                              "start": {
+                                "line": 3,
+                                "col": 9
+                              },
+                              "end": {
+                                "line": 3,
+                                "col": 10
+                              },
+                              "file": 99
+                            }
+                          }
+                        }
+                      ],
+                      "ty": {
+                        "Con": {
+                          "id": "int",
+                          "args": []
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 3,
+                          "col": 8
+                        },
+                        "end": {
+                          "line": 3,
+                          "col": 10
+                        },
+                        "file": 99
+                      }
+                    }
+                  }
+                ],
+                "ty": {
+                  "Con": {
+                    "id": "int",
+                    "args": []
+                  }
+                },
+                "span": {
+                  "start": {
+                    "line": 2,
+                    "col": 33
+                  },
+                  "end": {
+                    "line": 4,
+                    "col": 3
+                  },
+                  "file": 99
+                }
+              }
+            },
+            "bounded_ty": {
+              "generics": [],
+              "ty": {
+                "Fun": {
+                  "args": [
+                    {
+                      "Con": {
+                        "id": "Tuple2",
+                        "args": [
+                          {
+                            "Con": {
+                              "id": "int",
+                              "args": []
+                            }
+                          },
+                          {
+                            "Con": {
+                              "id": "bool",
+                              "args": []
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ],
+                  "bounds": [],
+                  "ret": {
+                    "Con": {
+                      "id": "int",
+                      "args": []
+                    }
+                  }
+                }
+              }
+            }
+          },
+          "kind": "Inline",
+          "ty": {
+            "Fun": {
+              "args": [
+                {
+                  "Con": {
+                    "id": "Tuple2",
+                    "args": [
+                      {
+                        "Con": {
+                          "id": "int",
+                          "args": []
+                        }
+                      },
+                      {
+                        "Con": {
+                          "id": "bool",
+                          "args": []
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "bounds": [],
+              "ret": {
+                "Con": {
+                  "id": "int",
+                  "args": []
+                }
+              }
+            }
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "col": 3
+            },
+            "end": {
+              "line": 4,
+              "col": 3
+            },
+            "file": 99
+          }
+        }
+      }
+    ],
+    "ty": {
+      "Fun": {
+        "args": [
+          {
+            "Con": {
+              "id": "Tuple2",
+              "args": [
+                {
+                  "Con": {
+                    "id": "int",
+                    "args": []
+                  }
+                },
+                {
+                  "Con": {
+                    "id": "bool",
+                    "args": []
+                  }
+                }
+              ]
+            }
+          }
+        ],
+        "bounds": [],
+        "ret": {
+          "Con": {
+            "id": "int",
+            "args": []
+          }
+        }
+      }
+    },
+    "span": {
+      "start": {
+        "line": 1,
+        "col": 1
+      },
+      "end": {
+        "line": 5,
+        "col": 1
+      },
+      "file": 99
+    }
+  }
+}

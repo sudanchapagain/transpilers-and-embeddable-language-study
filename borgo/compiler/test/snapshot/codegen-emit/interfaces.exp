@@ -1,0 +1,62 @@
+Interfaces
+
+SOURCE:
+interface Foo {
+    fn foo() -> int
+}
+
+struct Bar { x: int }
+
+impl (b: Bar) {
+    fn foo() -> int {
+        b.x
+    }
+}
+
+fn baz(f: Foo) -> int {
+    f.foo() + 4
+}
+
+interface Composite {
+    impl Foo
+}
+
+fn check_composite(c: Composite) {
+    c.foo()
+}
+
+fn main() {
+    assertEq(baz(&Bar { x: 6 }), 10)
+}
+
+OUTPUT:
+
+---
+package main
+
+type Foo interface {
+	foo() int
+}
+type Bar struct {
+	x int
+}
+
+func (b Bar) foo() int {
+	return b.x
+}
+
+func baz(f Foo) int {
+	return f.foo() + 4
+}
+
+type Composite interface {
+	Foo
+}
+
+func check_composite(c Composite) {
+	c.foo()
+}
+
+func main() {
+	assertEq[int](baz(&Bar{x: 6}), 10)
+}

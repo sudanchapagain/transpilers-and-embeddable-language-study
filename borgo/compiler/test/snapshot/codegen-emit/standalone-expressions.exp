@@ -1,0 +1,21 @@
+Standalone expressions
+
+SOURCE:
+use fmt
+
+fn main() {
+    fmt.Printf("hello %v", 4)
+}
+
+OUTPUT:
+hello 4
+---
+package main
+
+import (
+	"fmt"
+)
+
+func main() {
+	fmt.Printf("hello %v", 4)
+}

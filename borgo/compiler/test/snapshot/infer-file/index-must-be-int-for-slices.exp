@@ -1,0 +1,17 @@
+Index must be int for slices
+
+SOURCE:
+fn main() {
+    let xs = ["a"]
+    xs[false]
+}
+
+OUTPUT:
+Type mismatch
+Expected:
+    int
+Got:
+    bool
+
+3|      xs[false]
+          ^^^^^^

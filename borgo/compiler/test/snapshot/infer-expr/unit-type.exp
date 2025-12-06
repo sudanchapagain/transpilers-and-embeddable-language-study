@@ -1,0 +1,31 @@
+Unit type.
+
+SOURCE:
+()
+
+OUTPUT:
+()
+---
+No errors.
+---
+{
+  "Unit": {
+    "ty": {
+      "Con": {
+        "id": "Unit",
+        "args": []
+      }
+    },
+    "span": {
+      "start": {
+        "line": 1,
+        "col": 1
+      },
+      "end": {
+        "line": 1,
+        "col": 2
+      },
+      "file": 99
+    }
+  }
+}

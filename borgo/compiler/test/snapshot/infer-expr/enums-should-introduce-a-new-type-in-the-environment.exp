@@ -1,0 +1,95 @@
+Enums should introduce a new type in the environment.
+
+SOURCE:
+{
+  enum Color { Red }
+  Color.Red
+}
+
+OUTPUT:
+Color
+---
+No errors.
+---
+{
+  "Block": {
+    "stmts": [
+      {
+        "EnumDef": {
+          "def": {
+            "name": "Color",
+            "generics": [],
+            "cons": [
+              {
+                "name": "Red",
+                "fields": []
+              }
+            ]
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "col": 3
+            },
+            "end": {
+              "line": 2,
+              "col": 20
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "Var": {
+          "value": "Color.Red",
+          "decl": {
+            "start": {
+              "line": 2,
+              "col": 3
+            },
+            "end": {
+              "line": 2,
+              "col": 20
+            },
+            "file": 99
+          },
+          "generics_instantiated": [],
+          "ty": {
+            "Con": {
+              "id": "Color",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 3,
+              "col": 9
+            },
+            "end": {
+              "line": 3,
+              "col": 12
+            },
+            "file": 99
+          }
+        }
+      }
+    ],
+    "ty": {
+      "Con": {
+        "id": "Color",
+        "args": []
+      }
+    },
+    "span": {
+      "start": {
+        "line": 1,
+        "col": 1
+      },
+      "end": {
+        "line": 4,
+        "col": 1
+      },
+      "file": 99
+    }
+  }
+}

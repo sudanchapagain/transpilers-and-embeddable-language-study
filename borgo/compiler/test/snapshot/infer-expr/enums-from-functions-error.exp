@@ -1,0 +1,20 @@
+Enums from functions (error).
+
+SOURCE:
+{
+  enum Maybe<T> { Just(T), None }
+
+  fn foo(b: int) -> Maybe<string> {
+    Maybe.Just(b)
+  }
+}
+
+OUTPUT:
+Type mismatch
+Expected:
+    Maybe<string>
+Got:
+    Maybe<int>
+
+5|      Maybe.Just(b)
+                  ^^

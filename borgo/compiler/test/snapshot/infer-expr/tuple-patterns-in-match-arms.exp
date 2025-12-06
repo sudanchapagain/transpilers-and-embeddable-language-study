@@ -1,0 +1,310 @@
+Tuple patterns in match arms
+
+SOURCE:
+{
+  match (2, "b") {
+    (_, y) => y,
+    _ => "c",
+  }
+}
+
+OUTPUT:
+string
+---
+No errors.
+---
+{
+  "Block": {
+    "stmts": [
+      {
+        "Match": {
+          "subject": {
+            "StructCall": {
+              "name": "Tuple2",
+              "fields": [
+                {
+                  "name": "first",
+                  "value": {
+                    "Literal": {
+                      "lit": {
+                        "Int": 2
+                      },
+                      "ty": {
+                        "Con": {
+                          "id": "int",
+                          "args": []
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 2,
+                          "col": 10
+                        },
+                        "end": {
+                          "line": 2,
+                          "col": 11
+                        },
+                        "file": 99
+                      }
+                    }
+                  }
+                },
+                {
+                  "name": "second",
+                  "value": {
+                    "Literal": {
+                      "lit": {
+                        "String": {
+                          "Single": "b"
+                        }
+                      },
+                      "ty": {
+                        "Con": {
+                          "id": "string",
+                          "args": []
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 2,
+                          "col": 13
+                        },
+                        "end": {
+                          "line": 2,
+                          "col": 16
+                        },
+                        "file": 99
+                      }
+                    }
+                  }
+                }
+              ],
+              "rest": null,
+              "ty": {
+                "Con": {
+                  "id": "Tuple2",
+                  "args": [
+                    {
+                      "Con": {
+                        "id": "int",
+                        "args": []
+                      }
+                    },
+                    {
+                      "Con": {
+                        "id": "string",
+                        "args": []
+                      }
+                    }
+                  ]
+                }
+              },
+              "span": {
+                "start": {
+                  "line": 2,
+                  "col": 9
+                },
+                "end": {
+                  "line": 2,
+                  "col": 16
+                },
+                "file": 99
+              }
+            }
+          },
+          "arms": [
+            {
+              "pat": {
+                "Struct": {
+                  "ident": "Tuple2",
+                  "fields": [
+                    {
+                      "name": "first",
+                      "value": {
+                        "Wild": {
+                          "span": {
+                            "start": {
+                              "line": 3,
+                              "col": 6
+                            },
+                            "end": {
+                              "line": 3,
+                              "col": 7
+                            },
+                            "file": 99
+                          }
+                        }
+                      }
+                    },
+                    {
+                      "name": "second",
+                      "value": {
+                        "Type": {
+                          "ident": "y",
+                          "is_mut": false,
+                          "ann": "Unknown",
+                          "span": {
+                            "start": {
+                              "line": 3,
+                              "col": 9
+                            },
+                            "end": {
+                              "line": 3,
+                              "col": 10
+                            },
+                            "file": 99
+                          }
+                        }
+                      }
+                    }
+                  ],
+                  "ty": {
+                    "Con": {
+                      "id": "Tuple2",
+                      "args": [
+                        {
+                          "Con": {
+                            "id": "int",
+                            "args": []
+                          }
+                        },
+                        {
+                          "Con": {
+                            "id": "string",
+                            "args": []
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 3,
+                      "col": 5
+                    },
+                    "end": {
+                      "line": 3,
+                      "col": 10
+                    },
+                    "file": 99
+                  }
+                }
+              },
+              "expr": {
+                "Var": {
+                  "value": "y",
+                  "decl": {
+                    "start": {
+                      "line": 3,
+                      "col": 9
+                    },
+                    "end": {
+                      "line": 3,
+                      "col": 10
+                    },
+                    "file": 99
+                  },
+                  "generics_instantiated": [],
+                  "ty": {
+                    "Con": {
+                      "id": "string",
+                      "args": []
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 3,
+                      "col": 15
+                    },
+                    "end": {
+                      "line": 3,
+                      "col": 16
+                    },
+                    "file": 99
+                  }
+                }
+              }
+            },
+            {
+              "pat": {
+                "Wild": {
+                  "span": {
+                    "start": {
+                      "line": 4,
+                      "col": 5
+                    },
+                    "end": {
+                      "line": 4,
+                      "col": 6
+                    },
+                    "file": 99
+                  }
+                }
+              },
+              "expr": {
+                "Literal": {
+                  "lit": {
+                    "String": {
+                      "Single": "c"
+                    }
+                  },
+                  "ty": {
+                    "Con": {
+                      "id": "string",
+                      "args": []
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 4,
+                      "col": 10
+                    },
+                    "end": {
+                      "line": 4,
+                      "col": 13
+                    },
+                    "file": 99
+                  }
+                }
+              }
+            }
+          ],
+          "ty": {
+            "Con": {
+              "id": "string",
+              "args": []
+            }
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "col": 3
+            },
+            "end": {
+              "line": 5,
+              "col": 3
+            },
+            "file": 99
+          }
+        }
+      }
+    ],
+    "ty": {
+      "Con": {
+        "id": "string",
+        "args": []
+      }
+    },
+    "span": {
+      "start": {
+        "line": 1,
+        "col": 1
+      },
+      "end": {
+        "line": 6,
+        "col": 1
+      },
+      "file": 99
+    }
+  }
+}

@@ -1,0 +1,2061 @@
+Type aliases
+
+SOURCE:
+type Foo<V> = Map<int, V>
+type Complex<A, B> = Map<bool, Map<A, Map<B, string>>>
+
+fn foo(m: Foo<string>) -> string {
+    m[1]
+}
+
+fn takes_map(m: Map<int, string>) -> string {
+    m[1]
+}
+
+fn main() {
+    let m: Foo<string> = Map.new()
+    m.Insert(1, "a")
+
+    foo(m)
+    takes_map(m)
+
+    let c: Complex<int, bool> = Map.new()
+    @ensure c, Map<bool, Map<int, Map<bool, string>>>
+}
+
+OUTPUT:
+fn () -> ()
+---
+No errors.
+---
+[
+  {
+    "TypeAlias": {
+      "def": {
+        "name": "Foo",
+        "generics": [
+          {
+            "name": "V",
+            "bounds": [],
+            "span": {
+              "start": {
+                "line": 1,
+                "col": 10
+              },
+              "end": {
+                "line": 1,
+                "col": 11
+              },
+              "file": 99
+            }
+          }
+        ],
+        "ann": {
+          "Con": {
+            "name": "Map",
+            "args": [
+              {
+                "Con": {
+                  "name": "int",
+                  "args": []
+                }
+              },
+              {
+                "Con": {
+                  "name": "V",
+                  "args": []
+                }
+              }
+            ]
+          }
+        },
+        "ty": {
+          "generics": [
+            "V"
+          ],
+          "ty": {
+            "Con": {
+              "id": "Map",
+              "args": [
+                {
+                  "Con": {
+                    "id": "int",
+                    "args": []
+                  }
+                },
+                {
+                  "Con": {
+                    "id": "V",
+                    "args": []
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "span": {
+        "start": {
+          "line": 1,
+          "col": 1
+        },
+        "end": {
+          "line": 1,
+          "col": 25
+        },
+        "file": 99
+      }
+    }
+  },
+  {
+    "TypeAlias": {
+      "def": {
+        "name": "Complex",
+        "generics": [
+          {
+            "name": "A",
+            "bounds": [],
+            "span": {
+              "start": {
+                "line": 2,
+                "col": 14
+              },
+              "end": {
+                "line": 2,
+                "col": 15
+              },
+              "file": 99
+            }
+          },
+          {
+            "name": "B",
+            "bounds": [],
+            "span": {
+              "start": {
+                "line": 2,
+                "col": 17
+              },
+              "end": {
+                "line": 2,
+                "col": 18
+              },
+              "file": 99
+            }
+          }
+        ],
+        "ann": {
+          "Con": {
+            "name": "Map",
+            "args": [
+              {
+                "Con": {
+                  "name": "bool",
+                  "args": []
+                }
+              },
+              {
+                "Con": {
+                  "name": "Map",
+                  "args": [
+                    {
+                      "Con": {
+                        "name": "A",
+                        "args": []
+                      }
+                    },
+                    {
+                      "Con": {
+                        "name": "Map",
+                        "args": [
+                          {
+                            "Con": {
+                              "name": "B",
+                              "args": []
+                            }
+                          },
+                          {
+                            "Con": {
+                              "name": "string",
+                              "args": []
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              }
+            ]
+          }
+        },
+        "ty": {
+          "generics": [
+            "A",
+            "B"
+          ],
+          "ty": {
+            "Con": {
+              "id": "Map",
+              "args": [
+                {
+                  "Con": {
+                    "id": "bool",
+                    "args": []
+                  }
+                },
+                {
+                  "Con": {
+                    "id": "Map",
+                    "args": [
+                      {
+                        "Con": {
+                          "id": "A",
+                          "args": []
+                        }
+                      },
+                      {
+                        "Con": {
+                          "id": "Map",
+                          "args": [
+                            {
+                              "Con": {
+                                "id": "B",
+                                "args": []
+                              }
+                            },
+                            {
+                              "Con": {
+                                "id": "string",
+                                "args": []
+                              }
+                            }
+                          ]
+                        }
+                      }
+                    ]
+                  }
+                }
+              ]
+            }
+          }
+        }
+      },
+      "span": {
+        "start": {
+          "line": 2,
+          "col": 1
+        },
+        "end": {
+          "line": 2,
+          "col": 54
+        },
+        "file": 99
+      }
+    }
+  },
+  {
+    "Closure": {
+      "fun": {
+        "name": "foo",
+        "generics": [],
+        "args": [
+          {
+            "pat": {
+              "Type": {
+                "ident": "m",
+                "is_mut": false,
+                "ann": "Unknown",
+                "span": {
+                  "start": {
+                    "line": 4,
+                    "col": 8
+                  },
+                  "end": {
+                    "line": 4,
+                    "col": 9
+                  },
+                  "file": 99
+                }
+              }
+            },
+            "ann": {
+              "Con": {
+                "name": "Foo",
+                "args": [
+                  {
+                    "Con": {
+                      "name": "string",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            },
+            "ty": {
+              "Con": {
+                "id": "Map",
+                "args": [
+                  {
+                    "Con": {
+                      "id": "int",
+                      "args": []
+                    }
+                  },
+                  {
+                    "Con": {
+                      "id": "string",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "ret": {
+          "Con": {
+            "id": "string",
+            "args": []
+          }
+        },
+        "ann": {
+          "Con": {
+            "name": "string",
+            "args": []
+          }
+        },
+        "body": {
+          "Block": {
+            "stmts": [
+              {
+                "Index": {
+                  "expr": {
+                    "Var": {
+                      "value": "m",
+                      "decl": {
+                        "start": {
+                          "line": 4,
+                          "col": 8
+                        },
+                        "end": {
+                          "line": 4,
+                          "col": 9
+                        },
+                        "file": 99
+                      },
+                      "generics_instantiated": [],
+                      "ty": {
+                        "Con": {
+                          "id": "Map",
+                          "args": [
+                            {
+                              "Con": {
+                                "id": "int",
+                                "args": []
+                              }
+                            },
+                            {
+                              "Con": {
+                                "id": "string",
+                                "args": []
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 5,
+                          "col": 5
+                        },
+                        "end": {
+                          "line": 5,
+                          "col": 6
+                        },
+                        "file": 99
+                      }
+                    }
+                  },
+                  "index": {
+                    "Literal": {
+                      "lit": {
+                        "Int": 1
+                      },
+                      "ty": {
+                        "Con": {
+                          "id": "int",
+                          "args": []
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 5,
+                          "col": 7
+                        },
+                        "end": {
+                          "line": 5,
+                          "col": 8
+                        },
+                        "file": 99
+                      }
+                    }
+                  },
+                  "ty": {
+                    "Con": {
+                      "id": "string",
+                      "args": []
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 5,
+                      "col": 6
+                    },
+                    "end": {
+                      "line": 5,
+                      "col": 8
+                    },
+                    "file": 99
+                  }
+                }
+              }
+            ],
+            "ty": {
+              "Con": {
+                "id": "string",
+                "args": []
+              }
+            },
+            "span": {
+              "start": {
+                "line": 4,
+                "col": 34
+              },
+              "end": {
+                "line": 6,
+                "col": 1
+              },
+              "file": 99
+            }
+          }
+        },
+        "bounded_ty": {
+          "generics": [],
+          "ty": {
+            "Fun": {
+              "args": [
+                {
+                  "Con": {
+                    "id": "Map",
+                    "args": [
+                      {
+                        "Con": {
+                          "id": "int",
+                          "args": []
+                        }
+                      },
+                      {
+                        "Con": {
+                          "id": "string",
+                          "args": []
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "bounds": [],
+              "ret": {
+                "Con": {
+                  "id": "string",
+                  "args": []
+                }
+              }
+            }
+          }
+        }
+      },
+      "kind": "TopLevel",
+      "ty": {
+        "Fun": {
+          "args": [
+            {
+              "Con": {
+                "id": "Map",
+                "args": [
+                  {
+                    "Con": {
+                      "id": "int",
+                      "args": []
+                    }
+                  },
+                  {
+                    "Con": {
+                      "id": "string",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "bounds": [],
+          "ret": {
+            "Con": {
+              "id": "string",
+              "args": []
+            }
+          }
+        }
+      },
+      "span": {
+        "start": {
+          "line": 4,
+          "col": 1
+        },
+        "end": {
+          "line": 6,
+          "col": 1
+        },
+        "file": 99
+      }
+    }
+  },
+  {
+    "Closure": {
+      "fun": {
+        "name": "takes_map",
+        "generics": [],
+        "args": [
+          {
+            "pat": {
+              "Type": {
+                "ident": "m",
+                "is_mut": false,
+                "ann": "Unknown",
+                "span": {
+                  "start": {
+                    "line": 8,
+                    "col": 14
+                  },
+                  "end": {
+                    "line": 8,
+                    "col": 15
+                  },
+                  "file": 99
+                }
+              }
+            },
+            "ann": {
+              "Con": {
+                "name": "Map",
+                "args": [
+                  {
+                    "Con": {
+                      "name": "int",
+                      "args": []
+                    }
+                  },
+                  {
+                    "Con": {
+                      "name": "string",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            },
+            "ty": {
+              "Con": {
+                "id": "Map",
+                "args": [
+                  {
+                    "Con": {
+                      "id": "int",
+                      "args": []
+                    }
+                  },
+                  {
+                    "Con": {
+                      "id": "string",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            }
+          }
+        ],
+        "ret": {
+          "Con": {
+            "id": "string",
+            "args": []
+          }
+        },
+        "ann": {
+          "Con": {
+            "name": "string",
+            "args": []
+          }
+        },
+        "body": {
+          "Block": {
+            "stmts": [
+              {
+                "Index": {
+                  "expr": {
+                    "Var": {
+                      "value": "m",
+                      "decl": {
+                        "start": {
+                          "line": 8,
+                          "col": 14
+                        },
+                        "end": {
+                          "line": 8,
+                          "col": 15
+                        },
+                        "file": 99
+                      },
+                      "generics_instantiated": [],
+                      "ty": {
+                        "Con": {
+                          "id": "Map",
+                          "args": [
+                            {
+                              "Con": {
+                                "id": "int",
+                                "args": []
+                              }
+                            },
+                            {
+                              "Con": {
+                                "id": "string",
+                                "args": []
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 9,
+                          "col": 5
+                        },
+                        "end": {
+                          "line": 9,
+                          "col": 6
+                        },
+                        "file": 99
+                      }
+                    }
+                  },
+                  "index": {
+                    "Literal": {
+                      "lit": {
+                        "Int": 1
+                      },
+                      "ty": {
+                        "Con": {
+                          "id": "int",
+                          "args": []
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 9,
+                          "col": 7
+                        },
+                        "end": {
+                          "line": 9,
+                          "col": 8
+                        },
+                        "file": 99
+                      }
+                    }
+                  },
+                  "ty": {
+                    "Con": {
+                      "id": "string",
+                      "args": []
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 9,
+                      "col": 6
+                    },
+                    "end": {
+                      "line": 9,
+                      "col": 8
+                    },
+                    "file": 99
+                  }
+                }
+              }
+            ],
+            "ty": {
+              "Con": {
+                "id": "string",
+                "args": []
+              }
+            },
+            "span": {
+              "start": {
+                "line": 8,
+                "col": 45
+              },
+              "end": {
+                "line": 10,
+                "col": 1
+              },
+              "file": 99
+            }
+          }
+        },
+        "bounded_ty": {
+          "generics": [],
+          "ty": {
+            "Fun": {
+              "args": [
+                {
+                  "Con": {
+                    "id": "Map",
+                    "args": [
+                      {
+                        "Con": {
+                          "id": "int",
+                          "args": []
+                        }
+                      },
+                      {
+                        "Con": {
+                          "id": "string",
+                          "args": []
+                        }
+                      }
+                    ]
+                  }
+                }
+              ],
+              "bounds": [],
+              "ret": {
+                "Con": {
+                  "id": "string",
+                  "args": []
+                }
+              }
+            }
+          }
+        }
+      },
+      "kind": "TopLevel",
+      "ty": {
+        "Fun": {
+          "args": [
+            {
+              "Con": {
+                "id": "Map",
+                "args": [
+                  {
+                    "Con": {
+                      "id": "int",
+                      "args": []
+                    }
+                  },
+                  {
+                    "Con": {
+                      "id": "string",
+                      "args": []
+                    }
+                  }
+                ]
+              }
+            }
+          ],
+          "bounds": [],
+          "ret": {
+            "Con": {
+              "id": "string",
+              "args": []
+            }
+          }
+        }
+      },
+      "span": {
+        "start": {
+          "line": 8,
+          "col": 1
+        },
+        "end": {
+          "line": 10,
+          "col": 1
+        },
+        "file": 99
+      }
+    }
+  },
+  {
+    "Closure": {
+      "fun": {
+        "name": "main",
+        "generics": [],
+        "args": [],
+        "ret": {
+          "Con": {
+            "id": "Unit",
+            "args": []
+          }
+        },
+        "ann": {
+          "Con": {
+            "name": "Unit",
+            "args": []
+          }
+        },
+        "body": {
+          "Block": {
+            "stmts": [
+              {
+                "Let": {
+                  "binding": {
+                    "pat": {
+                      "Type": {
+                        "ident": "m",
+                        "is_mut": false,
+                        "ann": "Unknown",
+                        "span": {
+                          "start": {
+                            "line": 13,
+                            "col": 9
+                          },
+                          "end": {
+                            "line": 13,
+                            "col": 10
+                          },
+                          "file": 99
+                        }
+                      }
+                    },
+                    "ann": {
+                      "Con": {
+                        "name": "Foo",
+                        "args": [
+                          {
+                            "Con": {
+                              "name": "string",
+                              "args": []
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "ty": {
+                      "Con": {
+                        "id": "Map",
+                        "args": [
+                          {
+                            "Con": {
+                              "id": "int",
+                              "args": []
+                            }
+                          },
+                          {
+                            "Con": {
+                              "id": "string",
+                              "args": []
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "value": {
+                    "Call": {
+                      "func": {
+                        "Var": {
+                          "value": "Map.new",
+                          "decl": {
+                            "start": {
+                              "line": 218,
+                              "col": 1
+                            },
+                            "end": {
+                              "line": 222,
+                              "col": 1
+                            },
+                            "file": 99
+                          },
+                          "generics_instantiated": [
+                            {
+                              "Con": {
+                                "id": "int",
+                                "args": []
+                              }
+                            },
+                            {
+                              "Con": {
+                                "id": "string",
+                                "args": []
+                              }
+                            }
+                          ],
+                          "ty": {
+                            "Fun": {
+                              "args": [],
+                              "bounds": [
+                                {
+                                  "generic": {
+                                    "Con": {
+                                      "id": "int",
+                                      "args": []
+                                    }
+                                  },
+                                  "ty": {
+                                    "Con": {
+                                      "id": "comparable",
+                                      "args": []
+                                    }
+                                  }
+                                }
+                              ],
+                              "ret": {
+                                "Con": {
+                                  "id": "Map",
+                                  "args": [
+                                    {
+                                      "Con": {
+                                        "id": "int",
+                                        "args": []
+                                      }
+                                    },
+                                    {
+                                      "Con": {
+                                        "id": "string",
+                                        "args": []
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          },
+                          "span": {
+                            "start": {
+                              "line": 13,
+                              "col": 30
+                            },
+                            "end": {
+                              "line": 13,
+                              "col": 33
+                            },
+                            "file": 99
+                          }
+                        }
+                      },
+                      "args": [],
+                      "ty": {
+                        "Con": {
+                          "id": "Map",
+                          "args": [
+                            {
+                              "Con": {
+                                "id": "int",
+                                "args": []
+                              }
+                            },
+                            {
+                              "Con": {
+                                "id": "string",
+                                "args": []
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 13,
+                          "col": 33
+                        },
+                        "end": {
+                          "line": 13,
+                          "col": 34
+                        },
+                        "file": 99
+                      }
+                    }
+                  },
+                  "mutable": false,
+                  "ty": {
+                    "Con": {
+                      "id": "Map",
+                      "args": [
+                        {
+                          "Con": {
+                            "id": "int",
+                            "args": []
+                          }
+                        },
+                        {
+                          "Con": {
+                            "id": "string",
+                            "args": []
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 13,
+                      "col": 5
+                    },
+                    "end": {
+                      "line": 13,
+                      "col": 34
+                    },
+                    "file": 99
+                  }
+                }
+              },
+              {
+                "Call": {
+                  "func": {
+                    "FieldAccess": {
+                      "expr": {
+                        "Var": {
+                          "value": "m",
+                          "decl": {
+                            "start": {
+                              "line": 13,
+                              "col": 9
+                            },
+                            "end": {
+                              "line": 13,
+                              "col": 10
+                            },
+                            "file": 99
+                          },
+                          "generics_instantiated": [],
+                          "ty": {
+                            "Con": {
+                              "id": "Map",
+                              "args": [
+                                {
+                                  "Con": {
+                                    "id": "int",
+                                    "args": []
+                                  }
+                                },
+                                {
+                                  "Con": {
+                                    "id": "string",
+                                    "args": []
+                                  }
+                                }
+                              ]
+                            }
+                          },
+                          "span": {
+                            "start": {
+                              "line": 14,
+                              "col": 5
+                            },
+                            "end": {
+                              "line": 14,
+                              "col": 6
+                            },
+                            "file": 99
+                          }
+                        }
+                      },
+                      "field": "Insert",
+                      "ty": {
+                        "Fun": {
+                          "args": [
+                            {
+                              "Con": {
+                                "id": "int",
+                                "args": []
+                              }
+                            },
+                            {
+                              "Con": {
+                                "id": "string",
+                                "args": []
+                              }
+                            }
+                          ],
+                          "bounds": [],
+                          "ret": {
+                            "Con": {
+                              "id": "Unit",
+                              "args": []
+                            }
+                          }
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 14,
+                          "col": 7
+                        },
+                        "end": {
+                          "line": 14,
+                          "col": 13
+                        },
+                        "file": 99
+                      }
+                    }
+                  },
+                  "args": [
+                    {
+                      "Literal": {
+                        "lit": {
+                          "Int": 1
+                        },
+                        "ty": {
+                          "Con": {
+                            "id": "int",
+                            "args": []
+                          }
+                        },
+                        "span": {
+                          "start": {
+                            "line": 14,
+                            "col": 14
+                          },
+                          "end": {
+                            "line": 14,
+                            "col": 15
+                          },
+                          "file": 99
+                        }
+                      }
+                    },
+                    {
+                      "Literal": {
+                        "lit": {
+                          "String": {
+                            "Single": "a"
+                          }
+                        },
+                        "ty": {
+                          "Con": {
+                            "id": "string",
+                            "args": []
+                          }
+                        },
+                        "span": {
+                          "start": {
+                            "line": 14,
+                            "col": 17
+                          },
+                          "end": {
+                            "line": 14,
+                            "col": 20
+                          },
+                          "file": 99
+                        }
+                      }
+                    }
+                  ],
+                  "ty": {
+                    "Con": {
+                      "id": "Unit",
+                      "args": []
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 14,
+                      "col": 13
+                    },
+                    "end": {
+                      "line": 14,
+                      "col": 20
+                    },
+                    "file": 99
+                  }
+                }
+              },
+              {
+                "Call": {
+                  "func": {
+                    "Var": {
+                      "value": "foo",
+                      "decl": {
+                        "start": {
+                          "line": 4,
+                          "col": 1
+                        },
+                        "end": {
+                          "line": 6,
+                          "col": 1
+                        },
+                        "file": 99
+                      },
+                      "generics_instantiated": [],
+                      "ty": {
+                        "Fun": {
+                          "args": [
+                            {
+                              "Con": {
+                                "id": "Map",
+                                "args": [
+                                  {
+                                    "Con": {
+                                      "id": "int",
+                                      "args": []
+                                    }
+                                  },
+                                  {
+                                    "Con": {
+                                      "id": "string",
+                                      "args": []
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ],
+                          "bounds": [],
+                          "ret": {
+                            "Con": {
+                              "id": "string",
+                              "args": []
+                            }
+                          }
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 16,
+                          "col": 5
+                        },
+                        "end": {
+                          "line": 16,
+                          "col": 8
+                        },
+                        "file": 99
+                      }
+                    }
+                  },
+                  "args": [
+                    {
+                      "Var": {
+                        "value": "m",
+                        "decl": {
+                          "start": {
+                            "line": 13,
+                            "col": 9
+                          },
+                          "end": {
+                            "line": 13,
+                            "col": 10
+                          },
+                          "file": 99
+                        },
+                        "generics_instantiated": [],
+                        "ty": {
+                          "Con": {
+                            "id": "Map",
+                            "args": [
+                              {
+                                "Con": {
+                                  "id": "int",
+                                  "args": []
+                                }
+                              },
+                              {
+                                "Con": {
+                                  "id": "string",
+                                  "args": []
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        "span": {
+                          "start": {
+                            "line": 16,
+                            "col": 9
+                          },
+                          "end": {
+                            "line": 16,
+                            "col": 10
+                          },
+                          "file": 99
+                        }
+                      }
+                    }
+                  ],
+                  "ty": {
+                    "Con": {
+                      "id": "string",
+                      "args": []
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 16,
+                      "col": 8
+                    },
+                    "end": {
+                      "line": 16,
+                      "col": 10
+                    },
+                    "file": 99
+                  }
+                }
+              },
+              {
+                "Call": {
+                  "func": {
+                    "Var": {
+                      "value": "takes_map",
+                      "decl": {
+                        "start": {
+                          "line": 8,
+                          "col": 1
+                        },
+                        "end": {
+                          "line": 10,
+                          "col": 1
+                        },
+                        "file": 99
+                      },
+                      "generics_instantiated": [],
+                      "ty": {
+                        "Fun": {
+                          "args": [
+                            {
+                              "Con": {
+                                "id": "Map",
+                                "args": [
+                                  {
+                                    "Con": {
+                                      "id": "int",
+                                      "args": []
+                                    }
+                                  },
+                                  {
+                                    "Con": {
+                                      "id": "string",
+                                      "args": []
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ],
+                          "bounds": [],
+                          "ret": {
+                            "Con": {
+                              "id": "string",
+                              "args": []
+                            }
+                          }
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 17,
+                          "col": 5
+                        },
+                        "end": {
+                          "line": 17,
+                          "col": 14
+                        },
+                        "file": 99
+                      }
+                    }
+                  },
+                  "args": [
+                    {
+                      "Var": {
+                        "value": "m",
+                        "decl": {
+                          "start": {
+                            "line": 13,
+                            "col": 9
+                          },
+                          "end": {
+                            "line": 13,
+                            "col": 10
+                          },
+                          "file": 99
+                        },
+                        "generics_instantiated": [],
+                        "ty": {
+                          "Con": {
+                            "id": "Map",
+                            "args": [
+                              {
+                                "Con": {
+                                  "id": "int",
+                                  "args": []
+                                }
+                              },
+                              {
+                                "Con": {
+                                  "id": "string",
+                                  "args": []
+                                }
+                              }
+                            ]
+                          }
+                        },
+                        "span": {
+                          "start": {
+                            "line": 17,
+                            "col": 15
+                          },
+                          "end": {
+                            "line": 17,
+                            "col": 16
+                          },
+                          "file": 99
+                        }
+                      }
+                    }
+                  ],
+                  "ty": {
+                    "Con": {
+                      "id": "string",
+                      "args": []
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 17,
+                      "col": 14
+                    },
+                    "end": {
+                      "line": 17,
+                      "col": 16
+                    },
+                    "file": 99
+                  }
+                }
+              },
+              {
+                "Let": {
+                  "binding": {
+                    "pat": {
+                      "Type": {
+                        "ident": "c",
+                        "is_mut": false,
+                        "ann": "Unknown",
+                        "span": {
+                          "start": {
+                            "line": 19,
+                            "col": 9
+                          },
+                          "end": {
+                            "line": 19,
+                            "col": 10
+                          },
+                          "file": 99
+                        }
+                      }
+                    },
+                    "ann": {
+                      "Con": {
+                        "name": "Complex",
+                        "args": [
+                          {
+                            "Con": {
+                              "name": "int",
+                              "args": []
+                            }
+                          },
+                          {
+                            "Con": {
+                              "name": "bool",
+                              "args": []
+                            }
+                          }
+                        ]
+                      }
+                    },
+                    "ty": {
+                      "Con": {
+                        "id": "Map",
+                        "args": [
+                          {
+                            "Con": {
+                              "id": "bool",
+                              "args": []
+                            }
+                          },
+                          {
+                            "Con": {
+                              "id": "Map",
+                              "args": [
+                                {
+                                  "Con": {
+                                    "id": "int",
+                                    "args": []
+                                  }
+                                },
+                                {
+                                  "Con": {
+                                    "id": "Map",
+                                    "args": [
+                                      {
+                                        "Con": {
+                                          "id": "bool",
+                                          "args": []
+                                        }
+                                      },
+                                      {
+                                        "Con": {
+                                          "id": "string",
+                                          "args": []
+                                        }
+                                      }
+                                    ]
+                                  }
+                                }
+                              ]
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  },
+                  "value": {
+                    "Call": {
+                      "func": {
+                        "Var": {
+                          "value": "Map.new",
+                          "decl": {
+                            "start": {
+                              "line": 218,
+                              "col": 1
+                            },
+                            "end": {
+                              "line": 222,
+                              "col": 1
+                            },
+                            "file": 99
+                          },
+                          "generics_instantiated": [
+                            {
+                              "Con": {
+                                "id": "bool",
+                                "args": []
+                              }
+                            },
+                            {
+                              "Con": {
+                                "id": "Map",
+                                "args": [
+                                  {
+                                    "Con": {
+                                      "id": "int",
+                                      "args": []
+                                    }
+                                  },
+                                  {
+                                    "Con": {
+                                      "id": "Map",
+                                      "args": [
+                                        {
+                                          "Con": {
+                                            "id": "bool",
+                                            "args": []
+                                          }
+                                        },
+                                        {
+                                          "Con": {
+                                            "id": "string",
+                                            "args": []
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ],
+                          "ty": {
+                            "Fun": {
+                              "args": [],
+                              "bounds": [
+                                {
+                                  "generic": {
+                                    "Con": {
+                                      "id": "bool",
+                                      "args": []
+                                    }
+                                  },
+                                  "ty": {
+                                    "Con": {
+                                      "id": "comparable",
+                                      "args": []
+                                    }
+                                  }
+                                }
+                              ],
+                              "ret": {
+                                "Con": {
+                                  "id": "Map",
+                                  "args": [
+                                    {
+                                      "Con": {
+                                        "id": "bool",
+                                        "args": []
+                                      }
+                                    },
+                                    {
+                                      "Con": {
+                                        "id": "Map",
+                                        "args": [
+                                          {
+                                            "Con": {
+                                              "id": "int",
+                                              "args": []
+                                            }
+                                          },
+                                          {
+                                            "Con": {
+                                              "id": "Map",
+                                              "args": [
+                                                {
+                                                  "Con": {
+                                                    "id": "bool",
+                                                    "args": []
+                                                  }
+                                                },
+                                                {
+                                                  "Con": {
+                                                    "id": "string",
+                                                    "args": []
+                                                  }
+                                                }
+                                              ]
+                                            }
+                                          }
+                                        ]
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            }
+                          },
+                          "span": {
+                            "start": {
+                              "line": 19,
+                              "col": 37
+                            },
+                            "end": {
+                              "line": 19,
+                              "col": 40
+                            },
+                            "file": 99
+                          }
+                        }
+                      },
+                      "args": [],
+                      "ty": {
+                        "Con": {
+                          "id": "Map",
+                          "args": [
+                            {
+                              "Con": {
+                                "id": "bool",
+                                "args": []
+                              }
+                            },
+                            {
+                              "Con": {
+                                "id": "Map",
+                                "args": [
+                                  {
+                                    "Con": {
+                                      "id": "int",
+                                      "args": []
+                                    }
+                                  },
+                                  {
+                                    "Con": {
+                                      "id": "Map",
+                                      "args": [
+                                        {
+                                          "Con": {
+                                            "id": "bool",
+                                            "args": []
+                                          }
+                                        },
+                                        {
+                                          "Con": {
+                                            "id": "string",
+                                            "args": []
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 19,
+                          "col": 40
+                        },
+                        "end": {
+                          "line": 19,
+                          "col": 41
+                        },
+                        "file": 99
+                      }
+                    }
+                  },
+                  "mutable": false,
+                  "ty": {
+                    "Con": {
+                      "id": "Map",
+                      "args": [
+                        {
+                          "Con": {
+                            "id": "bool",
+                            "args": []
+                          }
+                        },
+                        {
+                          "Con": {
+                            "id": "Map",
+                            "args": [
+                              {
+                                "Con": {
+                                  "id": "int",
+                                  "args": []
+                                }
+                              },
+                              {
+                                "Con": {
+                                  "id": "Map",
+                                  "args": [
+                                    {
+                                      "Con": {
+                                        "id": "bool",
+                                        "args": []
+                                      }
+                                    },
+                                    {
+                                      "Con": {
+                                        "id": "string",
+                                        "args": []
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 19,
+                      "col": 5
+                    },
+                    "end": {
+                      "line": 19,
+                      "col": 41
+                    },
+                    "file": 99
+                  }
+                }
+              },
+              {
+                "CheckType": {
+                  "expr": {
+                    "Var": {
+                      "value": "c",
+                      "decl": {
+                        "start": {
+                          "line": 19,
+                          "col": 9
+                        },
+                        "end": {
+                          "line": 19,
+                          "col": 10
+                        },
+                        "file": 99
+                      },
+                      "generics_instantiated": [],
+                      "ty": {
+                        "Con": {
+                          "id": "Map",
+                          "args": [
+                            {
+                              "Con": {
+                                "id": "bool",
+                                "args": []
+                              }
+                            },
+                            {
+                              "Con": {
+                                "id": "Map",
+                                "args": [
+                                  {
+                                    "Con": {
+                                      "id": "int",
+                                      "args": []
+                                    }
+                                  },
+                                  {
+                                    "Con": {
+                                      "id": "Map",
+                                      "args": [
+                                        {
+                                          "Con": {
+                                            "id": "bool",
+                                            "args": []
+                                          }
+                                        },
+                                        {
+                                          "Con": {
+                                            "id": "string",
+                                            "args": []
+                                          }
+                                        }
+                                      ]
+                                    }
+                                  }
+                                ]
+                              }
+                            }
+                          ]
+                        }
+                      },
+                      "span": {
+                        "start": {
+                          "line": 20,
+                          "col": 13
+                        },
+                        "end": {
+                          "line": 20,
+                          "col": 14
+                        },
+                        "file": 99
+                      }
+                    }
+                  },
+                  "ann": {
+                    "Con": {
+                      "name": "Map",
+                      "args": [
+                        {
+                          "Con": {
+                            "name": "bool",
+                            "args": []
+                          }
+                        },
+                        {
+                          "Con": {
+                            "name": "Map",
+                            "args": [
+                              {
+                                "Con": {
+                                  "name": "int",
+                                  "args": []
+                                }
+                              },
+                              {
+                                "Con": {
+                                  "name": "Map",
+                                  "args": [
+                                    {
+                                      "Con": {
+                                        "name": "bool",
+                                        "args": []
+                                      }
+                                    },
+                                    {
+                                      "Con": {
+                                        "name": "string",
+                                        "args": []
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "ty": {
+                    "Con": {
+                      "id": "Map",
+                      "args": [
+                        {
+                          "Con": {
+                            "id": "bool",
+                            "args": []
+                          }
+                        },
+                        {
+                          "Con": {
+                            "id": "Map",
+                            "args": [
+                              {
+                                "Con": {
+                                  "id": "int",
+                                  "args": []
+                                }
+                              },
+                              {
+                                "Con": {
+                                  "id": "Map",
+                                  "args": [
+                                    {
+                                      "Con": {
+                                        "id": "bool",
+                                        "args": []
+                                      }
+                                    },
+                                    {
+                                      "Con": {
+                                        "id": "string",
+                                        "args": []
+                                      }
+                                    }
+                                  ]
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 20,
+                      "col": 5
+                    },
+                    "end": {
+                      "line": 20,
+                      "col": 53
+                    },
+                    "file": 99
+                  }
+                }
+              }
+            ],
+            "ty": {
+              "Con": {
+                "id": "Map",
+                "args": [
+                  {
+                    "Con": {
+                      "id": "bool",
+                      "args": []
+                    }
+                  },
+                  {
+                    "Con": {
+                      "id": "Map",
+                      "args": [
+                        {
+                          "Con": {
+                            "id": "int",
+                            "args": []
+                          }
+                        },
+                        {
+                          "Con": {
+                            "id": "Map",
+                            "args": [
+                              {
+                                "Con": {
+                                  "id": "bool",
+                                  "args": []
+                                }
+                              },
+                              {
+                                "Con": {
+                                  "id": "string",
+                                  "args": []
+                                }
+                              }
+                            ]
+                          }
+                        }
+                      ]
+                    }
+                  }
+                ]
+              }
+            },
+            "span": {
+              "start": {
+                "line": 12,
+                "col": 11
+              },
+              "end": {
+                "line": 21,
+                "col": 1
+              },
+              "file": 99
+            }
+          }
+        },
+        "bounded_ty": {
+          "generics": [],
+          "ty": {
+            "Fun": {
+              "args": [],
+              "bounds": [],
+              "ret": {
+                "Con": {
+                  "id": "Unit",
+                  "args": []
+                }
+              }
+            }
+          }
+        }
+      },
+      "kind": "TopLevel",
+      "ty": {
+        "Fun": {
+          "args": [],
+          "bounds": [],
+          "ret": {
+            "Con": {
+              "id": "Unit",
+              "args": []
+            }
+          }
+        }
+      },
+      "span": {
+        "start": {
+          "line": 12,
+          "col": 1
+        },
+        "end": {
+          "line": 21,
+          "col": 1
+        },
+        "file": 99
+      }
+    }
+  }
+]

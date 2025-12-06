@@ -1,0 +1,62 @@
+Mutating vars
+
+SOURCE:
+fn foo(a: int) -> int {
+    loop {
+        if a > 5 { break }
+        a = a + 1
+    }
+
+    a
+}
+
+fn main() {
+    let mut x = 1
+    x = x + 3
+    assertEq(x, 4)
+
+    {
+        let x = 5
+        assertEq(x, 5)
+    }
+
+    assertEq(foo(0), 6)
+
+    // TODO this doesn't type check :/
+    // x = x + 6
+    // x.assertEq(10)
+}
+
+OUTPUT:
+
+---
+package main
+
+func foo(a int) int {
+	for {
+
+		if a > 5 {
+			break
+		}
+
+		a = a + 1
+	}
+
+	return a
+}
+
+func main() {
+	x := 1
+
+	x = x + 3
+
+	assertEq[int](x, 4)
+	{
+
+		x := 5
+
+		assertEq[int](x, 5)
+	}
+
+	assertEq[int](foo(0), 6)
+}

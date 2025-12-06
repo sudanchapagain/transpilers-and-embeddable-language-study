@@ -1,0 +1,158 @@
+Generic structs.
+
+SOURCE:
+{
+  struct Foo<T> { a: T }
+
+  Foo { a: 1 }
+}
+
+OUTPUT:
+Foo<int>
+---
+No errors.
+---
+{
+  "Block": {
+    "stmts": [
+      {
+        "StructDef": {
+          "def": {
+            "name": "Foo",
+            "generics": [
+              {
+                "name": "T",
+                "bounds": [],
+                "span": {
+                  "start": {
+                    "line": 2,
+                    "col": 14
+                  },
+                  "end": {
+                    "line": 2,
+                    "col": 15
+                  },
+                  "file": 99
+                }
+              }
+            ],
+            "fields": [
+              {
+                "name": "a",
+                "ann": {
+                  "Con": {
+                    "name": "T",
+                    "args": []
+                  }
+                },
+                "ty": {
+                  "generics": [],
+                  "ty": {
+                    "Con": {
+                      "id": "T",
+                      "args": []
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "col": 3
+            },
+            "end": {
+              "line": 2,
+              "col": 24
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "StructCall": {
+          "name": "Foo",
+          "fields": [
+            {
+              "name": "a",
+              "value": {
+                "Literal": {
+                  "lit": {
+                    "Int": 1
+                  },
+                  "ty": {
+                    "Con": {
+                      "id": "int",
+                      "args": []
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 4,
+                      "col": 12
+                    },
+                    "end": {
+                      "line": 4,
+                      "col": 13
+                    },
+                    "file": 99
+                  }
+                }
+              }
+            }
+          ],
+          "rest": null,
+          "ty": {
+            "Con": {
+              "id": "Foo",
+              "args": [
+                {
+                  "Con": {
+                    "id": "int",
+                    "args": []
+                  }
+                }
+              ]
+            }
+          },
+          "span": {
+            "start": {
+              "line": 4,
+              "col": 7
+            },
+            "end": {
+              "line": 4,
+              "col": 14
+            },
+            "file": 99
+          }
+        }
+      }
+    ],
+    "ty": {
+      "Con": {
+        "id": "Foo",
+        "args": [
+          {
+            "Con": {
+              "id": "int",
+              "args": []
+            }
+          }
+        ]
+      }
+    },
+    "span": {
+      "start": {
+        "line": 1,
+        "col": 1
+      },
+      "end": {
+        "line": 5,
+        "col": 1
+      },
+      "file": 99
+    }
+  }
+}

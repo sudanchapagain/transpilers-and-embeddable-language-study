@@ -1,0 +1,30 @@
+Let binding same name as function param
+
+SOURCE:
+fn foo(xs: [int]) -> int {
+    // TODO asdf make sure params are put in scope so they can be rebound
+    // let xs = xs.Len()
+    // xs + 10
+
+    let xxxs = xs.Len()
+    xxxs + 10
+}
+
+fn main() {
+    assertEq(foo([1,2,3]), 13)
+}
+
+OUTPUT:
+
+---
+package main
+
+func foo(xs []int) int {
+	xxxs := Slice_Len[int](xs)
+
+	return xxxs + 10
+}
+
+func main() {
+	assertEq[int](foo([]int{1, 2, 3}), 13)
+}

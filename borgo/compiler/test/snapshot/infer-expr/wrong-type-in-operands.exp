@@ -1,0 +1,10 @@
+Wrong type in operands
+
+SOURCE:
+{ 1 + false }
+
+OUTPUT:
+Expected numeric type
+
+1|  { 1 + false }
+      ^^^^^^^^^

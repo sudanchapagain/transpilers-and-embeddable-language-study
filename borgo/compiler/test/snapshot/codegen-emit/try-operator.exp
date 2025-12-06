@@ -1,0 +1,105 @@
+Try operator
+
+SOURCE:
+use errors
+
+fn foo(b: bool) -> Result<int> { bar("a") }
+
+fn bar(s: string) -> Result<int> {
+    Err(errors.New("boom"))
+}
+
+fn baz() -> Result<int> {
+    let _ = foo(false)?
+
+    @unreachable()
+    Ok(1)
+}
+
+fn as_value() -> Result<int> {
+    let a = baz()
+    a
+}
+
+fn as_param(r: Result<int>) -> bool {
+    r.IsOk()
+}
+
+fn main() {
+    assertEq(baz(), Err(errors.New("boom")))
+    assertEq(as_value().IsOk(), false)
+    assertEq(as_param(Ok(1)), true)
+}
+
+OUTPUT:
+
+---
+package main
+
+import (
+	"errors"
+)
+
+func foo(b bool) (int, error) {
+	return bar("a")
+}
+
+func bar(s string) (int, error) {
+	return *new(int), errors.New("boom")
+}
+
+func baz() (int, error) {
+	_, var1_err := foo(false)
+	if var1_err != nil {
+		return *new(int), var1_err
+	}
+
+	Debug_unreachable[struct{}]()
+
+	return 1, nil
+}
+
+func as_value() (int, error) {
+	var3_result := func() Result[int, error] {
+		var1_check, var2_err := baz()
+		if var2_err != nil {
+			return make_Result_Err[int, error](var2_err)
+		}
+		return make_Result_Ok[int, error](var1_check)
+	}()
+
+	a := var3_result
+
+	if a.IsOk() {
+		return a.Ok, nil
+	}
+	return *new(int), a.Err
+}
+
+func as_param(r Result[int, error]) bool {
+	return r.IsOk()
+}
+
+func main() {
+	var3_result := func() Result[int, error] {
+		var1_check, var2_err := baz()
+		if var2_err != nil {
+			return make_Result_Err[int, error](var2_err)
+		}
+		return make_Result_Ok[int, error](var1_check)
+	}()
+
+	assertEq[Result[int, error]](var3_result, make_Result_Err[int, error](errors.New("boom")))
+
+	var6_result := func() Result[int, error] {
+		var4_check, var5_err := as_value()
+		if var5_err != nil {
+			return make_Result_Err[int, error](var5_err)
+		}
+		return make_Result_Ok[int, error](var4_check)
+	}()
+
+	assertEq[bool](var6_result.IsOk(), false)
+
+	assertEq[bool](as_param(make_Result_Ok[int, error](1)), true)
+}

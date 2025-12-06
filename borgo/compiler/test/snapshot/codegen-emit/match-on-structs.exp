@@ -1,0 +1,104 @@
+Match on structs
+
+SOURCE:
+struct Foo { a: int }
+
+fn main() {
+    let x = Foo { a: 1 }
+    let res = match x {
+        Foo { a: 2 } => false
+        Foo { a: 1 } => true
+        Foo { a: _ } => false
+    }
+
+    assertEq(res, true)
+}
+
+OUTPUT:
+
+---
+package main
+
+type Foo struct {
+	a int
+}
+
+func main() {
+	x := Foo{a: 1}
+
+	var res bool
+
+	var1_subject := x
+	var2_matches := 0
+
+	if var2_matches != 2 {
+		var2_matches = 0
+
+		var3_match_pat := 0
+
+		if var3_match_pat != 1 && 2 == var1_subject.a {
+			var3_match_pat = 2
+		} else {
+			var3_match_pat = 1
+		}
+
+		if var3_match_pat != 1 {
+			var2_matches = 2
+		} else {
+			var2_matches = 1
+		}
+
+		_ = var1_subject
+
+		if var2_matches == 2 {
+			res = false
+		}
+	}
+
+	if var2_matches != 2 {
+		var2_matches = 0
+
+		var5_match_pat := 0
+
+		if var5_match_pat != 1 && 1 == var1_subject.a {
+			var5_match_pat = 2
+		} else {
+			var5_match_pat = 1
+		}
+
+		if var5_match_pat != 1 {
+			var2_matches = 2
+		} else {
+			var2_matches = 1
+		}
+
+		_ = var1_subject
+
+		if var2_matches == 2 {
+			res = true
+		}
+	}
+
+	if var2_matches != 2 {
+		var2_matches = 0
+
+		var7_match_pat := 0
+		if var7_match_pat != 1 {
+			var7_match_pat = 2 /* wildcard */
+		}
+
+		if var7_match_pat != 1 {
+			var2_matches = 2
+		} else {
+			var2_matches = 1
+		}
+
+		_ = var1_subject
+
+		if var2_matches == 2 {
+			res = false
+		}
+	}
+
+	assertEq[bool](res, true)
+}

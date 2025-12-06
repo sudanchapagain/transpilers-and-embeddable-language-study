@@ -1,0 +1,14 @@
+Bools missing arm
+
+SOURCE:
+fn main() {
+    match false {
+        false => (),
+    }
+}
+
+OUTPUT:
+Pattern match is not exhaustive, missing case: "true"
+
+2|      match false {
+        ^--

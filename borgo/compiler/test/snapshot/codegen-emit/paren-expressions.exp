@@ -1,0 +1,15 @@
+Paren expressions
+
+SOURCE:
+fn main() {
+    assertEq((1 + 4), 5)
+}
+
+OUTPUT:
+
+---
+package main
+
+func main() {
+	assertEq[int]((1 + 4), 5)
+}

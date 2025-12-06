@@ -1,0 +1,34 @@
+Impl blocks
+
+SOURCE:
+struct Foo { a: int }
+
+impl (f: Foo) {
+    fn bar(x: int) -> int {
+        f.a + x
+    }
+}
+
+fn main() {
+    let f = Foo { a: 1 }
+    assertEq(f.bar(5), 6)
+}
+
+OUTPUT:
+
+---
+package main
+
+type Foo struct {
+	a int
+}
+
+func (f Foo) bar(x int) int {
+	return f.a + x
+}
+
+func main() {
+	f := Foo{a: 1}
+
+	assertEq[int](f.bar(5), 6)
+}

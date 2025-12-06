@@ -1,0 +1,139 @@
+Recursive types
+
+SOURCE:
+enum Expr {
+    Add(*Expr, *Expr),
+    Number(int),
+}
+
+impl (e: Expr) {
+    fn sum() -> int {
+        match e {
+            Add(a, b) => a.sum() + b.sum()
+            Number(n) => n
+        }
+    }
+}
+
+struct Foo {
+    n: string,
+    f: *Option<Foo>,
+}
+
+fn main() {
+    let one = Expr.Number(1)
+    let two = Expr.Number(2)
+    let e = Expr.Add(&one, &two)
+    assertEq(e.sum(), 3)
+
+    let f1 = None
+    let nope = Foo { n: "a", f: &f1 }
+    let f2 = Some(nope)
+    let yep = Foo { n: "b", f: &f2 }
+    assertEq(yep.n, "b")
+}
+
+OUTPUT:
+
+---
+package main
+
+func make_Expr_Add(arg_0 *Expr, arg_1 *Expr) Expr {
+	return Expr{tag: Expr_Add, Add0: arg_0, Add1: arg_1}
+}
+
+func make_Expr_Number(arg_0 int) Expr {
+	return Expr{tag: Expr_Number, Number: arg_0}
+}
+
+type ExprTag int
+
+const (
+	Expr_Add ExprTag = iota
+	Expr_Number
+)
+
+type Expr struct {
+	tag    ExprTag
+	Add0   *Expr
+	Add1   *Expr
+	Number int
+}
+
+func (e Expr) sum() int {
+	var var3 int
+	var1_subject := e
+	var2_matches := 0
+
+	if var2_matches != 2 {
+		var2_matches = 0
+
+		var4_match_pat := 0
+		a := var1_subject.Add0
+		b := var1_subject.Add1
+
+		if var4_match_pat != 1 && var1_subject.tag == Expr_Add {
+			var2_matches = 2
+		} else {
+			var2_matches = 1
+		}
+
+		_ = var1_subject
+
+		if var2_matches == 2 {
+			var3 = a.sum() + b.sum()
+		}
+	}
+
+	if var2_matches != 2 {
+		var2_matches = 0
+
+		var7_match_pat := 0
+		n := var1_subject.Number
+
+		if var7_match_pat != 1 && var1_subject.tag == Expr_Number {
+			var2_matches = 2
+		} else {
+			var2_matches = 1
+		}
+
+		_ = var1_subject
+
+		if var2_matches == 2 {
+			var3 = n
+		}
+	}
+
+	return var3
+}
+
+type Foo struct {
+	n string
+	f *Option[Foo]
+}
+
+func main() {
+	one := make_Expr_Number(1)
+
+	two := make_Expr_Number(2)
+
+	e := make_Expr_Add(&one, &two)
+
+	assertEq[int](e.sum(), 3)
+
+	f1 := make_Option_None[Foo]()
+
+	nope := Foo{
+		n: "a",
+		f: &f1,
+	}
+
+	f2 := make_Option_Some[Foo](nope)
+
+	yep := Foo{
+		n: "b",
+		f: &f2,
+	}
+
+	assertEq[string](yep.n, "b")
+}

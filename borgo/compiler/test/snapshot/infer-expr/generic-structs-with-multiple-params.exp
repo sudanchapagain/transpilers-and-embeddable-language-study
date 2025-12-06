@@ -1,0 +1,275 @@
+Generic structs with multiple params.
+
+SOURCE:
+{
+  struct Foo<T, Y> { a: T, b: Y, c: T }
+
+  Foo { a: 1, b: false, c: 3 }
+}
+
+OUTPUT:
+Foo<int, bool>
+---
+No errors.
+---
+{
+  "Block": {
+    "stmts": [
+      {
+        "StructDef": {
+          "def": {
+            "name": "Foo",
+            "generics": [
+              {
+                "name": "T",
+                "bounds": [],
+                "span": {
+                  "start": {
+                    "line": 2,
+                    "col": 14
+                  },
+                  "end": {
+                    "line": 2,
+                    "col": 15
+                  },
+                  "file": 99
+                }
+              },
+              {
+                "name": "Y",
+                "bounds": [],
+                "span": {
+                  "start": {
+                    "line": 2,
+                    "col": 17
+                  },
+                  "end": {
+                    "line": 2,
+                    "col": 18
+                  },
+                  "file": 99
+                }
+              }
+            ],
+            "fields": [
+              {
+                "name": "a",
+                "ann": {
+                  "Con": {
+                    "name": "T",
+                    "args": []
+                  }
+                },
+                "ty": {
+                  "generics": [],
+                  "ty": {
+                    "Con": {
+                      "id": "T",
+                      "args": []
+                    }
+                  }
+                }
+              },
+              {
+                "name": "b",
+                "ann": {
+                  "Con": {
+                    "name": "Y",
+                    "args": []
+                  }
+                },
+                "ty": {
+                  "generics": [],
+                  "ty": {
+                    "Con": {
+                      "id": "Y",
+                      "args": []
+                    }
+                  }
+                }
+              },
+              {
+                "name": "c",
+                "ann": {
+                  "Con": {
+                    "name": "T",
+                    "args": []
+                  }
+                },
+                "ty": {
+                  "generics": [],
+                  "ty": {
+                    "Con": {
+                      "id": "T",
+                      "args": []
+                    }
+                  }
+                }
+              }
+            ]
+          },
+          "span": {
+            "start": {
+              "line": 2,
+              "col": 3
+            },
+            "end": {
+              "line": 2,
+              "col": 39
+            },
+            "file": 99
+          }
+        }
+      },
+      {
+        "StructCall": {
+          "name": "Foo",
+          "fields": [
+            {
+              "name": "a",
+              "value": {
+                "Literal": {
+                  "lit": {
+                    "Int": 1
+                  },
+                  "ty": {
+                    "Con": {
+                      "id": "int",
+                      "args": []
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 4,
+                      "col": 12
+                    },
+                    "end": {
+                      "line": 4,
+                      "col": 13
+                    },
+                    "file": 99
+                  }
+                }
+              }
+            },
+            {
+              "name": "b",
+              "value": {
+                "Literal": {
+                  "lit": {
+                    "Bool": false
+                  },
+                  "ty": {
+                    "Con": {
+                      "id": "bool",
+                      "args": []
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 4,
+                      "col": 18
+                    },
+                    "end": {
+                      "line": 4,
+                      "col": 23
+                    },
+                    "file": 99
+                  }
+                }
+              }
+            },
+            {
+              "name": "c",
+              "value": {
+                "Literal": {
+                  "lit": {
+                    "Int": 3
+                  },
+                  "ty": {
+                    "Con": {
+                      "id": "int",
+                      "args": []
+                    }
+                  },
+                  "span": {
+                    "start": {
+                      "line": 4,
+                      "col": 28
+                    },
+                    "end": {
+                      "line": 4,
+                      "col": 29
+                    },
+                    "file": 99
+                  }
+                }
+              }
+            }
+          ],
+          "rest": null,
+          "ty": {
+            "Con": {
+              "id": "Foo",
+              "args": [
+                {
+                  "Con": {
+                    "id": "int",
+                    "args": []
+                  }
+                },
+                {
+                  "Con": {
+                    "id": "bool",
+                    "args": []
+                  }
+                }
+              ]
+            }
+          },
+          "span": {
+            "start": {
+              "line": 4,
+              "col": 7
+            },
+            "end": {
+              "line": 4,
+              "col": 30
+            },
+            "file": 99
+          }
+        }
+      }
+    ],
+    "ty": {
+      "Con": {
+        "id": "Foo",
+        "args": [
+          {
+            "Con": {
+              "id": "int",
+              "args": []
+            }
+          },
+          {
+            "Con": {
+              "id": "bool",
+              "args": []
+            }
+          }
+        ]
+      }
+    },
+    "span": {
+      "start": {
+        "line": 1,
+        "col": 1
+      },
+      "end": {
+        "line": 5,
+        "col": 1
+      },
+      "file": 99
+    }
+  }
+}
