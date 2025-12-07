@@ -5,3 +5,4 @@ study repo for various transpilation and embedding approaches
 - hy: a lisp for Python. (Python)
 - squirrel: a tiny and dynamic OO language for embedding. (C++)
 - wren: small dynamic OO language for embedding. (C)
+- janet: small dynamic lisp (C)
