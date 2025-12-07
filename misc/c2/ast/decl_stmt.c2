@@ -1,0 +1,71 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import constants local;
+import string_buffer;
+
+import string local;
+
+type DeclStmtBits struct {
+    u32 : NumStmtBits;
+    u32 count : MaxMultiDeclBits;
+}
+
+public type DeclStmt struct @(opaque) {
+    Stmt base;
+    VarDecl*[0] decl;
+}
+
+public fn DeclStmt* DeclStmt.create(ast_context.Context* c,
+                                    VarDecl** decl, u32 count)
+{
+    u32 size = sizeof(DeclStmt) + sizeof(VarDecl*) * count;
+    DeclStmt* s = c.alloc(size);
+    s.base.init(StmtKind.Decl, decl[0].asDecl().getLoc());
+    s.base.declStmtBits.count = count;
+    memcpy(s.decl, decl, sizeof(VarDecl*) * count);
+#if AstStatistics
+    Stats.addStmt(StmtKind.Decl, size);
+#endif
+    return s;
+}
+
+fn Stmt* DeclStmt.instantiate(DeclStmt* s, Instantiator* inst) {
+    u32 count = s.base.declStmtBits.count;
+    DeclStmt* s2 = DeclStmt.create(inst.c, s.decl, count);
+    for (u32 i = 0; i < count; i++)
+        s2.decl[i] = s.decl[i].instantiate(inst);
+    return (Stmt*)s2;
+}
+
+public fn VarDecl* DeclStmt.getDecl(const DeclStmt* d, u32 i) {
+    return d.decl[i];
+}
+
+public fn u32 DeclStmt.getDeclCount(const DeclStmt* d) {
+    return d.base.declStmtBits.count;
+}
+
+fn void DeclStmt.print(const DeclStmt* s, string_buffer.Buf* out, u32 indent) {
+    s.base.printKind(out, indent);
+    out.newline();
+    u32 count = s.base.declStmtBits.count;
+    for (u32 i = 0; i < count; i++)
+        s.decl[i].print(out, indent + 1);
+}
+

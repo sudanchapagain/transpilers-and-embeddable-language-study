@@ -1,0 +1,66 @@
+import co
+
+// var ch = chan_new<T>()
+fn chan_new<T>(...[int] args):chan<T> {
+    int rhash = @reflect_hash(chan<T>)
+    int ele_rhash = @reflect_hash(T)
+
+    var buf_len = 0
+    if args.len() > 0 && args[0] > 0 {
+        buf_len = args[0] + 1 // 环形队列预留一个空间用于判断是否满载
+    }
+
+    return rt_chan_new(rhash, ele_rhash, buf_len) as chan<T>
+}
+
+fn chan<T>.send(T msg):void! {
+    rt_chan_send(self as anyptr, &msg as anyptr, false)
+}
+
+fn chan<T>.try_send(T msg):bool! {
+    return rt_chan_send(self as anyptr, &msg as anyptr, true)
+}
+
+fn chan<T>.on_send(T msg):void {
+    // no body
+}
+
+fn chan<T>.recv():T! {
+    var msg = @default(T)
+    rt_chan_recv(self as anyptr, &msg as anyptr, false)
+
+    return msg
+}
+
+// The specific logic is already handled at compiler time, and this function is mainly used for compiler front-end validation
+fn chan<T>.on_recv():T {
+    var msg = @default(T)
+    return msg
+}
+
+fn chan<T>.try_recv():(T, bool)! {
+    var msg = @default(T)
+    bool is_recv = rt_chan_recv(self as anyptr, &msg as anyptr, true)
+    return (msg, is_recv)
+}
+
+#linkid rt_chan_close
+fn chan<T>.close():void!
+
+#linkid rt_chan_is_closed
+fn chan<T>.is_closed():bool
+
+#linkid rt_chan_is_successful
+fn chan<T>.is_successful():bool
+
+#linkid rt_chan_new
+fn rt_chan_new(i64 rhash, i64 ele_hash, i64 buf_len):anyptr
+
+#linkid rt_chan_send
+fn rt_chan_send(anyptr ch, anyptr msg, bool _try):bool!
+
+#linkid rt_chan_recv
+fn rt_chan_recv(anyptr ch, anyptr msg, bool _try):bool!
+
+#linkid rt_chan_close
+fn rt_chan_close(anyptr ch):void!

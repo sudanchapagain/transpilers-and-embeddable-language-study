@@ -1,0 +1,115 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import string_buffer;
+import src_loc local;
+
+type ExplicitCastExprBits struct {
+    u32 : NumExprBits;
+    u32 c_style : 1;
+    u32 src_len : 32 - NumExprBits - 1;
+}
+
+public type ExplicitCastExpr struct @(opaque) {
+    Expr base;
+    Expr* inner;
+    QualType dest_type;  // set during analysis, can differ from expr.qt
+    TypeRef dest;    // note: variable length!
+}
+
+public fn ExplicitCastExpr* ExplicitCastExpr.create(ast_context.Context* c,
+                                                      SrcLoc loc, u32 src_len,
+                                                      const TypeRefHolder* ref,
+                                                      Expr* inner, bool c_style)
+{
+    u32 size = sizeof(ExplicitCastExpr) + ref.getExtraSize();
+    ExplicitCastExpr* e = c.alloc(size);
+    e.base.init(ExprKind.ExplicitCast, loc, 0, 0, 0, ValType.NValue);
+    e.base.base.explicitCastExprBits.c_style = c_style;
+    e.base.base.explicitCastExprBits.src_len = src_len;
+    e.inner = inner;
+    e.dest_type = QualType_Invalid;
+    e.dest.init(ref);
+#if AstStatistics
+    Stats.addExpr(ExprKind.ExplicitCast, size);
+#endif
+    return e;
+}
+
+fn Expr* ExplicitCastExpr.instantiate(ExplicitCastExpr* e, Instantiator* inst) {
+    bool matches = e.dest.matchesTemplate(inst.template_name);
+    u32 extra = matches ? inst.ref.getExtraSize() : e.dest.getExtraSize();
+    u32 size = sizeof(ExplicitCastExpr) + extra;
+
+    ExplicitCastExpr* e2 = inst.c.alloc(size);
+    e2.base = e.base;
+    e2.inner = e.inner.instantiate(inst);
+    e2.dest_type = QualType_Invalid;
+    e2.dest.instantiate(&e.dest, inst);
+#if AstStatistics
+    Stats.addExpr(ExprKind.ExplicitCast, size);
+#endif
+    return (Expr*)e2;
+}
+
+public fn void ExplicitCastExpr.setDestType(ExplicitCastExpr* e, QualType qt) { e.dest_type = qt; }
+public fn QualType ExplicitCastExpr.getDestType(const ExplicitCastExpr* e) { return e.dest_type; }
+
+public fn bool ExplicitCastExpr.getCStyle(const ExplicitCastExpr* e) {
+    return e.base.base.explicitCastExprBits.c_style;
+}
+
+public fn Expr* ExplicitCastExpr.getInner(const ExplicitCastExpr* e) { return e.inner; }
+public fn Expr** ExplicitCastExpr.getInner2(ExplicitCastExpr* e) { return &e.inner; }
+
+public fn TypeRef* ExplicitCastExpr.getTypeRef(ExplicitCastExpr* e) {
+    return &e.dest;
+}
+
+fn SrcLoc ExplicitCastExpr.getEndLoc(const ExplicitCastExpr* e) {
+    return e.base.base.loc + e.base.base.explicitCastExprBits.src_len;
+}
+
+fn void ExplicitCastExpr.printLiteral(const ExplicitCastExpr* e, string_buffer.Buf* out) {
+    if (e.base.base.explicitCastExprBits.c_style) {
+        out.add1('(');
+        e.dest.print(out, true);
+        out.add1(')');
+        e.inner.printLiteral(out);
+    } else {
+        out.add("cast<");
+        e.dest.print(out, true);
+        out.add(">(");
+        e.inner.printLiteral(out);
+        out.add1(')');
+    }
+}
+
+fn void ExplicitCastExpr.print(const ExplicitCastExpr* e, string_buffer.Buf* out, u32 indent) {
+    e.base.printKind(out, indent);
+    e.base.printTypeBits(out);
+    out.add(" -> ");
+    if (e.dest_type.isValid()) {
+        e.dest_type.printQuoted(out);
+    } else {
+        e.dest.print(out, true);
+    }
+    out.newline();
+    e.inner.print(out, indent + 1);
+}
+

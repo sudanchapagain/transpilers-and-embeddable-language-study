@@ -1,0 +1,77 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ir_copy_list;
+
+import ir local;
+
+import stdlib local;
+import string local;
+
+public type CopyInfo struct {
+    u32 instr_idx;
+    Ref ref;
+}
+
+public type CopyList struct {
+    CopyInfo* copies;
+    u32 count;
+    u32 capacity;
+}
+
+public fn void CopyList.init(CopyList* l, u32 capacity) {
+    l.count = 0;
+    l.resize(capacity);
+}
+
+fn void CopyList.resize(CopyList* l, u32 capacity) {
+    l.capacity = capacity;
+    CopyInfo* copies2 = malloc(capacity * sizeof(CopyInfo));
+    if (l.count) {
+        memcpy(copies2, l.copies, l.count * sizeof(CopyInfo));
+        free(l.copies);
+    }
+    l.copies = copies2;
+}
+
+public fn void CopyList.free(CopyList* l) {
+    free(l.copies);
+}
+
+public fn void CopyList.clear(CopyList* l) {
+    l.count = 0;
+}
+
+public fn void CopyList.add(CopyList* l, u32 idx, Ref ref) {
+    if (l.count == l.capacity) l.resize(l.capacity * 2);
+
+    // if ref is already a copy, replace with that dest (only for temps)
+    if (ref.isTemp()) {
+        Ref* copy = l.find((u32)ref.value);
+        if (copy) ref = *copy;
+    }
+    CopyInfo* info = &l.copies[l.count++];
+    info.instr_idx = idx;
+    info.ref = ref;
+}
+
+public fn Ref* CopyList.find(CopyList* l, u32 idx) {
+    // TODO can do binary search (since instr_idxs are ordered)
+    for (u32 i=0; i<l.count; i++) {
+        if (l.copies[i].instr_idx == idx) return &l.copies[i].ref;
+    }
+    return nil;
+}
+

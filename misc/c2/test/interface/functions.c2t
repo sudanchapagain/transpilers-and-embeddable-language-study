@@ -1,0 +1,27 @@
+// @recipe lib static
+$warnings no-unused
+$backend c no-build
+$export hello
+
+// @file{file1}
+module hello;
+
+public fn void a() {}
+
+public fn i32 b(void* arg1, ...) {
+    return 0;
+}
+
+public fn void c(i32 arg1) {}
+
+fn void d() {}
+
+// @expect{atleast, hello.c2i}
+module hello;
+
+fn void a();
+
+fn i32 b(void* arg1, ...);
+
+fn void c(i32 arg1);
+

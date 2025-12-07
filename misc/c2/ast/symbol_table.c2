@@ -1,0 +1,155 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import color;
+import string_buffer;
+
+import stdlib;
+import string;
+
+public type SymbolTable struct {
+    u32 num_public;
+    u32 num_private;
+    u32 capacity;
+    u32* symbols;
+    ast.Decl** decls;
+}
+
+// Note: name must be allocated in target StringPool
+fn void SymbolTable.init(SymbolTable* t, u32 initial) {
+    t.num_public = 0;
+    t.num_private = 0;
+    t.capacity = 0;
+    t.resize(initial);
+}
+
+fn void SymbolTable.free(SymbolTable* t) {
+    stdlib.free(t.decls);
+    stdlib.free(t.symbols);
+}
+
+public fn u32 SymbolTable.size(const SymbolTable* t) {
+    return t.num_public + t.num_private;
+}
+
+public fn Decl** SymbolTable.getDecls(const SymbolTable* t) {
+    return t.decls;
+}
+
+fn void SymbolTable.resize(SymbolTable* t, u32 capacity) {
+    u32* symbols = stdlib.malloc(capacity * sizeof(u32));
+    ast.Decl** decls = stdlib.malloc(capacity * sizeof(ast.Decl*));
+    t.capacity = capacity;
+    u32 count = t.num_public + t.num_private;
+    if (count) {
+        string.memcpy(symbols, t.symbols, count * sizeof(u32));
+        string.memcpy(decls, t.decls, count * sizeof(ast.Decl*));
+        stdlib.free(t.decls);
+        stdlib.free(t.symbols);
+    }
+    t.symbols = symbols;
+    t.decls = decls;
+}
+
+fn void SymbolTable.add(SymbolTable* t, u32 name_idx, ast.Decl* d) {
+    u32 count = t.num_public + t.num_private;
+    if (count == t.capacity) t.resize(t.capacity * 2);
+
+    if (d.isPublic()) {
+        if (t.num_private != 0) {
+            // move private symbol to end
+            t.symbols[count] = t.symbols[t.num_public];
+            t.decls[count] = t.decls[t.num_public];
+        }
+        t.symbols[t.num_public] = name_idx;
+        t.decls[t.num_public] = d;
+        t.num_public++;
+    } else {
+        t.symbols[count] = name_idx;
+        t.decls[count] = d;
+        t.num_private++;
+
+    }
+}
+
+public fn ast.Decl* SymbolTable.find(const SymbolTable* t, u32 name_idx) {
+    u32 count = t.num_public + t.num_private;
+    for (u32 i=0; i<count; i++) {
+        if (t.symbols[i] == name_idx) return t.decls[i];
+    }
+    return nil;
+}
+
+fn ast.Decl* SymbolTable.findPublic(const SymbolTable* t, u32 name_idx) {
+    for (u32 i=0; i<t.num_public; i++) {
+        if (t.symbols[i] == name_idx) return t.decls[i];
+    }
+    return nil;
+}
+
+fn ast.Decl* SymbolTable.findPrivate(const SymbolTable* t, u32 name_idx) {
+    u32 count = t.num_public + t.num_private;
+    for (u32 i=t.num_public; i<count; i++) {
+        if (t.symbols[i] == name_idx) return t.decls[i];
+    }
+    return nil;
+}
+
+public fn void SymbolTable.print(const SymbolTable* t, string_buffer.Buf* out) {
+    u32 count = t.num_public + t.num_private;
+    for (u32 i=0; i<count; i++) {
+        const Decl* d = t.decls[i];
+        out.color(d.isUsed() ? color.Normal : color.Grey);
+        const char* name = ast.idx2name(t.symbols[i]);
+        out.print("    %s", name);
+        if (d.isFunction()) out.add("()");
+        if (d.isPublic()) {
+            out.color(color.Yellow);
+            out.add(" public");
+        }
+        out.newline();
+        if (d.isStructType()) {
+            StructTypeDecl* std = (StructTypeDecl*)d;
+            const FunctionDecl** fds = std.getStructFunctions();
+            for (u32 j=0; j<std.getNumStructFunctions(); j++) {
+                Decl* fd = (Decl*)fds[j];
+                out.color(fd.isUsed() ? color.Normal : color.Grey);
+                out.indent(6);
+                out.print("%s.%s()", name, fd.getName());
+                if (fd.isPublic()) {
+                    out.color(color.Yellow);
+                    out.add(" public");
+                }
+                out.newline();
+            }
+        }
+    }
+}
+
+public fn void SymbolTable.dump(const SymbolTable* t) @(unused) {
+    string_buffer.Buf* out = ast.getDumpBuf();
+    u32 count = t.num_public + t.num_private;
+
+    out.add("Symbols:\n");
+    for (u32 i=0; i<count; i++) {
+        u32 name_idx = t.symbols[i];
+        const char* name = ast.idx2name(name_idx);
+        out.print("  [%2d]  %6d  %s\n", i, name_idx, name);
+    }
+    ast.flushDumpBuf(out);
+}
+

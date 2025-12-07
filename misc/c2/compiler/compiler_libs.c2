@@ -1,0 +1,339 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module compiler;
+
+import ast;
+import build_target;
+import color;
+import component local;
+import component_sorter;
+import console;
+import constants;
+import file_utils;
+import manifest;
+import module_list;
+import source_mgr;
+import string_buffer;
+import string_list;
+
+import c_errno local;
+import libc_dirent local;
+import stdio;
+import stdlib local;
+import string;
+
+fn Kind convertKind(build_target.Kind kind) {
+    switch (kind) {
+    case Image:
+    case Executable:
+        assert(0);
+        break;
+    case StaticLibrary:
+        return ExternalStaticLib;
+    case DynamicLibrary:
+        return ExternalDynamicLib;
+    case SourceLibrary:
+        return ExternalSourceLib;
+    }
+    return StaticLibrary;
+}
+
+fn void Compiler.createComponent(Compiler* c, u32 name, Kind kind) {
+    Component* comp = component.create(c.context, c.auxPool, name, kind);
+    c.components.add(comp);
+    // add implicit dep on c2
+    if (name != c.c2_name) comp.addDep(c.c2_name);
+}
+
+fn void Compiler.onLib(void* arg, u32 name, build_target.Kind kind) {
+    Compiler* c = arg;
+    if (kind == DynamicLibrary && c.is_image) {
+        console.error("images cannot use dynamic libraries");
+        exit(EXIT_FAILURE);
+    }
+    if (c.target.getNoLibC() && name == c.libc_name)  {
+        console.error("cannot use libc and have nolibc");
+        exit(EXIT_FAILURE);
+    }
+    c.mainComp.addDep(name);
+    c.createComponent(name, convertKind(kind));
+}
+
+fn void Compiler.load_libs(Compiler* c) {
+    // TODO correct kind
+    c.createComponent(c.c2_name, ExternalDynamicLib);
+
+    // for main component, get deps from Target instead of manifest
+    c.target.visitLibs(Compiler.onLib, c);
+
+    if (!c.target.getNoLibC()) {
+        if (!c.target.hasLib(c.libc_name)) {
+            c.createComponent(c.libc_name, ExternalDynamicLib);
+        }
+    }
+
+    // parse manifests, create modules, create sub-dependencies
+    for (u32 i=0; i<c.components.size(); i++) {
+        Component* comp = c.components.get(i);
+        if (comp.isExternal()) c.open_lib(comp);
+    }
+
+    // sort components
+    component_sorter.sort(c.components.get_all(), c.components.size(), c.diags);
+#if 0
+    stdio.printf("AFTER SORT\n");
+    for (u32 i=0; i<c.components.size(); i++) {
+        Component* comp = c.components.get(i);
+        stdio.printf("  [%d] %s  %s\n", i, comp.getName(), comp.getKindName());
+        const string_list.List* deps = comp.getDeps();
+        for (u32 j=0; j<deps.length(); j++) {
+            u32 depname = deps.get_idx(j);
+            stdio.printf("    dep %s\n", c.auxPool.idx2str(depname));
+        }
+    }
+#endif
+}
+
+// reads the manifest, creates the Component and (empty) Modules
+fn void Compiler.open_lib(Compiler* c, Component* comp) {
+    const char* libstr = comp.getName();
+
+    console.debug("opening lib %s", libstr);
+    char[file_utils.Max_path] libdir;
+    if (!c.find_lib(libstr, libdir, elemsof(libdir))) {
+        console.error("cannot find library '%s'", libstr);
+        exit(EXIT_FAILURE);
+    }
+
+    char[file_utils.Max_path] fullname;
+    if (!file_utils.make_path(fullname, elemsof(fullname), libdir, constants.manifest_name)) return;
+    i32 file_id = c.sm.loadFile(fullname, 0);
+    if (file_id == -1) return;
+
+    u32 dirname = c.auxPool.addStr(libdir, false);
+
+    comp.setPath(dirname);
+    string_list.List mods.init(c.astPool);
+    bool ok = manifest.parse(c.sm, file_id, c.astPool, c.auxPool, comp, &mods);
+    if (!ok) {
+        exit(EXIT_FAILURE);
+    }
+
+    for (u32 i=0; i<mods.length(); i++) {
+        u32 mod_name = mods.get_idx(i);
+        ast.Module* m = comp.getOrAddModule(mod_name, false);
+        assert(m);
+        m.setForeign(comp.isForeign());
+    }
+
+    mods.free();
+
+    const string_list.List* deps = comp.getDeps();
+    for (u32 i=0; i<deps.length(); i++) {
+        u32 depname = deps.get_idx(i);
+        if (c.has_component(depname)) continue;
+
+        if (c.target.getNoLibC() && depname == c.libc_name)  {
+            console.error("cannot use %s since it depends on unused libc", comp.getName());
+            exit(EXIT_FAILURE);
+        }
+        // TODO The dep should not be specified here, but chosen by end-user.
+        // if not chosen explicitly by end-user, prefer Dynamic > Static > Source
+        c.createComponent(depname, ExternalDynamicLib);
+    }
+}
+
+fn bool Compiler.has_component(const Compiler* c, u32 name) {
+    for (u32 i=0; i<c.components.size(); i++) {
+        const Component* comp = c.components.get(i);
+        if (comp.getNameIdx() == name) return true;
+    }
+    return false;
+}
+
+fn bool Compiler.find_lib(const Compiler* c, const char* libname, char* libdir, usize size) {
+    for (u32 i=0; i<c.libdirs.length(); i++) {
+        const char* dirname = c.libdirs.get(i);
+        if (file_utils.make_path(libdir, size, dirname, libname)) {
+            char[file_utils.Max_path] path;
+            if (file_utils.make_path(path, elemsof(path), libdir, constants.manifest_name)
+            &&  file_utils.is_file(path))
+                return true;
+        }
+    }
+    return false;
+}
+
+fn void Compiler.parseExternalModule(void* arg, ast.Module* m) {
+    Compiler* c = arg;
+    if (!m.isUsed()) return;
+
+    char[file_utils.Max_path] filename;
+    if (!file_utils.make_path_ext(filename, elemsof(filename), c.current.getPath(), m.getName(), ".c2i"))
+        return;
+
+    i32 file_id = c.sm.loadFile(filename, 0);
+    if (file_id == -1) return;   // note: error already printed
+
+    m.setLoaded();
+    console.debug("parsing %s", filename);
+    // on parse error, c.parser state has already been updated
+    c.parser.parse(file_id, true, false);
+}
+
+// parse all used <modules>.c2i
+fn void Compiler.parse_lib(Compiler* c, Component* comp) {
+    if (comp.isExternalSourceLib()) return;    // already parsed
+
+    console.debug("parsing component %s", comp.getName());
+
+    c.current = comp;
+    c.builder.setComponent(comp);
+    c.parse_queue.clear();
+
+    module_list.List* mods = comp.getModules();
+    for (u32 i=0; i<mods.length(); i++) {
+        ast.Module* m = mods.at(i);
+        if (m.isUsed()) c.parse_queue.add(m);
+    }
+
+    // parse + check imports (possibly adding more modules to parse queue)
+    for (u32 i=0; i<c.parse_queue.length(); i++) {
+        ast.Module* m = c.parse_queue.at(i);
+        Compiler.parseExternalModule(c, m);
+        m.visitImports(Compiler.handleImport, c);
+    }
+}
+
+fn void parseSourceLibFile(void* arg, const char* filename, u32 src_loc) {
+    Compiler* c = arg;
+    source_mgr.SourceMgr* sm = c.sm;
+
+    // prefix with component root
+    char[file_utils.Max_path] fullname;
+    if (!file_utils.make_path(fullname, elemsof(fullname), c.current.getPath(), filename)) return;
+
+    i32 file_id = sm.loadFile(fullname, src_loc);
+    if (file_id == -1) return;   // note: error already printed
+    console.debug("parsing %s", fullname);
+
+    // TODO need new flag, is_external=true, is_interface=false, is_generated=false
+    c.parser.parse(file_id, false, false);
+
+    // TODO trace_calls? (like in compiler/compiler.c2 parser.parse)
+}
+
+fn void Compiler.parseSourceLibs(Compiler* c) {
+    for (u32 i=0; i<c.components.size(); i++) {
+        Component* comp = c.components.get(i);
+        if (!comp.isExternalSourceLib()) continue;
+
+        console.debug("parsing source lib %s", comp.getName());
+        // TODO dont use visitor, too much duplicate work in calback
+        c.current = comp;
+        c.builder.setComponent(comp);
+        comp.visitFiles(c, parseSourceLibFile);
+    }
+}
+
+fn void Compiler.showAllLibs(Compiler* c) {
+    string_buffer.Buf* out = string_buffer.create(1024, color.useColor(), 2);
+    out.add("libraries:\n");
+
+    bool show_modules = false;
+    for (u32 i=0; i<c.libdirs.length(); i++) {
+        c.showLibs(out, c.libdirs.get(i), show_modules);
+    }
+
+    stdio.puts(out.data());
+    out.free();
+}
+
+fn void Compiler.showLibs(Compiler* c, string_buffer.Buf* out, const char* dirname, bool show_modules) {
+    out.indent(1);
+    out.color(color.Blue);
+    out.add(dirname);
+    out.color(color.Normal);
+    out.newline();
+
+    DIR* dir = opendir(dirname);
+    if (dir == nil) {
+        console.error("cannot open library dir '%s': %s", dirname, string.strerror(errno));
+        return;
+    }
+
+    while (Dirent* entry = readdir(dir)) {
+        char[file_utils.Max_path] fullname;
+        const char* name = entry.d_name;
+        if (name[0] != '.' && entry.d_type == DT_DIR) {
+            if (!file_utils.make_path3(fullname, elemsof(fullname), dirname, name, constants.manifest_name)
+            ||  !file_utils.is_file(fullname))
+                continue;
+
+            out.indent(2);
+            out.print("%-20s", name);
+            {
+                i32 file_id = c.sm.loadFile(fullname, 0);
+                if (file_id == -1) return;
+
+                u32 name_idx = c.auxPool.addStr(name, true);
+                Component* comp = component.create(c.context,
+                                                   c.auxPool,
+                                                   name_idx,
+                                                   Kind.ExternalStaticLib); // doesn't matter
+                string_list.List mods.init(c.auxPool);   // need to be astPool, but here it doesn't matter
+                manifest.parse(c.sm, file_id, c.astPool, c.auxPool, comp, &mods);
+                c.components.add(comp);
+                mods.free();
+
+                out.add("  ");
+                out.color(color.Yellow);
+                if (comp.isAvailableStatic()) {
+                    out.add("static ");
+                } else {
+                    out.add("       ");
+                }
+                if (comp.isAvailableDynamic()) {
+                    out.add("dynamic ");
+                } else {
+                    out.add("        ");
+                }
+                if (comp.isAvailableSource()) {
+                    out.add("source");
+                } else {
+                    out.add("      ");
+                }
+
+                const string_list.List* deps = comp.getDeps();
+                u32 num_deps = deps.length();
+                if (num_deps) {
+                    out.add("  ");
+                    out.color(color.Magenta);
+                    out.add("requires: ");
+                    for (u32 i=0; i<num_deps; i++) {
+                        if (i != 0) out.add(", ");
+                        out.add(deps.get(i));
+                    }
+                }
+
+                out.color(color.Normal);
+                out.newline();
+            }
+        }
+    }
+    closedir(dir);
+}
+

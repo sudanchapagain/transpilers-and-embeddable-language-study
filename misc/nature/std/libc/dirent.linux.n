@@ -1,0 +1,18 @@
+type dir_t = anyptr
+
+type dirent_t = struct {
+    u64 ino
+    i64 off
+    u16 reclen
+    u8 t
+    [u8;256] name
+}
+
+#linkid opendir
+fn opendir(anyptr str):dir_t
+
+#linkid readdir
+fn readdir(dir_t d):rawptr<dirent_t>
+
+#linkid closedir
+fn closedir(dir_t d):int

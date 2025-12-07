@@ -1,0 +1,82 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module attr_table;
+
+import attr;
+
+import stdlib;
+import string;
+
+type Attr struct {
+    void* decl;
+    attr.Value value;
+    attr.AttrKind kind;
+}
+
+static_assert(24, sizeof(Attr));
+
+public type Table struct @(opaque) {
+    // use vector<Attr>
+    u32 count;
+    u32 capacity;
+    Attr* attrs;
+}
+
+public fn Table* create() {
+    Table* t = stdlib.calloc(1, sizeof(Table));
+    t.resize(2);
+    return t;
+}
+
+public fn void Table.free(Table* t) {
+    stdlib.free(t.attrs);
+    stdlib.free(t);
+}
+
+fn void Table.resize(Table* t, u32 capacity) {
+    t.capacity = capacity;
+    Attr* attrs2 = stdlib.malloc(capacity * sizeof(Attr));
+    if (t.count) {
+        string.memcpy(attrs2, t.attrs, t.count * sizeof(Attr));
+        stdlib.free(t.attrs);
+    }
+    t.attrs = attrs2;
+}
+
+public fn void Table.add(Table* t,
+                         void* decl,
+                         attr.AttrKind kind,
+                         const attr.Value* value)
+{
+    // IDEA: TODO search for other Attrs that are the same for section?
+
+    if (t.count == t.capacity) t.resize(t.capacity * 2);
+
+    Attr* a = &t.attrs[t.count];
+    a.decl = decl;
+    a.value = *value;
+    a.kind = kind;
+    t.count++;
+}
+
+public fn const attr.Value* Table.find(const Table* t, const void* decl, attr.AttrKind kind) {
+    for (u32 i=0; i<t.count; i++) {
+        const Attr* a = &t.attrs[i];
+        if (a.decl == decl && a.kind == kind) return &a.value;
+    }
+    return nil;
+}
+

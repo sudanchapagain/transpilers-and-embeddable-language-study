@@ -1,0 +1,9 @@
+// @warnings{no-unused}
+module test;
+
+import stdio as io;
+
+fn void test1() {
+    stdio.puts("hello");  // @error{module 'stdio' is imported with alias 'io'}
+}
+

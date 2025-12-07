@@ -1,0 +1,35 @@
+// @warnings{no-unused}
+module test;
+
+public type Foo struct @(opaque) {
+    i32 x;
+}
+
+public type Foo2 struct @(opaque) {
+    Foo f;
+}
+
+Foo v1;
+type A struct {
+    Foo f;
+}
+fn Foo a() {
+    Foo f;
+    return f;
+}
+fn void f1(Foo arg1) {}
+
+public Foo* f2;
+public type B struct {
+    Foo* a;
+}
+public fn Foo* f3() {
+    return nil;
+}
+public fn void f4(Foo* arg1) {}
+
+public fn void f5() {
+    Foo f;
+    u32 size = sizeof(f);
+}
+

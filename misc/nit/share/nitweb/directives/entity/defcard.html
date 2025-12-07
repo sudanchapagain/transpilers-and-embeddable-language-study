@@ -1,0 +1,26 @@
+<div class='card card-xl' ng-class='{active: isActive()}' id='{{definition.full_name}}'>
+	<div class='card-body'>
+		<h5>
+			<span ng-if='definition.is_intro'>
+				<span class='text-muted glyphicon glyphicon-plus' title='introduction' />
+				<entity-namespace namespace='definition.namespace' />
+			</span>
+			<span ng-if='!definition.is_intro'>
+				<span class='text-muted glyphicon glyphicon-asterisk' title='redefinition' />
+				<entity-namespace namespace='definition.namespace' />
+			</span>
+			<div class='btn-bar'>
+				<button class='btn btn-link' aria-expanded='false'
+					data-target='#{{codeId}}' ng-click='loadCardCode()'
+					aria-controls='{{codeId}}'>
+					<span class='glyphicon glyphicon-console'
+					title='Show code' />
+				</button>
+			</div>
+		</h5>
+		<div id='{{codeId}}' class='collapse'>
+			<pre ng-bind-html='code.code' />
+			<entity-location loc='code.location' />
+		</div>
+	</div>
+</div>

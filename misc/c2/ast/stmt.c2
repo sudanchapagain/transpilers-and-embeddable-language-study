@@ -1,0 +1,230 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import src_loc local;
+import string_buffer;
+
+public type StmtKind enum u8 {
+    Return,
+    Expr,
+    If,
+    While,
+    For,
+    Switch,
+    Break,
+    Continue,
+    Fallthrough,
+    Label,
+    Goto,
+    Compound,
+    Decl,
+    Asm,
+    Assert,
+}
+
+const char*[] stmtKind_names = {
+    "ReturnStmt",
+    "ExprStmt",
+    "IfStmt",
+    "WhileStmt",
+    "ForStmt",
+    "SwitchStmt",
+    "BreakStmt",
+    "ContinueStmt",
+    "FallthroughStmt",
+    "LabelStmt",
+    "GotoStmt",
+    "CompoundStmt",
+    "DeclStmt",
+    "Asm",
+    "AssertStmt",
+}
+
+static_assert(elemsof(StmtKind), elemsof(stmtKind_names));
+
+type StmtBits struct {
+    u32 kind : NumStmtBits;
+}
+
+const u32 NumStmtBits = 4;
+
+public type Stmt struct @(opaque) {
+    union {
+        StmtBits stmtBits;
+        AsmStmtBits asmStmtBits;
+        CompoundStmtBits compoundStmtBits;
+        DeclStmtBits declStmtBits;
+        IfStmtBits ifStmtBits;
+        LabelStmtBits labelStmtBits;
+        ReturnStmtBits returnStmtBits;
+        SwitchStmtBits switchStmtBits;
+
+        ExprBits exprBits;
+        ArraySubscriptExprBits arraySubscriptExprBits;
+        BinaryOperatorBits binaryOperatorBits;
+        BitOffsetExprBits bitOffsetBits;
+        BooleanLiteralBits booleanLiteralBits;
+        BuiltinExprBits builtinExprBits;
+        CallExprBits callExprBits;
+        CharLiteralBits charLiteralBits;
+        ExplicitCastExprBits explicitCastExprBits;
+        FloatLiteralBits floatLiteralBits;
+        IdentifierExprBits identifierExprBits;
+        ImplicitCastBits implicitCastBits;
+        InitListExprBits initListExprBits;
+        IntegerLiteralBits integerLiteralBits;
+        MemberExprBits memberExprBits;
+        ParenExprBits parenExprBits;
+        StringLiteralBits stringLiteralBits;
+        TypeExprBits typeExprBits;
+        UnaryOperatorBits unaryOperatorBits;
+        u32 bits;
+    }
+    SrcLoc loc;
+}
+
+fn void Stmt.init(Stmt* s, StmtKind k, SrcLoc loc) {
+    s.bits = 0;
+    s.stmtBits.kind = k;
+    s.loc = loc;
+}
+
+fn Stmt* Stmt.instantiate(Stmt* s, Instantiator* inst) {
+    switch (s.getKind()) {
+    case Return:
+        return ReturnStmt.instantiate((ReturnStmt*)s, inst);
+    case Expr:
+        return (Stmt*)Expr.instantiate((Expr*)s, inst);
+    case If:
+        return IfStmt.instantiate((IfStmt*)s, inst);
+    case While:
+        return WhileStmt.instantiate((WhileStmt*)s, inst);
+    case For:
+        return ForStmt.instantiate((ForStmt*)s, inst);
+    case Switch:
+        return SwitchStmt.instantiate((SwitchStmt*)s, inst);
+    case Break:
+    case Continue:
+    case Fallthrough:
+        return s;
+    case Label:
+        return LabelStmt.instantiate((LabelStmt*)s, inst);
+    case Goto:
+        return s;
+    case Compound:
+        return (Stmt*)CompoundStmt.instantiate((CompoundStmt*)s, inst);
+    case Decl:
+        return DeclStmt.instantiate((DeclStmt*)s, inst);
+    case Asm:
+        return AsmStmt.instantiate((AsmStmt*)s, inst);
+    case Assert:
+        return AssertStmt.instantiate((AssertStmt*)s, inst);
+    }
+    s.dump();
+    assert(0);
+    return nil;
+}
+
+// TEMP cast needed until Analyser fixed
+public fn StmtKind Stmt.getKind(const Stmt* s) { return (StmtKind)s.stmtBits.kind; }
+
+public fn bool Stmt.isExpr(const Stmt* s) {
+    return s.getKind() == StmtKind.Expr;
+}
+
+public fn bool Stmt.isCompound(const Stmt* s) {
+    return s.getKind() == StmtKind.Compound;
+}
+
+public fn bool Stmt.isFallthrough(const Stmt* s) {
+    return s.getKind() == StmtKind.Fallthrough;
+}
+
+public fn bool Stmt.isDecl(const Stmt* s) {
+    return s.getKind() == StmtKind.Decl;
+}
+
+public fn bool Stmt.isLabel(const Stmt* s) {
+    return s.getKind() == StmtKind.Label;
+}
+
+public fn SrcLoc Stmt.getLoc(const Stmt* s) {
+    return s.loc;
+}
+
+public fn void Stmt.dump(const Stmt* s) {
+    string_buffer.Buf* out = ast.getDumpBuf();
+    s.print(out, 0);
+    ast.flushDumpBuf(out);
+}
+
+fn void Stmt.print(const Stmt* s, string_buffer.Buf* out, u32 indent) {
+    switch (s.getKind()) {
+    case Return:
+        ReturnStmt.print((ReturnStmt*)s, out, indent);
+        break;
+    case Expr:
+        Expr.print((Expr*)s, out, indent);
+        break;
+    case If:
+        IfStmt.print((IfStmt*)s, out, indent);
+        break;
+    case While:
+        WhileStmt.print((WhileStmt*)s, out, indent);
+        break;
+    case For:
+        ForStmt.print((ForStmt*)s, out, indent);
+        break;
+    case Switch:
+        SwitchStmt.print((SwitchStmt*)s, out, indent);
+        break;
+    case Break:
+        BreakStmt.print((BreakStmt*)s, out, indent);
+        break;
+    case Continue:
+        ContinueStmt.print((ContinueStmt*)s, out, indent);
+        break;
+    case Fallthrough:
+        FallthroughStmt.print((FallthroughStmt*)s, out, indent);
+        break;
+    case Label:
+        LabelStmt.print((LabelStmt*)s, out, indent);
+        break;
+    case Goto:
+        GotoStmt.print((GotoStmt*)s, out, indent);
+        break;
+    case Compound:
+        CompoundStmt.print((CompoundStmt*)s, out, indent);
+        break;
+    case Decl:
+        DeclStmt.print((DeclStmt*)s, out, indent);
+        break;
+    case Asm:
+        AsmStmt.print((AsmStmt*)s, out, indent);
+        break;
+    case Assert:
+        AssertStmt.print((AssertStmt*)s, out, indent);
+        break;
+    }
+}
+
+fn void Stmt.printKind(const Stmt* s, string_buffer.Buf* out, u32 indent) {
+    out.indent(indent);
+    out.color(col_Stmt);
+    out.add(stmtKind_names[s.getKind()]);
+}
+

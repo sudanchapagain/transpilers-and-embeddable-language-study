@@ -1,0 +1,7 @@
+fn sum(int a, int b, ...[int] rest):int  {
+    return a + b + rest[1] + rest[2]
+}
+
+fn main() {
+    print(sum(1, 2, 3, 4, 5))
+}

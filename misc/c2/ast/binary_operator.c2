@@ -1,0 +1,165 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import string_buffer;
+import src_loc local;
+
+public type BinaryOpcode enum u8 {
+    Multiply,
+    Divide,
+    Remainder,
+    Add,
+    Subtract,
+    ShiftLeft,
+    ShiftRight,
+    LessThan,
+    GreaterThan,
+    LessEqual,
+    GreaterEqual,
+    Equal,
+    NotEqual,
+    And,
+    Xor,
+    Or,
+    LAnd,
+    LOr,
+    // keep these here, we check for >= Assign to determine if we need an rvalue of lhs
+    Assign,
+    MulAssign,
+    DivAssign,
+    RemAssign,
+    AddAssign,
+    SubAssign,
+    ShlAssign,
+    ShrAssign,
+    AndAssign,
+    XorAssign,
+    OrAssign,
+}
+
+const char*[] binaryOpcode_names = {
+    "*",
+    "/",
+    "%",
+    "+",
+    "-",
+    "<<",
+    ">>",
+    "<",
+    ">",
+    "<=",
+    ">=",
+    "==",
+    "!=",
+    "&",
+    "^",
+    "|",
+    "&&",
+    "||",
+    "=",
+    "*=",
+    "/=",
+    "%=",
+    "+=",
+    "-=",
+    "<<=",
+    ">>=",
+    "&=",
+    "^=",
+    "|=",
+}
+
+static_assert(elemsof(BinaryOpcode), elemsof(binaryOpcode_names));
+
+public fn bool BinaryOpcode.isComparison(BinaryOpcode opcode) {
+    return opcode >= BinaryOpcode.LessThan && opcode <= BinaryOpcode.NotEqual;
+}
+
+public fn const char* BinaryOpcode.str(BinaryOpcode opcode) {
+    return binaryOpcode_names[opcode];
+}
+
+type BinaryOperatorBits struct {
+    u32 : NumExprBits;
+    u32 kind : 5;
+}
+
+public type BinaryOperator struct @(opaque) {
+    Expr base;
+    Expr* lhs;
+    Expr* rhs;
+}
+
+public fn BinaryOperator* BinaryOperator.create(ast_context.Context* c, SrcLoc loc, BinaryOpcode kind, Expr* lhs, Expr* rhs) {
+    BinaryOperator* e = c.alloc(sizeof(BinaryOperator));
+    e.base.init(ExprKind.BinaryOperator, loc, 0, 0, kind >= BinaryOpcode.Assign, ValType.RValue);
+    e.base.base.binaryOperatorBits.kind = kind;
+    e.lhs = lhs;
+    e.rhs = rhs;
+#if AstStatistics
+    Stats.addExpr(ExprKind.BinaryOperator, sizeof(BinaryOperator));
+#endif
+    return e;
+}
+
+fn Expr* BinaryOperator.instantiate(BinaryOperator* e, Instantiator* inst) {
+    return (Expr*)BinaryOperator.create(inst.c, e.base.base.loc, e.getOpcode(), e.lhs.instantiate(inst), e.rhs.instantiate(inst));
+}
+
+public fn BinaryOpcode BinaryOperator.getOpcode(const BinaryOperator* e) {
+    return (BinaryOpcode)e.base.base.binaryOperatorBits.kind;
+}
+
+public fn Expr* BinaryOperator.getLHS(const BinaryOperator* e) { return e.lhs; }
+public fn Expr** BinaryOperator.getLHS2(BinaryOperator* e) { return &e.lhs; }
+
+public fn Expr* BinaryOperator.getRHS(const BinaryOperator* e) { return e.rhs; }
+public fn Expr** BinaryOperator.getRHS2(BinaryOperator* e) { return &e.rhs; }
+
+public fn const char* BinaryOperator.getOpcodeStr(const BinaryOperator* e) {
+    return binaryOpcode_names[e.getOpcode()];
+}
+
+fn SrcLoc BinaryOperator.getStartLoc(const BinaryOperator* e) {
+    return e.getLHS().getStartLoc();
+}
+
+fn SrcLoc BinaryOperator.getEndLoc(const BinaryOperator* e) {
+    return e.getRHS().getEndLoc();
+}
+
+fn void BinaryOperator.print(const BinaryOperator* e, string_buffer.Buf* out, u32 indent) {
+    e.base.printKind(out, indent);
+    e.base.printTypeBits(out);
+    out.space();
+    out.color(col_Value);
+    out.add(binaryOpcode_names[e.getOpcode()]);
+    out.newline();
+
+    e.lhs.print(out, indent + 1);
+    e.rhs.print(out, indent + 1);
+}
+
+fn void BinaryOperator.printLiteral(const BinaryOperator* e, string_buffer.Buf* out) {
+    e.lhs.printLiteral(out);
+    out.space();
+    out.add(binaryOpcode_names[e.getOpcode()]);
+    out.space();
+    e.rhs.printLiteral(out);
+}
+

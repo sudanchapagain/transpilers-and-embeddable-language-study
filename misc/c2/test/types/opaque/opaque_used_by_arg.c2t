@@ -1,0 +1,17 @@
+// @recipe bin
+$warnings no-unused
+
+// @file{file1}
+module foo;
+
+public type Foo struct @(opaque) {
+    i32 x;
+}
+
+// @file{file2}
+module bar;
+import foo local;
+
+fn void b(Foo arg1) { // @error{opaque type 'foo.Foo' used by value}
+}
+

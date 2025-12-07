@@ -1,0 +1,53 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import src_loc local;
+import string_buffer;
+
+public type AssertStmt struct @(opaque) {
+    Stmt base;
+    Expr* inner;
+}
+
+public fn AssertStmt* AssertStmt.create(ast_context.Context* c,
+                                          SrcLoc loc,
+                                          Expr* inner)
+{
+    AssertStmt* s = c.alloc(sizeof(AssertStmt));
+    s.base.init(StmtKind.Assert, loc);
+    s.inner = inner;
+#if AstStatistics
+    Stats.addStmt(StmtKind.Assert, sizeof(AssertStmt));
+#endif
+    return s;
+}
+
+fn Stmt* AssertStmt.instantiate(AssertStmt* s, Instantiator* inst) {
+    return (Stmt*)AssertStmt.create(inst.c, s.base.loc, s.inner.instantiate(inst));
+}
+
+public fn Expr* AssertStmt.getInner(const AssertStmt* s) { return s.inner; }
+
+public fn Expr** AssertStmt.getInner2(AssertStmt* s) { return &s.inner; }
+
+fn void AssertStmt.print(const AssertStmt* s, string_buffer.Buf* out, u32 indent) {
+    s.base.printKind(out, indent);
+    out.newline();
+    s.inner.print(out, indent + 1);
+}
+

@@ -1,0 +1,8 @@
+import libc
+import syscall
+
+fn main() {
+    for true {
+        libc.usleep(10000)
+    }
+}

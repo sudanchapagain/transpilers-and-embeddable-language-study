@@ -1,0 +1,17 @@
+// @recipe bin
+    $warnings no-unused-variable no-unused-function no-unused-module
+
+// @file{file1}
+module foo;
+
+public fn void test1() {}
+
+// @file{file2}
+module bar;
+
+import foo local;
+
+fn void test2() {
+    test1();
+}
+

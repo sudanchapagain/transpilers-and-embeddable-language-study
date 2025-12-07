@@ -1,0 +1,5 @@
+// @warnings{no-unused}
+module test;
+
+i16 e = i16.min - 1; // @error{constant value -32769 out-of-bounds for type 'i16', range [-32768, 32767]}
+

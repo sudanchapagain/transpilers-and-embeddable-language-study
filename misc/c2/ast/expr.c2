@@ -1,0 +1,678 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import src_loc local;
+import string_buffer;
+
+public type ExprKind enum u8 {
+    IntegerLiteral,
+    FloatLiteral,
+    BooleanLiteral,
+    CharLiteral,
+    StringLiteral,
+    Nil,
+    Identifier,
+    Type,
+    Call,
+    InitList,
+    FieldDesignatedInit,
+    ArrayDesignatedInit,
+    BinaryOperator,
+    UnaryOperator,
+    ConditionalOperator,
+    Builtin,
+    ArraySubscript,
+    Member,
+    Paren,
+    BitOffset,
+    ExplicitCast,
+    ImplicitCast,
+    Range,
+    NamedArgument,
+}
+
+const char*[] exprKind_names = {
+    "IntegerLiteral",
+    "FloatLiteral",
+    "BooleanLiteral",
+    "CharLiteral",
+    "StringLiteral",
+    "Nil",
+    "Identifier",
+    "TypeExpr",
+    "Call",
+    "InitList",
+    "FieldDesignatedInit",
+    "ArrayDesignatedInit",
+    "BinaryOperator",
+    "UnaryOperator",
+    "ConditionalOp",
+    "Builtin",
+    "ArraySubscript",
+    "Member",
+    "Paren",
+    "BitOffset",
+    "ExplicitCast",
+    "ImplicitCast",
+    "RangeExpr",
+    "NamedArgument",
+}
+static_assert(elemsof(ExprKind), elemsof(exprKind_names));
+
+/*
+    An LValue may be on the left/right side of an assignment
+    An RValue may only be on the left side
+    An NValue is an abstract object (cannot be used on either side)
+
+    Lvalue:
+    1. The name of the variable of any type i.e. ,
+    2. A subscript ([ ]) expression that does not evaluate to an array.
+    3. A unary-indirection (*) expression that does not refer to an array
+    4. An l-value expression in parentheses.
+    5. A const object (a nonmodifiable l-value).
+    6. The result of indirection through a pointer, provided that it is not a function pointer.
+    7. The result of member access through pointer (-> or .) (not for module.)
+
+    RValue:
+    1. Anything that is capable of returning a constant expression or value.
+    2. Expression like a+b will return some constant.
+
+    NValue is either LValue nor RValue (eg. module / Type)
+*/
+
+public type ValType enum u8 {
+    NValue, // cannot be used except in sizeof, etc (eg. Type, mod.Type, static Struct/Enum func)
+    RValue, // can only be used as RHS of assignement
+    LValue, // can be used as LHS / RHS of assignment
+}
+
+const char*[] valType_names = {
+    "nvalue",
+    "rvalue",
+    "lvalue",
+}
+static_assert(elemsof(ValType), elemsof(valType_names));
+
+type ExprBits struct {
+    u32 : NumStmtBits;
+    u32 kind : 5;
+    u32 is_ctv : 1;
+    u32 is_ctc : 1;
+    u32 valtype : 2;
+    u32 has_effect : 1;
+}
+const u32 NumExprBits = NumStmtBits + 10;
+
+public type Expr struct @(opaque) {
+    Stmt base;
+    QualType qt;
+}
+
+fn void Expr.init(Expr* e,
+                  ExprKind k,
+                  SrcLoc loc,
+                  bool ctv,
+                  bool ctc,
+                  bool has_effect,
+                  ValType valtype)
+{
+    e.base.init(StmtKind.Expr, loc);
+    e.base.exprBits.kind = k;
+    e.base.exprBits.is_ctv = ctv;
+    e.base.exprBits.is_ctc = ctc;
+    e.base.exprBits.has_effect = has_effect;
+    e.base.exprBits.valtype = valtype;
+    e.qt.ptr = 0;
+}
+
+fn Expr* Expr.instantiate(Expr* e, Instantiator* inst) {
+    switch (e.getKind()) {
+    case IntegerLiteral:
+    case FloatLiteral:
+    case BooleanLiteral:
+    case CharLiteral:
+    case StringLiteral:
+    case Nil:
+        return e;
+    case Identifier:
+        return IdentifierExpr.instantiate((IdentifierExpr*)e, inst);
+    case Type:
+        return TypeExpr.instantiate((TypeExpr*)e, inst);
+    case Call:
+        return CallExpr.instantiate((CallExpr*)e, inst);
+    case InitList:
+        return InitListExpr.instantiate((InitListExpr*)e, inst);
+    case FieldDesignatedInit:
+        return FieldDesignatedInitExpr.instantiate((FieldDesignatedInitExpr*)e, inst);
+    case ArrayDesignatedInit:
+        return ArrayDesignatedInitExpr.instantiate((ArrayDesignatedInitExpr*)e, inst);
+    case BinaryOperator:
+        return BinaryOperator.instantiate((BinaryOperator*)e, inst);
+    case UnaryOperator:
+        return UnaryOperator.instantiate((UnaryOperator*)e, inst);
+    case ConditionalOperator:
+        return ConditionalOperator.instantiate((ConditionalOperator*)e, inst);
+    case Builtin:
+        return BuiltinExpr.instantiate((BuiltinExpr*)e, inst);
+    case ArraySubscript:
+        return ArraySubscriptExpr.instantiate((ArraySubscriptExpr*)e, inst);
+    case Member:
+        return MemberExpr.instantiate((MemberExpr*)e, inst);
+    case Paren:
+        return ParenExpr.instantiate((ParenExpr*)e, inst);
+    case BitOffset:
+        return BitOffsetExpr.instantiate((BitOffsetExpr*)e, inst);
+    case ExplicitCast:
+        return ExplicitCastExpr.instantiate((ExplicitCastExpr*)e, inst);
+    case ImplicitCast:
+        // should not happen
+        break;
+    case Range:
+        return RangeExpr.instantiate((RangeExpr*)e, inst);
+    case NamedArgument:
+        return NamedArgument.instantiate((NamedArgument*)e, inst);
+    }
+    e.dump();
+    assert(0);
+    return nil;
+}
+
+public fn Stmt* Expr.asStmt(Expr* e) { return &e.base; }
+
+// TEMP cast needed until Analyser fixed
+public fn ExprKind Expr.getKind(const Expr* e) { return (ExprKind)e.base.exprBits.kind; }
+
+public fn bool Expr.isStringLiteral(const Expr* e) {
+    return e.getKind() == ExprKind.StringLiteral;
+}
+
+public fn bool Expr.isNil(const Expr* e) {
+    return e.getKind() == ExprKind.Nil;
+}
+
+public fn bool Expr.isIdentifier(const Expr* e) {
+    return e.getKind() == ExprKind.Identifier;
+}
+
+public fn bool Expr.isCall(const Expr* e) {
+    return e.getKind() == ExprKind.Call;
+}
+
+public fn bool Expr.isUnaryOp(const Expr* e) {
+    return e.getKind() == ExprKind.UnaryOperator;
+}
+
+public fn bool Expr.isImplicitCast(const Expr* e) {
+    return e.getKind() == ExprKind.ImplicitCast;
+}
+
+public fn bool Expr.isType(const Expr* e) {
+    return e.getKind() == ExprKind.Type;
+}
+
+public fn bool Expr.isInitList(const Expr* e) {
+    return e.getKind() == ExprKind.InitList;
+}
+
+public fn bool Expr.isTilde(const Expr* e) {
+    while (e.isParen()) {
+        const ParenExpr* p = (ParenExpr*)e;
+        e = p.getInner();
+    }
+    if (e.getKind() == ExprKind.UnaryOperator) {
+        const UnaryOperator* u = (UnaryOperator*)e;
+        return (u.getOpcode() == UnaryOpcode.Not);
+    }
+    return false;
+}
+
+public fn bool Expr.isBinaryOperator(const Expr* e) {
+    return e.getKind() == ExprKind.BinaryOperator;
+}
+
+public fn bool Expr.isMember(const Expr* e) {
+    return e.getKind() == ExprKind.Member;
+}
+
+public fn bool Expr.isFieldDesignatedInit(const Expr* e) {
+    return e.getKind() == ExprKind.FieldDesignatedInit;
+}
+
+public fn bool Expr.isArrayDesignatedInit(const Expr* e) {
+    return e.getKind() == ExprKind.ArrayDesignatedInit;
+}
+
+public fn bool Expr.isBitOffset(const Expr* e) {
+    return e.getKind() == ExprKind.BitOffset;
+}
+
+fn bool Expr.isParen(const Expr* e) {
+    return e.getKind() == ExprKind.Paren;
+}
+
+public fn bool Expr.isRange(const Expr* e) {
+    return e.getKind() == ExprKind.Range;
+}
+
+public fn bool Expr.isAssignment(const Expr* e) {
+    return e.isBinaryOperator() && ((BinaryOperator*)e).getOpcode() == BinaryOpcode.Assign;
+}
+
+public fn bool Expr.isInitlistAssignment(const Expr* e) {
+    return e.isAssignment() && ((BinaryOperator*)e).getRHS().isInitList();
+}
+
+public fn bool Expr.isNamedArgument(const Expr* e) {
+    return e.getKind() == ExprKind.NamedArgument;
+}
+
+public fn bool Expr.isCtv(const Expr* e) { return e.base.exprBits.is_ctv; }
+
+public fn bool Expr.isCtc(const Expr* e) { return e.base.exprBits.is_ctc; }
+
+public fn void Expr.setCtv(Expr* e) { e.base.exprBits.is_ctv = true; }
+
+public fn void Expr.setCtc(Expr* e) { e.base.exprBits.is_ctc = true; }
+
+public fn void Expr.copyCtcFlags(Expr* e, const Expr* other) {
+    e.base.exprBits.is_ctc = other.base.exprBits.is_ctc;
+}
+
+public fn void Expr.copyConstantFlags(Expr* e, const Expr* other) {
+    e.base.exprBits.is_ctc = other.base.exprBits.is_ctc;
+    e.base.exprBits.is_ctv = other.base.exprBits.is_ctv;
+}
+
+public fn void Expr.combineConstantFlags(Expr* e, const Expr* lhs, const Expr* rhs) {
+    e.base.exprBits.is_ctc = lhs.base.exprBits.is_ctc & rhs.base.exprBits.is_ctc;
+    e.base.exprBits.is_ctv = lhs.base.exprBits.is_ctv & rhs.base.exprBits.is_ctv;
+}
+
+public fn bool Expr.hasEffect(const Expr* e) {
+    return e.base.exprBits.has_effect;
+}
+
+public fn ValType Expr.getValType(const Expr* e) {
+    return (ValType)e.base.exprBits.valtype;
+}
+
+public fn bool Expr.isNValue(const Expr* e) {
+    return e.getValType() == ValType.NValue;
+}
+
+/*
+public fn bool Expr.isRValue(const Expr* e) {
+    return e.getValType() == ValType.RValue;
+}
+*/
+
+public fn bool Expr.isLValue(const Expr* e) {
+    return e.getValType() == ValType.LValue;
+}
+
+public fn void Expr.setLValue(Expr* e) {
+    e.base.exprBits.valtype = ValType.LValue;
+}
+
+public fn void Expr.setRValue(Expr* e) {
+    e.base.exprBits.valtype = ValType.RValue;
+}
+
+/*
+public fn void Expr.setValType(Expr* e, ValType valtype) {
+    e.base.exprBits.valtype = valtype;
+}
+*/
+
+public fn void Expr.copyValType(Expr* e, const Expr* other) {
+    e.base.exprBits.valtype = other.base.exprBits.valtype;
+}
+
+public fn bool Expr.isBitfield(const Expr* e) {
+    if (!e.isMember()) return false;
+    const MemberExpr* m = (MemberExpr*)e;
+    return m.isBitfield();
+}
+
+public fn SrcLoc Expr.getLoc(const Expr* e) { return e.base.loc; }
+
+public fn SrcLoc Expr.getStartLoc(const Expr* e) {
+    switch (e.getKind()) {
+    case IntegerLiteral:
+    case FloatLiteral:
+    case BooleanLiteral:
+    case CharLiteral:
+    case StringLiteral:
+    case Nil:
+    case Identifier:
+    case Type:
+        break;
+    case Call:
+        return ((CallExpr*)e).getStartLoc();
+    case InitList:
+    case FieldDesignatedInit:
+    case ArrayDesignatedInit:
+        break;
+    case BinaryOperator:
+        return ((BinaryOperator*)e).getStartLoc();
+    case UnaryOperator:
+        return ((UnaryOperator*)e).getStartLoc();
+    case ConditionalOperator:
+        return ((ConditionalOperator*)e).getStartLoc();
+    case Builtin:
+        break;
+    case ArraySubscript:
+        return ((ArraySubscriptExpr*)e).getStartLoc();
+    case Member:
+        return ((MemberExpr*)e).getStartLoc();
+    case Paren:
+        break;
+    case BitOffset:
+        return ((BitOffsetExpr*)e).getStartLoc();
+    case ExplicitCast:
+        break;
+    case ImplicitCast:
+        return ((ImplicitCastExpr*)e).getStartLoc();
+    case Range:
+        return ((RangeExpr*)e).getStartLoc();
+    case NamedArgument:
+        return ((NamedArgument*)e).getStartLoc();
+    }
+    return e.base.loc;
+}
+
+public fn SrcLoc Expr.getEndLoc(const Expr* e) {
+    switch (e.getKind()) {
+    case IntegerLiteral:
+        return ((IntegerLiteral*)e).getEndLoc();
+    case FloatLiteral:
+        return ((FloatLiteral*)e).getEndLoc();
+    case BooleanLiteral:
+        return ((BooleanLiteral*)e).getEndLoc();
+    case CharLiteral:
+        return ((CharLiteral*)e).getEndLoc();
+    case StringLiteral:
+        return ((StringLiteral*)e).getEndLoc();
+    case Nil:
+        return ((NilExpr*)e).getEndLoc();
+    case Identifier:
+        return ((IdentifierExpr*)e).getEndLoc();
+    case Type:
+        return ((TypeExpr*)e).getEndLoc();
+    case Call:
+        return ((CallExpr*)e).getEndLoc();
+    case InitList:
+        return ((InitListExpr*)e).getEndLoc();
+    case FieldDesignatedInit:
+        return ((FieldDesignatedInitExpr*)e).getEndLoc();
+    case ArrayDesignatedInit:
+        return ((ArrayDesignatedInitExpr*)e).getEndLoc();
+    case BinaryOperator:
+        return ((BinaryOperator*)e).getEndLoc();
+    case UnaryOperator:
+        return ((UnaryOperator*)e).getEndLoc();
+    case ConditionalOperator:
+        return ((ConditionalOperator*)e).getEndLoc();
+    case Builtin:
+        return ((BuiltinExpr*)e).getEndLoc();
+    case ArraySubscript:
+        return ((ArraySubscriptExpr*)e).getEndLoc();
+    case Member:
+        return ((MemberExpr*)e).getEndLoc();
+    case Paren:
+        return ((ParenExpr*)e).getEndLoc();
+    case BitOffset:
+        return ((BitOffsetExpr*)e).getEndLoc();
+    case ExplicitCast:
+        return ((ExplicitCastExpr*)e).getEndLoc();
+    case ImplicitCast:
+        return ((ImplicitCastExpr*)e).getEndLoc();
+    case Range:
+        return ((RangeExpr*)e).getEndLoc();
+    case NamedArgument:
+        return ((NamedArgument*)e).getEndLoc();
+    }
+    return e.base.loc;
+}
+
+public fn SrcRange Expr.getRange(const Expr* e) {
+    SrcRange range = { e.getStartLoc(), e.getEndLoc() }
+    return range;
+}
+
+public fn void Expr.setType(Expr* e, QualType qt) { e.qt = qt; }
+
+public fn QualType Expr.getType(const Expr* e) { return e.qt; }
+
+public fn bool Expr.needsSemi(const Expr* e) {
+    switch (e.getKind()) {
+    case IntegerLiteral:
+    case FloatLiteral:
+    case BooleanLiteral:
+    case CharLiteral:
+    case StringLiteral:
+    case Nil:
+    case Identifier:
+    case Type:
+    case Call:
+        return true;
+    case InitList:
+        return false;
+    case FieldDesignatedInit:
+    case ArrayDesignatedInit:
+        assert(0);  // cannot happen
+        break;
+    case BinaryOperator:
+        const BinaryOperator* binop = (BinaryOperator*)e;
+        const Expr* rhs = binop.getRHS();
+        return rhs.needsSemi();
+    case UnaryOperator:
+    case ConditionalOperator:
+    case Builtin:
+    case ArraySubscript:
+    case Member:
+    case Paren:
+    case BitOffset:
+    case ExplicitCast:
+    case ImplicitCast:
+    case Range:
+        break;
+    case NamedArgument:
+        const NamedArgument* n = (NamedArgument*)e;
+        return n.getInner().needsSemi();
+    }
+    return true;
+}
+
+public fn void Expr.dump(const Expr* e) {
+    string_buffer.Buf* out = ast.getDumpBuf();
+    e.print(out, 0);
+    ast.flushDumpBuf(out);
+}
+
+fn void Expr.print(const Expr* e, string_buffer.Buf* out, u32 indent) {
+    switch (e.getKind()) {
+    case IntegerLiteral:
+        IntegerLiteral.print((IntegerLiteral*)e, out, indent);
+        break;
+    case FloatLiteral:
+        FloatLiteral.print((FloatLiteral*)e, out, indent);
+        break;
+    case BooleanLiteral:
+        BooleanLiteral.print((BooleanLiteral*)e, out, indent);
+        break;
+    case CharLiteral:
+        CharLiteral.print((CharLiteral*)e, out, indent);
+        break;
+    case StringLiteral:
+        StringLiteral.print((StringLiteral*)e, out, indent);
+        break;
+    case Nil:
+        NilExpr.print((NilExpr*)e, out, indent);
+        break;
+    case Identifier:
+        IdentifierExpr.print((IdentifierExpr*)e, out, indent);
+        break;
+    case Type:
+        TypeExpr.print((TypeExpr*)e, out, indent);
+        break;
+    case Call:
+        CallExpr.print((CallExpr*)e, out, indent);
+        break;
+    case InitList:
+        InitListExpr.print((InitListExpr*)e, out, indent);
+        break;
+    case FieldDesignatedInit:
+        FieldDesignatedInitExpr.print((FieldDesignatedInitExpr*)e, out, indent);
+        break;
+    case ArrayDesignatedInit:
+        ArrayDesignatedInitExpr.print((ArrayDesignatedInitExpr*)e, out, indent);
+        break;
+    case BinaryOperator:
+        BinaryOperator.print((BinaryOperator*)e, out, indent);
+        break;
+    case UnaryOperator:
+        UnaryOperator.print((UnaryOperator*)e, out, indent);
+        break;
+    case ConditionalOperator:
+        ConditionalOperator.print((ConditionalOperator*)e, out, indent);
+        break;
+    case Builtin:
+        BuiltinExpr.print((BuiltinExpr*)e, out, indent);
+        break;
+    case ArraySubscript:
+        ArraySubscriptExpr.print((ArraySubscriptExpr*)e, out, indent);
+        break;
+    case Member:
+        MemberExpr.print((MemberExpr*)e, out, indent);
+        break;
+    case Paren:
+        ParenExpr.print((ParenExpr*)e, out, indent);
+        break;
+    case BitOffset:
+        BitOffsetExpr.print((BitOffsetExpr*)e, out, indent);
+        break;
+    case ExplicitCast:
+        ExplicitCastExpr.print((ExplicitCastExpr*)e, out, indent);
+        break;
+    case ImplicitCast:
+        ImplicitCastExpr.print((ImplicitCastExpr*)e, out, indent);
+        break;
+    case Range:
+        RangeExpr.print((RangeExpr*)e, out, indent);
+        break;
+    case NamedArgument:
+        NamedArgument.print((NamedArgument*)e, out, indent);
+        break;
+    }
+}
+
+// used in generating asserts()
+public fn void Expr.printLiteral(const Expr* e, string_buffer.Buf* out) {
+    switch (e.getKind()) {
+    case IntegerLiteral:
+        IntegerLiteral.printLiteral((IntegerLiteral*)e, out, false);
+        return;
+    case FloatLiteral:
+        FloatLiteral.printLiteral((FloatLiteral*)e, out);
+        return;
+    case BooleanLiteral:
+        BooleanLiteral.printLiteral((BooleanLiteral*)e, out);
+        return;
+    case CharLiteral:
+        CharLiteral.printLiteral((CharLiteral*)e, out);
+        return;
+    case StringLiteral:
+        StringLiteral.printLiteral((StringLiteral*)e, out);
+        return;
+    case Nil:
+        NilExpr.printLiteral((NilExpr*)e, out);
+        return;
+    case Identifier:
+        IdentifierExpr.printLiteral((IdentifierExpr*)e, out);
+        return;
+    case Type:
+        TypeExpr.printLiteral((TypeExpr*)e, out);
+        return;
+    case Call:
+        CallExpr.printLiteral((CallExpr*)e, out);
+        return;
+    case InitList:
+        InitListExpr.printLiteral((InitListExpr*)e, out);
+        return;
+    case FieldDesignatedInit:
+        FieldDesignatedInitExpr.printLiteral((FieldDesignatedInitExpr*)e, out);
+        return;
+    case ArrayDesignatedInit:
+        ArrayDesignatedInitExpr.printLiteral((ArrayDesignatedInitExpr*)e, out);
+        return;
+    case BinaryOperator:
+        BinaryOperator.printLiteral((BinaryOperator*)e, out);
+        return;
+    case UnaryOperator:
+        UnaryOperator.printLiteral((UnaryOperator*)e, out);
+        return;
+    case ConditionalOperator:
+        ConditionalOperator.printLiteral((ConditionalOperator*)e, out);
+        return;
+    case Builtin:
+        BuiltinExpr.printLiteral((BuiltinExpr*)e, out);
+        return;
+    case ArraySubscript:
+        ArraySubscriptExpr.printLiteral((ArraySubscriptExpr*)e, out);
+        return;
+    case Member:
+        MemberExpr.printLiteral((MemberExpr*)e, out);
+        return;
+    case Paren:
+        ParenExpr.printLiteral((ParenExpr*)e, out);
+        return;
+    case BitOffset:
+        BitOffsetExpr.printLiteral((BitOffsetExpr*)e, out);
+        return;
+    case ExplicitCast:
+        ExplicitCastExpr.printLiteral((ExplicitCastExpr*)e, out);
+        return;
+    case ImplicitCast:
+        ImplicitCastExpr.printLiteral((ImplicitCastExpr*)e, out);
+        return;
+    case Range:
+        RangeExpr.printLiteral((RangeExpr*)e, out);
+        return;
+    case NamedArgument:
+        NamedArgument.printLiteral((NamedArgument*)e, out);
+        break;
+    }
+    out.print("<<kind=%d>>", e.getKind());
+}
+
+fn void Expr.printKind(const Expr* e, string_buffer.Buf* out, u32 indent) {
+    out.indent(indent);
+    out.color(col_Expr);
+    out.add(exprKind_names[e.getKind()]);
+}
+
+fn void Expr.printTypeBits(const Expr* e, string_buffer.Buf* out) {
+    out.space();
+    e.qt.printQuoted(out);
+    out.color(col_Attr);
+    if (e.base.exprBits.is_ctc) out.add(" CTC");
+    if (e.base.exprBits.is_ctv) out.add(" CTV");
+    out.space();
+    out.add(valType_names[e.getValType()]);
+}
+

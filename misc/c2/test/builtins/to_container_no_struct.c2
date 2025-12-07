@@ -1,0 +1,10 @@
+// @warnings{no-unused}
+module test;
+
+type Enum enum u8 {
+    A
+}
+fn void test1() {
+    void* a = to_container(Enum, test1, nil); // @error{to_container can only be used on struct types}
+}
+

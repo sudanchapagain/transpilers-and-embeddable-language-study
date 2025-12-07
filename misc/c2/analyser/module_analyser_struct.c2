@@ -1,0 +1,214 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module module_analyser;
+
+import ast local;
+import ctv_analyser;
+import name_vector local;
+import size_analyser;
+
+fn void Analyser.analyseStructType(Analyser* ma, StructTypeDecl* d) {
+    if (d.isOpaque()) {
+        ma.checkStack[ma.checkIndex-1].usedPublic = false;
+        ma.usedPublic = false;
+    }
+    u32 num_members = d.getNumMembers();
+
+    NameVector names.init(num_members);
+    NameVector locs.init(num_members);
+
+    ma.analyseStructNames(d, &names, &locs);
+
+    names.free();
+    locs.free();
+
+    ma.analyseStructMembers(d);
+
+    if (!ma.has_error && d.getSize() == 0 && !ma.mod.isExternal()) {
+        Decl* dd = (Decl*)d;
+        dd.dump();
+        ma.error(dd.getLoc(), "empty structs are only allowed in interface files");
+    }
+}
+
+fn void Analyser.analyseStructMembers(Analyser* ma, StructTypeDecl* d) {
+    u32 count = d.getNumMembers();
+    Decl** members = d.getMembers();
+    bool is_packed = d.isPacked();
+
+    for (u32 i=0; i<count; i++) {
+        Decl* member = members[i];
+        if (member.isVariable()) {
+            VarDecl* vd = (VarDecl*)member;
+            // Note: dont push to stack, because can self-ref to StructType
+            member.setCheckInProgress();
+            ma.analyseStructMember(vd);
+
+#if 0
+            // TODO decide whether to allow this
+            QualType qt = member.getType();
+            if (is_packed && qt.isPointerOrFunction()) {
+                ma.error(member.getLoc(), "pointer types are not allowed in packed structs");
+            }
+#endif
+
+            Expr* bitfield = vd.getBitfield();
+            if (bitfield) {
+                // canonical must be builtin type/enum
+                QualType qt = member.getType();
+                u32 type_width = qt.getBitFieldWidth();
+                const char* name = vd.getName();
+                if (type_width == 0) {
+                    if (name)
+                        ma.errorRange(bitfield.getLoc(), bitfield.getRange(), "bit-field '%s' has invalid type", name);
+                    else
+                        ma.errorRange(bitfield.getLoc(), bitfield.getRange(), "unnamed bit-field has invalid type");
+                    return;
+                }
+
+                QualType qt2 = ma.analyseExpr(&bitfield, false, RHS);
+                if (qt2.isInvalid()) return;
+
+                if (!bitfield.isCtv()) {
+                    ma.errorRange(bitfield.getLoc(), bitfield.getRange(), "bit-field size is not a compile-time value");
+                    return;
+                }
+                Value value = ctv_analyser.get_value(bitfield);
+                if (value.isZero()) {
+                    if (name)
+                        ma.errorRange(bitfield.getLoc(), bitfield.getRange(), "zero width for bit-field '%s'", name);
+                    else
+                    if (d.isUnion())
+                        ma.errorRange(bitfield.getLoc(), bitfield.getRange(), "zero width bit-field not allowed in union");
+                    // keep going
+                }
+                if (value.isNegative()) {
+                    if (name)
+                        ma.errorRange(bitfield.getLoc(), bitfield.getRange(), "bit-field '%s' has negative width", name);
+                    else
+                        ma.errorRange(bitfield.getLoc(), bitfield.getRange(), "unnamed bit-field has negative width");
+                    // keep going
+                }
+                u32 field_width = value.as_u32();
+                vd.setBitfieldWidth((u8)field_width);
+
+                if (qt.isEnum() && field_width < type_width) {
+                    if (name)
+                        ma.errorRange(bitfield.getLoc(), bitfield.getRange(), "bit-field '%s' has insufficient bits for enum '%s'", name, qt.diagName());
+                    else
+                        ma.errorRange(bitfield.getLoc(), bitfield.getRange(), "unnamed bit-field has insufficient bits for enum '%s'", qt.diagName());
+                    return;
+                }
+
+                if (field_width > type_width) {
+                    if (name) {
+                        ma.errorRange(bitfield.getLoc(), bitfield.getRange(), "width of bit-field '%s' (%d bits) exceeds the width of its type (%d bit%s)",
+                            name, field_width, type_width, type_width > 1 ? "s" : "");
+                    } else {
+                        ma.errorRange(bitfield.getLoc(), bitfield.getRange(), "width of unnamed bit-field (%d bits) exceeds the width of its type (%d bit%s)",
+                            field_width, type_width, type_width > 1 ? "s" : "");
+                    }
+                    return;
+                }
+            }
+
+            member.setChecked();
+        } else if (member.isStructType()) {   // (anonymous) sub-structs
+            StructTypeDecl* sub = (StructTypeDecl*)member;
+            // Note: if parent is packed, so are sub-structs
+            if (is_packed) sub.setPacked();
+            ma.analyseStructMembers(sub);
+            member.setChecked();
+        }
+    }
+
+    size_analyser.sizeOfStruct(d);
+}
+
+fn void Analyser.analyseStructMember(Analyser* ma, VarDecl* v) {
+    TypeRef* ref = v.getTypeRef();
+
+    if (ref.isIncrArray()) {
+        ma.error(ref.getLoc(), "incremental arrays not allowed in as struct/union member");
+        return;
+    }
+
+    QualType res = ma.analyseTypeRef(ref);
+    if (res.isInvalid()) return;
+
+    // check that array size is specified
+    if (res.isArray()) {
+        ArrayType* at = res.getArrayType();
+        if (!at.hasSize()) {
+            ma.error(ref.getLoc(), "array size must be specified for struct/union members");
+            return;
+        }
+    }
+
+    if (res.isVoid()) {
+        ma.error(ref.getLoc(), "member has invalid type 'void'");
+        return;
+    }
+
+    v.asDecl().setType(res);
+
+    if (ma.usedPublic) setTypePublicUsed(res);
+
+    // TODO check attributes
+
+    // TODO check initValue
+}
+
+fn void Analyser.analyseStructNames(Analyser* ma, StructTypeDecl* d, NameVector* names, NameVector* locs) {
+    // note: already checked that struct doesn't have 0 members
+    u32 count = d.getNumMembers();
+    Decl** members = d.getMembers();
+
+    for (u32 i=0; i<count; i++) {
+        // there can more members in anonymous sub-structs
+        Decl* member = members[i];
+        u32 name_idx = member.getNameIdx();
+
+        StructTypeDecl* sub = nil;
+        if (member.isStructType()) sub = (StructTypeDecl*)member;
+
+        if (name_idx == 0) {
+            // can be anonymous sub-struct/union or anonymous bit-field
+            if (member.isStructType()) {
+                ma.analyseStructNames(sub, names, locs);
+            }
+        } else {
+            u32 old_index;
+            if (names.find(name_idx, &old_index)) {
+                ma.error(member.getLoc(), "duplicate struct/union member '%s'", member.getName());
+                ma.note(locs.get(old_index), "previous declaration is here");
+                return;
+            }
+            names.add(name_idx);
+            locs.add(member.getLoc());
+
+            if (member.isStructType()) {
+                NameVector sub_names.init(sub.getNumMembers());
+                NameVector sub_locs.init(sub.getNumMembers());
+                ma.analyseStructNames(sub, &sub_names, &sub_locs);
+                sub_names.free();
+                sub_locs.free();
+            }
+        }
+    }
+}
+
+

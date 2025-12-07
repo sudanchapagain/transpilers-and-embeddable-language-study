@@ -1,0 +1,10 @@
+// @warnings{no-unused}
+module test;
+
+fn void test1() {
+    f32 a = 10 % 2.0;    // @error{invalid operand for binary operation remainder}
+}
+
+fn void test2() {
+    f32 a = 10.0 % 5;    // @error{invalid operand for binary operation remainder}
+}

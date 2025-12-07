@@ -1,0 +1,517 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module scope;
+
+import ast;
+import diagnostics;
+import module_list;
+import constants;
+import src_loc local;
+
+import stdlib;
+import string;
+import stdio;
+
+public const u32 Function    = 0x1;
+public const u32 Break       = 0x2;
+public const u32 Continue    = 0x4;
+public const u32 Decl        = 0x8;
+public const u32 Control     = 0x10;      // TODO remove?
+//public const u32 Block       = 0x20;
+const u32 Unreachable = 0x80;    // set after return/goto/break/continue/no-return func
+// TODO use hasDecls instead of checking every Stmt?
+//public const u32 HasDecls  = 0x80;
+
+type Level struct {
+    u32 flags;              // combination of Flags
+    u32 first_index;
+}
+
+public type Scope struct @(opaque) {
+    // global scope
+    const module_list.List* allmodules;
+    diagnostics.Diags* diags;
+    const ast.ImportDeclList* imports;
+    const ast.Module* mod;
+    const ast.SymbolTable* symbols; // all symbols of the module
+    bool warn_on_unused;
+
+    // stack scope
+    u32 stack_count;
+    u32 stack_capacity;
+    u32* stack_symbols;
+    ast.Decl** stack_decls;
+
+    // global cache
+    u32 cache_count;
+    u32 cache_capacity;
+    u32* cache_symbols;
+    ast.Decl** cache_decls;
+    ast.ImportDecl** cache_imports;
+
+    Level[constants.MaxScopes] levels;
+    u32 lvl;
+}
+
+public fn Scope* create(module_list.List* allmodules,
+                          diagnostics.Diags* diags,
+                          const ast.ImportDeclList* imports,
+                          ast.Module* mod,
+                          const ast.SymbolTable* symbols,
+                          bool warn_on_unused)
+{
+    Scope* s = stdlib.calloc(1, sizeof(Scope));
+    s.allmodules = allmodules;
+    s.diags = diags;
+    s.imports = imports;
+    s.mod = mod;
+    s.symbols = symbols;
+    s.warn_on_unused = warn_on_unused;
+    s.stack_resize(64);
+    s.cache_resize(32);
+
+    s.addImports();
+
+    return s;
+}
+
+public fn void Scope.free(Scope* s) {
+    stdlib.free(s.cache_imports);
+    stdlib.free(s.cache_decls);
+    stdlib.free(s.stack_symbols);
+    stdlib.free(s.cache_symbols);
+    stdlib.free(s.stack_decls);
+    stdlib.free(s);
+}
+
+public fn void Scope.reset(Scope* s) {
+    s.lvl = 0;
+    u32 first_index = s.imports.size();
+    s.stack_count = first_index;
+}
+
+fn void Scope.addImports(Scope* s) {
+    // Note: this also adds the module itself (import[0])
+
+    u32 num_imports = s.imports.size();
+    ast.ImportDecl** imports = s.imports.getDecls();
+    for (u32 i=0; i<num_imports; i++) {
+        ast.ImportDecl* id = imports[i];
+        ast.Decl* d = (ast.Decl*)id;
+        u32 name_idx = id.getImportNameIdx();
+
+        // check for clash with other imports
+        ast.Decl* decl = s.stack_find(name_idx);
+        if (decl) {
+            s.diags.error(id.getLoc(), "duplicate import name '%s'", ast.idx2name(name_idx));
+            assert(decl.isImport());
+            ast.ImportDecl* other = (ast.ImportDecl*)decl;
+            s.diags.note(other.getLoc(), "previous definition is here");
+            continue;
+        }
+
+        // check for clash with other symbol in this module
+        decl = s.symbols.find(name_idx);
+        if (decl) {
+            s.diags.error(id.getLoc(), "import redefinition of '%s'", ast.idx2name(name_idx));
+            s.diags.note(decl.getLoc(), "previous definition is here");
+            continue;
+        }
+
+        s.stack_add(name_idx, d);
+    }
+}
+
+public fn void Scope.enter(Scope* s, u32 flags) {
+    if (s.lvl == constants.MaxScopes) {
+        s.diags.error(0, "max scope depth reached");
+        assert(0);
+        return;
+    }
+    Level* top = &s.levels[s.lvl];
+    if (s.lvl) {
+        const Level* parent = &s.levels[s.lvl-1];
+        flags |= (parent.flags & (Break|Continue));
+    }
+    top.flags = flags;
+    top.first_index = s.stack_count;
+    s.lvl++;
+}
+
+public fn void Scope.exit(Scope* s, bool has_error) {
+    assert(s.lvl != 0);
+    s.lvl--;
+    u32 first = s.levels[s.lvl].first_index;
+
+    if (s.warn_on_unused && !has_error) {
+        u32 last = s.stack_count;
+        for (u32 i=first; i<last; i++) {
+            ast.Decl* d = s.stack_decls[i];
+            if (!d.isUsed()) {
+                ast.VarDecl* vd = (ast.VarDecl*)d;
+                // Note: params are handled by function
+                if (vd.isLocal()) s.diags.warn(d.getLoc(), "unused variable '%s'", d.getName());
+            }
+        }
+    }
+
+    s.stack_count = first;
+}
+
+fn ast.Decl* Scope.stack_find(const Scope* s, u32 name_idx) {
+    for (u32 i=0; i<s.stack_count; i++) {
+        if (s.stack_symbols[i] == name_idx) return s.stack_decls[i];
+    }
+    return nil;
+}
+
+fn void Scope.stack_add(Scope* s, u32 name_idx, ast.Decl* d) {
+    if (s.stack_count == s.stack_capacity) s.stack_resize(s.stack_capacity * 2);
+
+    s.stack_symbols[s.stack_count] = name_idx;
+    s.stack_decls[s.stack_count] = d;
+    s.stack_count++;
+}
+
+fn void Scope.stack_resize(Scope* s, u32 capacity) {
+    u32* symbols = stdlib.malloc(capacity * sizeof(u32));
+    ast.Decl** decls = stdlib.malloc(capacity * sizeof(ast.Decl*));
+    s.stack_capacity = capacity;
+    if (s.stack_count) {
+        string.memcpy(symbols, s.stack_symbols, s.stack_count * sizeof(u32));
+        string.memcpy(decls, s.stack_decls, s.stack_count * sizeof(ast.Decl*));
+        stdlib.free(s.stack_decls);
+        stdlib.free(s.stack_symbols);
+    }
+    s.stack_symbols = symbols;
+    s.stack_decls = decls;
+}
+
+fn void Scope.cache_resize(Scope* s, u32 capacity) {
+    u32* symbols = stdlib.malloc(capacity * sizeof(u32));
+    ast.Decl** decls = stdlib.malloc(capacity * sizeof(ast.Decl*));
+    ast.ImportDecl** imports = stdlib.malloc(capacity * sizeof(ast.ImportDecl*));
+    s.cache_capacity = capacity;
+    if (s.cache_count) {
+        string.memcpy(symbols, s.cache_symbols, s.cache_count * sizeof(u32));
+        string.memcpy(decls, s.cache_decls, s.cache_count * sizeof(ast.Decl*));
+        string.memcpy(imports, s.cache_imports, s.cache_count * sizeof(ast.ImportDecl*));
+        stdlib.free(s.cache_imports);
+        stdlib.free(s.cache_decls);
+        stdlib.free(s.cache_symbols);
+    }
+    s.cache_symbols = symbols;
+    s.cache_decls = decls;
+    s.cache_imports = imports;
+}
+
+public fn void Scope.setUnreachable(Scope* s) {
+    assert(s.lvl);
+    Level* top = &s.levels[s.lvl-1];
+    top.flags |= Unreachable;
+}
+
+public fn void Scope.setReachable(Scope* s) {
+    assert(s.lvl);
+    Level* top = &s.levels[s.lvl-1];
+    top.flags &= ~Unreachable;
+}
+
+public fn bool Scope.isUnreachable(const Scope* s) {
+    assert(s.lvl);
+    const Level* top = &s.levels[s.lvl-1];
+    return (top.flags & Unreachable);
+}
+
+public fn bool Scope.allowBreak(const Scope* s) {
+    assert(s.lvl);
+    const Level* top = &s.levels[s.lvl-1];
+    return (top.flags & Break);
+}
+
+public fn bool Scope.allowContinue(const Scope* s) {
+    assert(s.lvl);
+    const Level* top = &s.levels[s.lvl-1];
+    return (top.flags & Continue);
+}
+
+public fn bool Scope.inFunction(const Scope* s) {
+    const Level* top = &s.levels[0]; // always at toplevel
+    return (top.flags & Function);
+}
+
+// return true if already found
+public fn bool Scope.add(Scope* s, ast.Decl* d) {
+    assert(s.lvl);
+    const u32 name_idx = d.getNameIdx();
+
+    ast.Decl* decl = s.stack_find(name_idx);
+    if (decl) {
+        s.diags.error(d.getLoc(), "redefinition of '%s'", decl.getName());
+        s.diags.note(decl.getLoc(), "previous definition is here");
+        return true;
+    }
+
+    bool other_error = false;
+    decl = s.findGlobalSymbol(name_idx, d.getLoc(), &other_error, false, false);
+    if (decl) {
+        s.diags.error(d.getLoc(), "redefinition of '%s'", decl.getName());
+        s.diags.note(decl.getLoc(), "previous definition is here");
+        return true;
+    }
+
+    s.stack_add(name_idx, d);
+    return false;
+}
+
+// will give error on duplicates, ambiguous or not found
+public fn ast.Decl* Scope.find(Scope* s, u32 name_idx, SrcLoc loc, bool usedPublic) {
+    ast.Decl* decl = s.stack_find(name_idx);
+    if (decl) {
+        if (decl.isImport()) {
+            decl.setUsed();
+            if (usedPublic) decl.setUsedPublic();
+        }
+        return decl;
+    }
+
+    bool other_error = false;
+    decl = s.findGlobalSymbol(name_idx, loc, &other_error, usedPublic, true);
+
+    if (!decl && !other_error) {
+        const char* name = ast.idx2name(name_idx);
+
+        ast.ImportDecl* id  = s.imports.findAny(name_idx);
+        if (id) {
+            s.diags.error(loc, "module '%s' is imported with alias '%s'", id.asDecl().getName(), id.getAliasName());
+        } else {
+            s.diags.error(loc, "use of undeclared identifier '%s'", name);
+        }
+        // TODO make suggestion based on symbols in all modules
+        return nil;
+    }
+    return decl;
+}
+
+// returns false if symbol exists and will give errors then
+public fn bool Scope.checkGlobalSymbol(Scope* s, u32 name_idx, SrcLoc loc) {
+    u32 num_imports = s.imports.size();
+    ast.ImportDecl** imports = s.imports.getDecls();
+    ast.Decl* decl = nil;
+    for (u32 i=0; i<num_imports; i++) {
+        ast.ImportDecl* id = imports[i];
+        // check if it is the import itself
+        if (name_idx == id.getImportNameIdx()) {
+            decl = (ast.Decl*)id;
+            break;
+        }
+
+        if (id.isLocal()) {
+            ast.Module* dest = id.getDest();
+            decl = dest.findSymbol(name_idx);
+            if (decl) break;
+
+            // TODO what if symbol is not public?
+            //bool visible = !((s.mod != dest) && !d.isPublic());
+        }
+    }
+    if (decl) {
+        s.diags.error(loc, "redefinition of '%s'", ast.idx2name(name_idx));
+        s.diags.note(decl.getLoc(), "previous definition is here");
+        return false;
+    }
+    return true;
+}
+
+public fn ast.ImportDecl* Scope.findModule(Scope* s, u32 name_idx, SrcLoc loc) {
+    assert(s);
+    ast.ImportDecl* d = s.imports.find(name_idx);
+    if (d) {
+        d.asDecl().setUsed();
+        return d;
+    }
+
+    d = s.imports.findAny(name_idx);
+    if (d) {
+        s.diags.error(loc, "module '%s' is imported with alias '%s'", d.asDecl().getName(), d.getAliasName());
+        return nil;
+    }
+
+    ast.Module* mod = s.allmodules.find(name_idx);
+    if (mod) {
+        s.diags.error(loc, "module %s not imported", ast.idx2name(name_idx));
+    } else {
+        s.diags.error(loc, "unknown module: '%s'", ast.idx2name(name_idx));
+    }
+    return nil;
+}
+
+public fn ast.Decl* Scope.findSymbolInModule(Scope* s, ast.Module* mod, u32 name_idx, SrcLoc loc) {
+    assert(s);
+    ast.Decl* d = mod.findSymbol(name_idx);
+    if (!d) {
+        s.diags.error(loc, "module '%s' has no symbol '%s'", mod.getName(), ast.idx2name(name_idx));
+        return nil;
+    }
+
+    if (mod != s.mod) {
+        if (!d.isPublic()) {
+            s.diags.error(loc, "symbol '%s' is not public", d.getFullName());
+            s.diags.note(d.getLoc(), "symbol definition is here");
+            return nil;
+        }
+        d.setUsedPublic();
+    }
+
+    return d;
+}
+
+public fn ast.Decl* Scope.findType(Scope* s, u32 name_idx, SrcLoc loc, bool usedPublic) {
+    assert(s);
+
+    ast.Decl* decl = s.stack_find(name_idx);
+    if (decl) return decl;
+
+    bool other_error = false;
+    decl = s.findGlobalSymbol(name_idx, loc, &other_error, usedPublic, true);
+    if (!decl && !other_error) {
+        s.diags.error(loc, "unknown type '%s'", ast.idx2name(name_idx));
+        // TODO make suggestion based on symbols in all modules
+    }
+    return decl;
+}
+
+fn ast.Decl* Scope.findGlobalSymbol(Scope* s, u32 name_idx, SrcLoc loc, bool* other_error, bool usedPublic, bool search_privates) {
+    // look in global cache
+    for (u32 i=0; i<s.cache_count; i++) {
+        if (s.cache_symbols[i] == name_idx) {
+            ast.Decl* decl = s.cache_decls[i];
+            ast.ImportDecl* used_import = s.cache_imports[i];
+
+            //ast.ImportDecl* used_import = s.findImport(decl.getModule());
+            bool external = (used_import.getDest() != s.mod) && ((ast.Decl*)used_import) != decl;
+
+            if (external || usedPublic) {
+                decl.setUsedPublic();
+                if (usedPublic) {
+                    used_import.asDecl().setUsedPublic();
+                }
+            }
+            return decl;
+        }
+    }
+
+    ast.Decl* decl = nil;
+    ast.ImportDecl* used_import = nil;
+    bool ambiguous = false;
+
+    u32 num_imports = s.imports.size();
+    ast.ImportDecl** imports = s.imports.getDecls();
+    for (u32 i=0; i<num_imports; i++) {
+        ast.ImportDecl* id = imports[i];
+        if (!id.isLocal()) continue;    // this includes implicit self-import
+
+        ast.Module* dest = id.getDest();
+        // first search visible symbols only
+        ast.Decl* d;
+        if (s.mod == dest) {
+            d = dest.findSymbol(name_idx);
+        } else {
+            d = dest.findPublicSymbol(name_idx);
+        }
+        if (!d) continue;
+
+        if (decl) { // already have result
+            const char* name = ast.idx2name(name_idx);
+            if (!ambiguous) {
+                s.diags.error(loc, "symbol '%s' is ambiguous", name);
+                s.diags.note(decl.getLoc(), "did you mean '%s'?", decl.getFullName());
+                s.diags.note(d.getLoc(), "did you mean '%s'?", d.getFullName());
+                ambiguous = true;
+                *other_error = true;
+            } else {
+                s.diags.note(d.getLoc(), "did you mean '%s'?", d.getFullName());
+            }
+            continue;
+        } else {
+            decl = d;
+            used_import = id;
+        }
+    }
+    if (ambiguous) return nil;
+
+    if (decl) {
+        bool external = (used_import.getDest() != s.mod) && ((ast.Decl*)used_import) != decl;
+        // mark importdecl as used (if not local)
+
+        used_import.asDecl().setUsed();
+
+        if (external || usedPublic) {
+            decl.setUsedPublic();
+            if (usedPublic) {
+                used_import.asDecl().setUsedPublic();
+            }
+        }
+
+        // put in global_cache
+        if (s.cache_count == s.cache_capacity) {
+            s.cache_resize(s.cache_capacity * 2);
+        }
+        s.cache_symbols[s.cache_count] = name_idx;
+        s.cache_decls[s.cache_count] = decl;
+        s.cache_imports[s.cache_count] = used_import;
+        s.cache_count++;
+    } else {
+        if (search_privates) {
+            // try finding a non-public symbol
+            for (u32 i=0; i<num_imports; i++) {
+                ast.ImportDecl* id = imports[i];
+                if (!id.isLocal()) continue;
+                ast.Module* dest = id.getDest();
+                ast.Decl* d = dest.findPrivateSymbol(name_idx);
+                if (d) {
+                    s.diags.error(loc, "symbol '%s' is not public", d.getFullName());
+                    *other_error = true;
+                    return nil;
+                }
+            }
+        }
+    }
+
+    return decl;
+}
+
+public fn void Scope.dump(const Scope* s) @(unused) {
+    //s.local_scope.dump();
+    stdio.printf("Scope (lvl %d) %d\n", s.lvl, s.stack_count);
+    for (u32 i=0; i<s.lvl; i++) {
+        const Level* l = &s.levels[i];
+        stdio.printf("  [%d]  start %2d  flags 0x%02x\n", i, l.first_index, l.flags);
+    }
+}
+
+public fn bool Scope.checkAccess(Scope* s, ast.Decl* d, SrcLoc loc) {
+    bool external = (s.mod != d.getModule());
+    if (external) {
+        if (d.isPublic()) {
+            d.setUsedPublic();
+        } else {
+            s.diags.error(loc, "symbol '%s' is not public", d.getFullName());
+            return false;
+        }
+    }
+    return true;
+}

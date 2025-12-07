@@ -1,0 +1,7 @@
+module test;
+
+public fn i32 main() {
+    foo(len]); // @error{expected ')'}
+    return 0;
+}
+

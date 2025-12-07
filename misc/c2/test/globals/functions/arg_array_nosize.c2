@@ -1,0 +1,5 @@
+// @warnings{no-unused}
+module test;
+
+fn void test1(i8* arg1) {}
+

@@ -1,0 +1,22 @@
+import fmt
+
+type throwable = interface{
+	fn msg():string
+}
+
+type errort:throwable = struct{
+	string message
+	bool is_panic
+}
+
+fn errort.msg():string {
+	return self.message
+}
+
+fn errorf(string format, ...[any] args):ptr<errort> {
+	var msg = fmt.sprintf(format, ...args)
+	return new errort(message = msg)
+}
+
+
+type errable<T> = errort|T

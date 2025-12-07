@@ -1,0 +1,37 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ir;
+
+public const u32 SlotMax = 256;
+
+public type BlockId u32;    // TODO make u16
+
+
+public fn bool block_has_dest(const Block* b, const CaseList* cases, u32 dest) {
+    if (b.end_with_switch) {
+        CaseId case_id = b.dests[0];
+        u32 num_cases = b.dests[1];
+        for (u32 j=0; j<num_cases; j++) {
+            Case* cs = cases.get(case_id+j);
+            if (cs.block == dest) return true;
+        }
+    } else {
+        if (b.dests[0] == dest) return true;
+        if (b.dests[1] == dest) return true;
+    }
+    return false;
+}
+

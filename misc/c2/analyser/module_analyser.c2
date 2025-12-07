@@ -1,0 +1,740 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module module_analyser;
+
+import ast_context;
+import ast_builder;
+import ast local;
+import attr;
+import ctv_analyser;
+import conversion_checker as conv;
+import diagnostics;
+import file_utils;
+import init_checker;
+import module_list;
+import label_vector local;
+import name_vector local;
+import src_loc local;
+import scope;
+import string_pool;
+import warning_flags;
+import struct_func_list as sf_list;
+import incr_array_list as ia_list;
+
+import ctype;
+import stdarg local;
+import stdlib;
+
+const u32 MaxDepth = 8;
+const u32 LHS = 0x01;
+const u32 RHS = 0x02;
+
+public type Analyser struct @(opaque) {
+    diagnostics.Diags* diags;
+    conv.Checker checker;
+    ast_context.Context* context;
+    string_pool.Pool* astPool;
+    ast_builder.Builder* builder;
+    module_list.List* allmodules;
+    const warning_flags.Flags* warnings;
+
+    // variables below differs per run
+    Module* mod;
+    bool usedPublic;    // set to false during function body analysis or during non-public analysis
+
+    // collect type-functions
+    u32 prefix_cache_name;
+    u32 prefix_cache_idx;
+    NameVector prefixes;
+    sf_list.List* type_fn_decls;   // only set during TypeFunction collection (nil otherwise)
+
+    ia_list.List* incr_values;   // only set during incremental-array value collection
+
+    LabelVector labels;
+
+    // Type + Vars analysis
+    StackLayer[MaxDepth] checkStack;
+    u32 checkIndex;
+    scope.Scope* scope; // points to top layer in stack
+
+    // for each function-body analysis
+    FunctionDecl* curFunction; // set when analysing a function-body
+    bool has_error;
+
+    u32 check_idx;
+    init_checker.Checker[4] init_checkers;
+    u32 min_idx;
+    u32 max_idx;
+}
+
+public fn Analyser* create(diagnostics.Diags* diags,
+                             ast_context.Context* context,
+                             string_pool.Pool* astPool,
+                             ast_builder.Builder* builder,
+                             module_list.List* allmodules,
+                             const warning_flags.Flags* warnings)
+{
+    Analyser* ma = stdlib.calloc(1, sizeof(Analyser));
+    ma.diags = diags;
+    ma.checker.init(diags, builder);
+    ma.context = context;
+    ma.astPool = astPool;
+    ma.builder = builder;
+    ma.allmodules = allmodules;
+    ma.warnings = warnings;
+    /* zero initialization is OK for ma.labels and ma.init_checkers */
+    ma.min_idx = astPool.addStr("min", true);
+    ma.max_idx = astPool.addStr("max", true);
+    return ma;
+}
+
+public fn void Analyser.free(Analyser* ma) {
+    for (u32 i = 0; i < elemsof(ma.init_checkers); i++) {
+        ma.init_checkers[i].free();
+    }
+    ma.prefixes.free();  // Note: safe to be freed twice
+    ma.labels.free();
+    stdlib.free(ma);
+}
+
+public fn void Analyser.check(Analyser* ma, Module* mod) {
+    ma.mod = mod;
+    ma.prefix_cache_name = 0;
+    ma.prefix_cache_idx = 0;
+    ma.prefixes.clear();
+    ma.labels.reset();
+    ma.checkIndex = 0;
+    ma.scope = nil;
+    ma.curFunction = nil;
+    ma.has_error = false;
+    ma.usedPublic = false;
+
+    mod.visitASTs(Analyser.createGlobalScope, ma);
+
+    if (ma.diags.hasErrors()) return;
+
+    // TODO use mod.visitArrayValues(Analyser.handleEnumValue, ma);
+
+    ma.collectTypeFunctions();
+    if (ma.has_error) return;
+
+    // analyse types
+    ma.collectIncrementalArrays();
+    if (ma.has_error) return;
+
+    mod.visitTypeDecls(Analyser.handleTypeDecl, ma);
+    if (ma.has_error) return;
+
+    mod.visitStaticAsserts(Analyser.handleStaticAssert, ma);
+    if (ma.has_error) return;
+
+    mod.visitFunctions(Analyser.analyseFunctionProto, ma);
+    if (ma.has_error) return;
+
+    mod.visitVarDecls(Analyser.handleVarDecl, ma);
+    if (ma.has_error) return;
+
+    mod.visitFunctions(Analyser.analyseFunctionBodies, ma);
+    if (ma.has_error) return;
+
+    // check that exported modules only use other exported-modules publicly
+    if (!mod.isExternal() && mod.isExported()) {
+        mod.visitImports(Analyser.handleImport, ma);
+    }
+
+    mod.visitASTs(Analyser.deleteScope, ma);
+}
+
+fn init_checker.Checker* Analyser.getInitChecker(Analyser* ma) {
+    if (ma.check_idx >= elemsof(ma.init_checkers)) {
+        ma.check_idx++;
+        return stdlib.calloc(1, sizeof(init_checker.Checker));
+    } else {
+        init_checker.Checker* c = &ma.init_checkers[ma.check_idx++];
+        c.clear();
+        return c;
+    }
+}
+
+fn void Analyser.putInitChecker(Analyser* ma, init_checker.Checker* c) {
+    assert(ma.check_idx > 0);
+    ma.check_idx--;
+    if (ma.check_idx >= elemsof(ma.init_checkers)) {
+        c.free();
+        stdlib.free(c);
+    }
+}
+
+fn void Analyser.collectTypeFunctions(Analyser* ma) {
+    sf_list.List type_fn_decls = { }
+    // Note: set temporarily pointer to local variable (used by visitor functions)
+    ma.type_fn_decls = &type_fn_decls;
+    ma.mod.visitTypeFunctions(Analyser.handleStructFunc, ma);
+    if (ma.has_error) return;
+
+    for (u32 i=0; i<type_fn_decls.count; i++) {
+        const sf_list.Info* info = &type_fn_decls.data[i];
+        if (info.decl.isStructType()) {
+            StructTypeDecl* fd = (StructTypeDecl*)info.decl;
+            fd.setStructFunctions(ma.context, info.functions.getDecls(), info.functions.size());
+        } else {
+            EnumTypeDecl* etd = (EnumTypeDecl*)info.decl;
+            etd.setEnumFunctions(ma.context, info.functions.getDecls(), info.functions.size());
+        }
+    }
+
+    ma.prefixes.free();  // Note: free here already (safe to be freed twice)
+    type_fn_decls.free();
+    ma.type_fn_decls = nil;
+}
+
+fn void Analyser.handleArrayValue(void* arg, ArrayValue* avd) {
+    Analyser* ma = arg;
+    ma.incr_values.add(avd.getNameIdx(), avd.getLoc(), avd.getValue());
+}
+
+fn void Analyser.collectIncrementalArrays(Analyser* ma) {
+    ia_list.List ialist = { }
+    // Note: set temporarily pointer to local variable (used by visitor functions)
+    ma.incr_values = &ialist;
+    ma.mod.visitArrayValues(Analyser.handleArrayValue, ma);
+    for (u32 i=0; i<ialist.count; i++) {
+        ma.handleIncrEntry(&ialist.entries[i]);
+    }
+    ialist.free();
+    ma.incr_values = nil;
+}
+
+fn void Analyser.handleIncrEntry(Analyser* ma, ia_list.Info* entry) {
+    u32 name = entry.name;
+    // find array Decl
+    Decl* d = ma.mod.findSymbol(name);
+    if (!d) {
+        ma.error(entry.loc, "module '%s' has no symbol '%s'", ma.mod.getName(), ast.idx2name(name));
+        return;
+    }
+    // check if incremental array/enum
+    if (d.isVariable()) {
+        // Note: type has not been analysed yet, only use TypeRef
+        VarDecl* vd = (VarDecl*)d;
+        TypeRef* ref = vd.getTypeRef();
+        if (!ref.isIncrArray()) {
+            ma.error(entry.loc, "'%s' is not an incremental array", ast.idx2name(name));
+            ma.note(d.getLoc(), "'%s' is defined here", ast.idx2name(name));
+            return;
+        }
+
+        // create an InitListExpr here and add to VarDecl, dont analyse yet
+        u32 num_values = entry.values.size();
+        Expr** values = entry.values.getExprs();
+        Expr* init_expr = ma.builder.actOnInitList(0, 0, values, num_values);
+        vd.setInit(init_expr);
+    } else if (d.isEnum()) {
+        // dont analyse yet, just check if Identifier and convert to EnumConstantDecl
+        EnumTypeDecl* etd = (EnumTypeDecl*)d;
+        if (!etd.isIncremental()) {
+            ma.error(entry.loc, "'%s' is not an incremental enum", ast.idx2name(name));
+            ma.note(d.getLoc(), "'%s' is defined here", ast.idx2name(name));
+            return;
+        }
+
+        u32 num_values = entry.values.size();
+        Expr** values = entry.values.getExprs();
+        for (u32 j=0; j<num_values; j++) {
+            Expr* e = values[j];
+            if (!e.isIdentifier()) {
+                ma.error(e.getLoc(), "expected identifier");
+                return;
+            }
+        }
+        etd.setIncrConstants(ma.context, (IdentifierExpr**)values, num_values);
+    } else {
+        ma.error(entry.loc, "'%s' is not an incremental array/enum", ast.idx2name(name));
+        ma.note(d.getLoc(), "'%s' is defined here", ast.idx2name(name));
+    }
+}
+
+fn void Analyser.handleImport(void* arg, ast.ImportDecl* id) {
+    Analyser* ma = arg;
+    Decl* d = (Decl*)id;
+    if (!d.isUsedPublic()) return;
+
+    Module* dest = id.getDest();
+    if (dest.isExternal()) return;
+    if (!dest.isExported()) {
+        ma.error(d.getLoc(), "exported module '%s' publicly uses non-exported module '%s'", ma.mod.getName(), dest.getName());
+    }
+}
+
+fn void Analyser.setMod(Analyser* ma, Module* mod) {
+    ma.mod = mod;
+}
+
+type StackLayer struct {
+    Decl* decl;
+    scope.Scope* scope;
+    FunctionDecl* function; // only set when analysing function bodies
+    bool usedPublic;
+}
+
+fn void Analyser.note(Analyser* ma, SrcLoc loc, const char* format @(printf_format), ...) {
+    va_list args;
+    va_start(args, format);
+    ma.diags.note2(loc, format, args);
+    va_end(args);
+}
+
+fn void Analyser.warn(Analyser* ma, SrcLoc loc, const char* format @(printf_format), ...) {
+    va_list args;
+    va_start(args, format);
+    ma.diags.warn2(loc, format, args);
+    va_end(args);
+}
+
+fn void Analyser.error(Analyser* ma, SrcLoc loc, const char* format @(printf_format), ...) {
+    va_list args;
+    va_start(args, format);
+    ma.diags.error2(loc, format, args);
+    va_end(args);
+
+    ma.has_error = true;
+    // TODO use JmpBuf here? (dont have to check anything then)
+}
+
+fn void Analyser.errorRange(Analyser* ma, SrcLoc loc, SrcRange range, const char* format @(printf_format), ...) {
+    va_list args;
+    va_start(args, format);
+    ma.diags.errorRange2(loc, range, format, args);
+    va_end(args);
+
+    ma.has_error = true;
+    // TODO use JmpBuf here? (dont have to check anything then)
+}
+
+fn void Analyser.createGlobalScope(void* arg, AST* a) {
+    Analyser* ma = arg;
+    scope.Scope* s = scope.create(ma.allmodules,
+                                  ma.diags,
+                                  a.getImports(),
+                                  ma.mod,
+                                  ma.mod.getSymbols(),
+                                  !ma.warnings.no_unused_variable);
+    a.setPtr(s);
+}
+
+fn void Analyser.deleteScope(void* /*arg*/, AST* a) {
+    scope.Scope* s = a.getPtr();
+    a.setPtr(nil);
+    s.free();
+}
+
+fn void Analyser.handleStructFunc(void* arg, FunctionDecl* fd) {
+    Analyser* ma = arg;
+    Ref* prefix = fd.getPrefix();
+    Decl* d = (Decl*)fd;
+    assert(prefix);
+    u32 prefix_name_idx = prefix.name_idx;
+
+    assert(ma.type_fn_decls);
+    u32 index = 0;
+    if (prefix_name_idx == ma.prefix_cache_name) {
+        index = ma.prefix_cache_idx;
+    } else {
+        // search data structure
+        bool found = false;
+        found = ma.prefixes.find(prefix_name_idx, &index);
+
+        if (!found) {
+            const char* msg = "a type-function type must be a struct/union/enum";
+            Decl* decl = ma.mod.findType(prefix_name_idx);
+            if (!decl) {
+                decl = ma.mod.findSymbol(prefix_name_idx);
+                if (decl) {
+                    ma.error(prefix.loc, "%s", msg);
+                } else {
+                    ma.error(prefix.loc, "module '%s' has no symbol '%s'", ma.mod.getName(), prefix.getName());
+                }
+                return;
+            }
+            if (!decl.isStructType() && !decl.isEnum()) {
+                ma.error(prefix.loc, "%s", msg);
+                return;
+            }
+            if (d.isPublic() && !decl.isPublic()) {
+                ma.error(prefix.loc, "public type-functions need a public type");
+                return;
+            }
+            index = ma.prefixes.add(prefix_name_idx);
+            ma.type_fn_decls.addDecl(decl);
+        }
+        ma.prefix_cache_name = prefix_name_idx;
+        ma.prefix_cache_idx = index;
+    }
+
+    // check for duplicate struct functions
+    FunctionDecl* other = ma.type_fn_decls.findFunc(index, d.getNameIdx());
+    if (other) {
+        ma.error(d.getLoc(), "redefinition of '%s'", d.getFullName());
+        ma.note(other.asDecl().getLoc(), "previous definition is here");
+        return;
+    }
+
+    // check for name clashes with regular members for structs
+    prefix.decl = ma.type_fn_decls.getDecl(index);
+    // Note: no need to check for enum constants, since they always start with Capital case
+    if (prefix.decl.isStructType()) {
+        StructTypeDecl* std = (StructTypeDecl*)prefix.decl;
+        Decl* match = std.findMember(d.getNameIdx(), nil);
+        if (match) {
+            ma.error(match.getLoc(), "member '%s' conflicts with type-function '%s'", match.getName(), d.getFullName());
+            ma.note(d.getLoc(), "previous declaration is here");
+            return;
+        }
+    }
+
+    ma.type_fn_decls.addFunc(index, fd);
+}
+
+fn void Analyser.analyseFunctionProto(void* arg, FunctionDecl* d) {
+    Analyser* ma = arg;
+
+    ma.analyseGlobalDecl((Decl*)d);
+}
+
+fn void Analyser.analyseFunctionBodies(void* arg, FunctionDecl* d) {
+    Analyser* ma = arg;
+
+    ma.analyseFunctionBody(d, d.asDecl().getAST().getPtr());
+}
+
+fn bool Analyser.analyseGlobalDecl(Analyser* ma, Decl* d) {
+    if (d.isChecked()) return true;
+
+    if (d.isCheckInProgress() && d.isEnum()) {
+        // allow Enum Constants to be defined by previous enum constants
+        // check that it is on top (otherwise goes via other global)
+        StackLayer* top = &ma.checkStack[ma.checkIndex-1];
+        if (top.decl == d) return true;
+    }
+
+    if (!ma.pushCheck(d, d.getAST().getPtr(), nil)) return false;
+
+    if (d.isExported() && !d.isPublic()) {
+        ma.error(d.getLoc(), "attribute 'export' can only be applied to public declarations");
+        return false;
+    }
+
+    bool saved = ma.has_error;
+    ma.has_error = false;
+
+    switch (d.getKind()) {
+    case Function:
+        ma.analyseFunction((FunctionDecl*)d);
+        break;
+    case Import:
+        break;
+    case StructType:
+        ma.analyseStructType((StructTypeDecl*)d);
+        break;
+    case EnumType:
+        ma.analyseEnumType((EnumTypeDecl*)d);
+        break;
+    case EnumConstant:
+        assert(0);
+        break;
+    case FunctionType:
+        ma.analyseFunctionType(d);
+        break;
+    case AliasType:
+        ma.analyseAliasType((AliasTypeDecl*)d);
+        break;
+    case Variable:
+        ma.analyseGlobalVarDecl((VarDecl*)d);
+        break;
+    }
+
+    d.setChecked();
+    ma.popCheck();
+    bool ok = !ma.has_error; // whether new error was seen
+    ma.has_error |= saved;
+    return ok;
+}
+
+fn void Analyser.handleTypeDecl(void* arg, Decl* d) {
+    Analyser* ma = arg;
+    ma.analyseGlobalDecl(d);
+}
+
+fn void Analyser.handleStaticAssert(void* arg, StaticAssert* d) {
+    Analyser* ma = arg;
+
+    StaticAssert* sa = (StaticAssert*)d;
+    Expr* lhs = sa.getLhs();
+    Expr* rhs = sa.getRhs();
+
+    // push a dummy declaration so ma.popCheck() does not set ma.scope to nil
+    if (!ma.pushCheck(nil, d.getAST().getPtr(), nil)) return;
+    QualType t1 = ma.analyseExpr(&lhs, false, RHS);
+    QualType t2 = ma.analyseExpr(&rhs, false, RHS);
+    ma.popCheck();
+    if (t1.isInvalid() || t2.isInvalid()) return;
+
+    bool error = false;
+    if (!lhs.isCtv()) {
+        ma.errorRange(lhs.getLoc(), lhs.getRange(), "static_assert element is not a compile-time value");
+        error = true;
+    }
+    if (!rhs.isCtv()) {
+        ma.errorRange(rhs.getLoc(), rhs.getRange(), "static_assert element is not a compile-time value");
+        error = true;
+    }
+
+    if (error) return;
+
+    Value val1 = ctv_analyser.get_value(lhs);
+    Value val2 = ctv_analyser.get_value(rhs);
+
+    if (!val1.is_equal(&val2)) {
+        ma.errorRange(rhs.getStartLoc(), rhs.getRange(), "static_assert failed, expected %s, got %s", val1.str(), val2.str());
+    }
+}
+
+fn void Analyser.handleVarDecl(void* arg, VarDecl* v) {
+    Analyser* ma = arg;
+    ma.analyseGlobalDecl(v.asDecl());
+}
+
+fn void Analyser.checkName(Analyser* ma, Decl* d, bool is_constant) {
+    const char* name = d.getName();
+    if (is_constant) {
+        if (ctype.islower(name[0])) {
+            ma.error(d.getLoc(), "a global constant name must start with an upper case character");
+        }
+    } else {
+        if (ctype.isupper(name[0])) {
+            ma.error(d.getLoc(), "a variable name must start with a lower case character");
+        }
+    }
+}
+
+fn void Analyser.analyseGlobalVarDecl(Analyser* ma, VarDecl* v) {
+    Decl* d = (Decl*)v;
+
+    // Note: d.getType() is 0 here! (use refType)
+    TypeRef* ref = v.getTypeRef();
+
+    Expr* init_expr = v.getInit();
+    // convert incremental array types to normal ones
+    QualType res;
+    if (ref.isIncrArray()) {
+        u32 size = 0;
+        if (init_expr) {
+            InitListExpr* ile = (InitListExpr*)init_expr;
+            size = ile.getNumValues();
+        }
+        res = ma.analyseIncrTypeRef(ref, size);
+    } else {
+        res = ma.analyseTypeRef(ref);
+    }
+    if (res.isInvalid()) return;
+
+    QualType canon = res.getCanonicalType();
+    if (canon.isVoid()) {
+        ma.error(ref.getLoc(), "%s has invalid type 'void'", res.isConst() ? "constant" : "variable");
+        return;
+    }
+
+    const AST* a = d.getAST();
+    const attr.Value* embed = a.getAttr(d, attr.AttrKind.Embed);
+
+    if (canon.isArray() && !ref.isIncrArray()) {
+        const ArrayType* at = canon.getArrayType();
+        if (at.hasSize()) {
+            if (at.getSize() == 0) {
+                ma.error(ref.getLoc(), "only struct members may have array size zero");
+                return;
+            }
+        } else {
+            if (!init_expr && !d.isExternal() && !embed) {
+                ma.error(d.getLoc(), "array-type variable '%s' needs an explicit size or an initializer", d.getFullName());
+                return;
+            }
+        }
+    }
+
+    d.setType(res);
+
+    if (embed) {
+        bool is_char = false;
+        if (!canon.isEmbedType(&is_char)) {
+            ma.error(d.getLoc(), "variables with 'embed' attribute must be type 'const char[]' or 'const u8[]'");
+            return;
+        }
+
+        if (init_expr) {
+            ma.error(d.getLoc(), "variables with 'embed' attribute cannot have an initializer");
+            return;
+        }
+
+        // open file, copy contents to StringPool and close
+        const char* filename = ma.astPool.idx2str(embed.text);
+        file_utils.File reader.init("", filename);
+        if (!reader.load()) {
+            ma.error(embed.loc, "error opening embedded file '%s': %s", filename, reader.getError());
+            return;
+        }
+
+        //TODO: attribute should have source length
+        u32 src_len = 8; // source length is attribute @(embed="xxx")
+        u32 len = reader.data_size();
+        //TODO: check input for weird chars if string
+        u32 value = ma.astPool.add(reader.data(), len, false);
+        if (!is_char) len--;
+        Expr* init = ma.builder.actOnStringLiteral(embed.loc, src_len, value, len);
+
+        // Note: VarDecl already needed to allocate extra space during creation! (parser checks embed attr for this)
+        v.setInit(init);
+        d.setType(init.getType());
+        reader.close();
+    }
+
+    if (!d.getAST().isInterface())
+        ma.checkName(d, res.isConstant());
+
+    if (d.isPublic()) setTypePublicUsed(res);
+
+    if (init_expr) {
+        if (!res.isConstant()) {
+            ma.checkStack[ma.checkIndex-1].usedPublic = false;
+            ma.usedPublic = false;
+        }
+        ma.analyseInitExpr(v.getInit2(), res, v.getAssignLoc(), false, false);
+    } else {
+        if (res.isConstant() && !embed) {
+            ma.error(d.getLoc(), "constant variable '%s' must be initialized", d.getFullName());
+        }
+    }
+
+    ma.checkVarDeclAttributes(v);
+}
+
+fn void Analyser.checkVarDeclAttributes(Analyser* ma, VarDecl* v) {
+    Decl* d = (Decl*)v;
+    QualType qt = d.getType();
+    if (qt.isConst() && qt.isBuiltin()) {
+        if (v.hasAttrWeak()) {
+            ma.error(d.getLoc(), "attribute 'weak' cannot be applied to constants");
+        }
+        if (!d.hasAttr()) return;
+
+        const AST* a = d.getAST();
+
+        const attr.Value* section = a.getAttr(d, attr.AttrKind.Section);
+        if (section) {
+            ma.error(section.loc, "attribute 'section' cannot be applied to constants");
+        }
+
+        const attr.Value* aligned = a.getAttr(d, attr.AttrKind.Aligned);
+        if (aligned) {
+            ma.error(aligned.loc, "attribute 'aligned' cannot be applied to constants");
+        }
+    }
+}
+
+// Note: fd is only set if analysing function bodies
+fn bool Analyser.pushCheck(Analyser* ma, Decl* d, scope.Scope* s, FunctionDecl* fd) {
+    if (d) {
+        for (u32 i=0; i<ma.checkIndex; i++) {
+            if (ma.checkStack[i].decl == d) {
+                for (u32 j=i; j<ma.checkIndex; j++) {
+                    const Decl* other = ma.checkStack[j].decl;
+                    if (other) {
+                        ma.error(other.getLoc(), "circular declaration dependency '%s'", other.getName());
+                    }
+                }
+                // TODO use longjmp here?
+                return false;
+            }
+        }
+    }
+    // set correct scope for the current Decl (might be in different file than current Decl)
+    ma.scope = s;
+    assert(ma.checkIndex <= MaxDepth);
+    StackLayer* top = &ma.checkStack[ma.checkIndex];
+    top.decl = d;
+    top.scope = s;
+    top.function = fd;
+    top.usedPublic = d && d.isPublic();
+    // TODO: ma.curFunction may be reset by ma.popCheck()
+    if (fd) ma.curFunction = fd;
+    ma.usedPublic = top.usedPublic;
+    ma.checkIndex++;
+    // for function bodies
+    if (d && !d.isChecked()) d.setCheckInProgress();
+    return true;
+}
+
+fn void Analyser.popCheck(Analyser* ma) {
+    assert(ma.checkIndex > 0);
+    ma.checkIndex--;
+    if (ma.checkIndex > 0) {
+        StackLayer* top = &ma.checkStack[ma.checkIndex-1];
+        ma.scope = top.scope;
+        ma.curFunction = top.function;
+        ma.usedPublic = top.usedPublic;
+    } else {
+        ma.scope = nil;
+        ma.curFunction = nil;
+    }
+}
+
+fn bool Analyser.globalScope(const Analyser* ma) {
+    return ma.curFunction == nil;
+}
+
+type MainMarker struct {
+    u32 name_idx;
+    Decl* main;
+}
+
+fn void findMainFunction(void* arg, FunctionDecl* fd) {
+    MainMarker* m = arg;
+    Decl* d = (Decl*)fd;
+    if (d.getNameIdx() == m.name_idx) {
+        if (m.main) {
+            //ma.error(d.getLoc(), "duplicate main function");
+            // TODO prev
+            return;
+        }
+        m.main = d;
+    }
+}
+
+public fn Decl* Analyser.findMain(Analyser* ma, Module* top, u32 name_idx) {
+    top.setUsed();
+    MainMarker marker = { name_idx, nil }
+    top.visitFunctions(findMainFunction, &marker);
+    if (marker.main) {
+        marker.main.setUsed();
+        marker.main.setUsedPublic();
+        marker.main.setAttrExport();
+
+        // TODO check return type + args
+    }
+
+    return marker.main;
+}
+

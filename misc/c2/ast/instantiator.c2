@@ -1,0 +1,36 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import src_loc;
+
+public type OpaqueErrorfn fn void (void* arg, src_loc.SrcLoc loc, Decl* decl);
+
+public type Instantiator struct {
+    ast_context.Context* c;
+    const TypeRef* ref;
+    u32 template_name;
+    u16 instance_ast_idx;
+    // for opaque checking
+    bool used_opaque;
+    void* arg;
+    OpaqueErrorfn on_error;
+}
+
+fn void Instantiator.on_opaque(Instantiator* inst, src_loc.SrcLoc loc, Decl* decl) {
+    inst.on_error(inst.arg, loc, decl);
+}

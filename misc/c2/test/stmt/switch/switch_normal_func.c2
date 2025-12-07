@@ -1,0 +1,14 @@
+module test;
+
+fn void normal() {
+}
+
+fn void test1(i32 a) {
+    switch (a) {
+    case 1:
+        normal();   // @error{no terminating statement (break|fallthrough|goto|return|continue|noreturn-func) at end of case}
+    default:
+        break;
+    }
+}
+

@@ -1,0 +1,1987 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module c2_tokenizer;
+
+import constants;
+import number_radix local;
+import keywords;
+import src_loc local;
+import string_buffer;
+import string_list;
+import string_pool;
+import token local;
+import utf8;
+
+import string;
+import stdlib;
+import c2 local;
+import ctype local;
+import stdarg local;
+import stdio local;
+
+type Action enum u8 {
+    INVALID = 0,  // ensure the default Action in Char_lookup is INVALID
+    TABSPACE,
+    IDENT,
+    DIGIT,
+    LPAREN,
+    RPAREN,
+    LSQUARE,
+    RSQUARE,
+    NEWLINE,
+    EXCLAIM,
+    BQUOTE,
+    DQUOTE,
+    SQUOTE,
+    POUND,
+    STAR,
+    PLUS,
+    MINUS,
+    COMMA,
+    DOT,
+    PERCENT,
+    SLASH,
+    COLON,
+    SEMI_COLON,
+    LESS,
+    EQUAL,
+    GREATER,
+    QUESTION,
+    AT,
+    AMP,
+    CARET,
+    LBRACE,
+    RBRACE,
+    PIPE,
+    TILDE,
+    CR,
+    EOF,
+}
+
+const Action[256] Char_lookup = {
+// 0 - 15
+   [  0]  = EOF,
+   ['\t'] = TABSPACE,
+   ['\n'] = NEWLINE,
+   ['\r'] = CR,
+// 16 - 31
+// 32 - 47
+    [' '] = TABSPACE,
+    ['!'] = EXCLAIM,
+    ['"'] = DQUOTE,
+    ['#'] = POUND,
+    ['%'] = PERCENT,
+    ['&'] = AMP,
+   ['\''] = SQUOTE,
+    ['('] = LPAREN,
+    [')'] = RPAREN,
+    ['*'] = STAR,
+    ['+'] = PLUS,
+    [','] = COMMA,
+    ['-'] = MINUS,
+    ['.'] = DOT,
+    ['/'] = SLASH,
+// 48 - 63
+    ['0'] = DIGIT,
+    ['1'] = DIGIT,
+    ['2'] = DIGIT,
+    ['3'] = DIGIT,
+    ['4'] = DIGIT,
+    ['5'] = DIGIT,
+    ['6'] = DIGIT,
+    ['7'] = DIGIT,
+    ['8'] = DIGIT,
+    ['9'] = DIGIT,
+    [':'] = COLON,
+    [';'] = SEMI_COLON,
+    ['<'] = LESS,
+    ['='] = EQUAL,
+    ['>'] = GREATER,
+    ['?'] = QUESTION,
+// 64 - 79
+    ['@'] = AT,
+    ['A'] = IDENT,
+    ['B'] = IDENT,
+    ['C'] = IDENT,
+    ['D'] = IDENT,
+    ['E'] = IDENT,
+    ['F'] = IDENT,
+    ['G'] = IDENT,
+    ['H'] = IDENT,
+    ['I'] = IDENT,
+    ['J'] = IDENT,
+    ['K'] = IDENT,
+    ['L'] = IDENT,
+    ['M'] = IDENT,
+    ['N'] = IDENT,
+    ['O'] = IDENT,
+// 80 - 95
+    ['P'] = IDENT,
+    ['Q'] = IDENT,
+    ['R'] = IDENT,
+    ['S'] = IDENT,
+    ['T'] = IDENT,
+    ['U'] = IDENT,
+    ['V'] = IDENT,
+    ['W'] = IDENT,
+    ['X'] = IDENT,
+    ['Y'] = IDENT,
+    ['Z'] = IDENT,
+    ['['] = LSQUARE,
+    ['\\'] = INVALID, // invalid in code
+    [']'] = RSQUARE,
+    ['^'] = CARET,
+    ['_'] = IDENT,   // for parsing libs
+// 96 - 111
+    ['`'] = BQUOTE,
+    ['a'] = IDENT,
+    ['b'] = IDENT,
+    ['c'] = IDENT,
+    ['d'] = IDENT,
+    ['e'] = IDENT,
+    ['f'] = IDENT,
+    ['g'] = IDENT,
+    ['h'] = IDENT,
+    ['i'] = IDENT,
+    ['j'] = IDENT,
+    ['k'] = IDENT,
+    ['l'] = IDENT,
+    ['m'] = IDENT,
+    ['n'] = IDENT,
+    ['o'] = IDENT,
+// 112 - 127
+    ['p'] = IDENT,
+    ['q'] = IDENT,
+    ['r'] = IDENT,
+    ['s'] = IDENT,
+    ['t'] = IDENT,
+    ['u'] = IDENT,
+    ['v'] = IDENT,
+    ['w'] = IDENT,
+    ['x'] = IDENT,
+    ['y'] = IDENT,
+    ['z'] = IDENT,
+    ['{'] = LBRACE,
+    ['|'] = PIPE,
+    ['}'] = RBRACE,
+    ['~'] = TILDE,
+}
+
+const u8[256] Identifier_char = {
+    ['0'] = 1,
+    ['1'] = 1,
+    ['2'] = 1,
+    ['3'] = 1,
+    ['4'] = 1,
+    ['5'] = 1,
+    ['6'] = 1,
+    ['7'] = 1,
+    ['8'] = 1,
+    ['9'] = 1,
+    ['A'] = 1,
+    ['B'] = 1,
+    ['C'] = 1,
+    ['D'] = 1,
+    ['E'] = 1,
+    ['F'] = 1,
+    ['G'] = 1,
+    ['H'] = 1,
+    ['I'] = 1,
+    ['J'] = 1,
+    ['K'] = 1,
+    ['L'] = 1,
+    ['M'] = 1,
+    ['N'] = 1,
+    ['O'] = 1,
+    ['P'] = 1,
+    ['Q'] = 1,
+    ['R'] = 1,
+    ['S'] = 1,
+    ['T'] = 1,
+    ['U'] = 1,
+    ['V'] = 1,
+    ['W'] = 1,
+    ['X'] = 1,
+    ['Y'] = 1,
+    ['Z'] = 1,
+    ['_'] = 1,
+    ['a'] = 1,
+    ['b'] = 1,
+    ['c'] = 1,
+    ['d'] = 1,
+    ['e'] = 1,
+    ['f'] = 1,
+    ['g'] = 1,
+    ['h'] = 1,
+    ['i'] = 1,
+    ['j'] = 1,
+    ['k'] = 1,
+    ['l'] = 1,
+    ['m'] = 1,
+    ['n'] = 1,
+    ['o'] = 1,
+    ['p'] = 1,
+    ['q'] = 1,
+    ['r'] = 1,
+    ['s'] = 1,
+    ['t'] = 1,
+    ['u'] = 1,
+    ['v'] = 1,
+    ['w'] = 1,
+    ['x'] = 1,
+    ['y'] = 1,
+    ['z'] = 1,
+}
+
+public type Feature struct {
+    SrcLoc loc;     // location of the initial #if/#ifdef...
+    Kind kind;      // preprocessor token kind
+    u8 skipping;    // 0: parse, 1: skip, 2: skip until #endif
+    bool is_else;   // inside the #else block
+}
+
+public type HandlerFn fn void (void* arg, SrcLoc loc);
+
+public type Tokenizer struct {
+    const char* cur;
+    SrcLoc loc_start;
+    const char* input_start;
+
+    const keywords.Info* kwinfo;
+    const char* line_start;
+
+    string_pool.Pool* pool; // no ownership
+    string_buffer.Buf* buf; // no ownership, used for strings and character constants
+    HandlerFn on_error;
+    HandlerFn on_warning;
+    void* fn_arg;
+
+    // Feature handling
+    Feature[constants.MaxFeatureDepth+1] feature_stack;
+    u32 feature_count;
+    const string_list.List* features;
+    bool raw_mode;  // also emit comments and invalid characters
+    bool stop_at_eol; // restrict lexing to single line for preprocessor
+
+    char[256] error_msg;
+}
+static_assert(416, sizeof(Tokenizer));
+
+public fn void Tokenizer.init(Tokenizer* t,
+                              string_pool.Pool* pool,
+                              string_buffer.Buf* buf,
+                              const char* input,
+                              SrcLoc loc_start,
+                              const keywords.Info* kwinfo,
+                              const string_list.List* features,
+                              HandlerFn on_error,
+                              HandlerFn on_warning,
+                              void* fn_arg,
+                              bool raw_mode)
+{
+    string.memset(t, 0, sizeof(Tokenizer));
+    t.cur = input;
+    t.loc_start = loc_start;
+    t.input_start = input;
+    t.kwinfo = kwinfo;
+
+    t.line_start = input;
+    t.pool = pool;
+    t.buf = buf;
+    t.on_error = on_error;
+    t.on_warning = on_warning;
+    t.fn_arg = fn_arg;
+
+    t.features = features;
+    t.raw_mode = raw_mode;
+}
+
+public fn void Tokenizer.lex(Tokenizer* t, Token* result) {
+    // TODO if end/error stop (dont retry) (t.done = 1)
+
+    while (1) {
+        result.init();
+        result.loc = t.loc_start + (SrcLoc)(t.cur - t.input_start);
+        result.len = 1;
+        Action act = Char_lookup[(u8)(*t.cur)];
+        switch (act) {
+        case INVALID:
+            u32 len;
+            u32 cc;
+            if ((*t.cur & 0x80) && (len = utf8.decode(t.cur, 4, &cc)) > 0) {
+                if (cc == 0xFEFF && t.cur == t.input_start) {
+                    // accept BOM \uFEFF (EF BB BF) at start of file
+                    t.cur += len;
+                    continue;
+                }
+                if (t.raw_mode) {
+                    result.kind = Kind.Invalid;
+                    result.len = (u16)len;
+                    string.memcpy(result.invalid, t.cur, len);
+                    t.cur += len;
+                    return;
+                }
+                t.error(result, "Unicode (UTF-8) is only allowed inside string literals or comments");
+                return;
+            }
+            goto invalid_char;
+        case TABSPACE:
+            t.cur++;
+            while (*t.cur == ' ')
+                t.cur++;
+            continue;
+        case IDENT:
+            t.lex_identifier(result);
+            if (result.name_idx <= t.kwinfo.max_index) {
+                Kind k = t.kwinfo.indexes[result.name_idx];
+                assert(k != Kind.None);
+                if (k == Kind.Error) {
+                    result.reserved = true;
+                    return;
+                }
+                result.kind = k;    // turn into keyword
+            }
+            return;
+        case DIGIT:
+            t.lex_number(result);
+            return;
+        case LPAREN:
+            result.kind = Kind.LParen;
+            t.cur++;
+            return;
+        case RPAREN:
+            result.kind = Kind.RParen;
+            t.cur++;
+            return;
+        case LSQUARE:
+            result.kind = Kind.LSquare;
+            t.cur++;
+            return;
+        case RSQUARE:
+            result.kind = Kind.RSquare;
+            t.cur++;
+            return;
+        case NEWLINE:
+            if (t.stop_at_eol) {
+                result.kind = Kind.Eof;
+                result.len = 0;
+                return;
+            }
+            t.cur++;
+            t.line_start = t.cur;
+            continue;
+        case EXCLAIM:
+            t.cur++;
+            if (*t.cur == '=') {
+                result.kind = Kind.ExclaimEqual;
+                result.len = 2;
+                t.cur++;
+            } else {
+                result.kind = Kind.Exclaim;
+            }
+            return;
+        case BQUOTE:
+            t.lex_raw_string_literal(result);
+            return;
+        case DQUOTE:
+            t.lex_string_literal(result);
+            return;
+        case SQUOTE:
+            t.lex_char_literal(result);
+            return;
+        case POUND:
+            if (!t.at_bol())
+                goto invalid_char;
+            if (t.lex_feature_cmd(result)) return;
+            if (!t.is_enabled()) {
+                if (t.skip_feature(result)) return;
+            }
+            continue;
+        case STAR:
+            t.cur++;
+            if (*t.cur == '=') {
+                result.kind = Kind.StarEqual;
+                result.len = 2;
+                t.cur++;
+            } else {
+                result.kind = Kind.Star;
+            }
+            return;
+        case PLUS:
+            t.cur++;
+            if (*t.cur == '+') {
+                t.cur++;
+                result.kind = Kind.PlusPlus;
+                result.len = 2;
+                return;
+            }
+            if (*t.cur == '=') {
+                t.cur++;
+                result.kind = Kind.PlusEqual;
+                result.len = 2;
+                return;
+            }
+            result.kind = Kind.Plus;
+            return;
+        case MINUS:
+            t.cur++;
+            if (*t.cur == '-') {
+                t.cur++;
+                result.kind = Kind.MinusMinus;
+                result.len = 2;
+                return;
+            }
+            if (*t.cur == '=') {
+                t.cur++;
+                result.kind = Kind.MinusEqual;
+                result.len = 2;
+                return;
+            }
+            if (*t.cur == '>' && !t.raw_mode) {
+                t.cur--;
+                t.error(result, "use the dot operators instead of '->'");
+                return;
+            }
+            result.kind = Kind.Minus;
+            return;
+        case COMMA:
+            result.kind = Kind.Comma;
+            t.cur++;
+            return;
+        case DOT:
+            t.cur++;
+            if (t.cur[0] == '.') {
+                if (t.cur[1] == '.') {
+                    t.cur += 2;
+                    result.kind = Kind.Ellipsis;
+                    result.len = 3;
+                } else {
+                    result.kind = Kind.Dot;
+                }
+            } else if (isdigit(t.cur[0])) {
+                t.cur--;
+                t.lex_number(result);
+            } else {
+                result.kind = Kind.Dot;
+            }
+            return;
+        case PERCENT:
+            t.cur++;
+            if (*t.cur == '=') {
+                result.kind = Kind.PercentEqual;
+                result.len = 2;
+                t.cur++;
+            } else {
+                result.kind = Kind.Percent;
+            }
+            return;
+        case SLASH:
+            t.cur++;
+            if (*t.cur == '=') {
+                result.kind = Kind.SlashEqual;
+                result.len = 2;
+                t.cur++;
+                return;
+            }
+            if (*t.cur == '/') {
+                if (t.lex_line_comment(result)) return;
+                continue;
+            }
+            if (*t.cur == '*') {
+                if (t.lex_block_comment(result)) return;
+                continue;
+            }
+            result.kind = Kind.Slash;
+            return;
+        case COLON:
+            result.kind = Kind.Colon;
+            t.cur++;
+            return;
+        case SEMI_COLON:
+            result.kind = Kind.Semicolon;
+            t.cur++;
+            return;
+        case LESS:
+            t.cur++;
+            if (*t.cur == '=') {
+                t.cur++;
+                result.kind = Kind.LessEqual;
+                result.len = 2;
+                return;
+            }
+            if (*t.cur == '<') {
+                t.cur++;
+                if (*t.cur == '=') {
+                    t.cur++;
+                    result.kind = Kind.LessLessEqual;
+                    result.len = 3;
+                } else {
+                    result.kind = Kind.LessLess;
+                    result.len = 2;
+                }
+                return;
+            }
+            result.kind = Kind.Less;
+            return;
+        case EQUAL:
+            t.cur++;
+            if (*t.cur == '=') {
+                result.kind = Kind.EqualEqual;
+                result.len = 2;
+                t.cur++;
+            } else {
+                result.kind = Kind.Equal;
+            }
+            return;
+        case GREATER:
+            t.cur++;
+            if (*t.cur == '=') {
+                t.cur++;
+                result.kind = Kind.GreaterEqual;
+                result.len = 2;
+                return;
+            }
+            if (*t.cur == '>') {
+                t.cur++;
+                if (*t.cur == '=') {
+                    t.cur++;
+                    result.kind = Kind.GreaterGreaterEqual;
+                    result.len = 3;
+                } else {
+                    result.kind = Kind.GreaterGreater;
+                    result.len = 2;
+                }
+                return;
+            }
+            result.kind = Kind.Greater;
+            return;
+        case QUESTION:
+            result.kind = Kind.Question;
+            t.cur++;
+            return;
+        case AT:
+            result.kind = Kind.At;
+            t.cur++;
+            return;
+        case AMP:
+            t.cur++;
+            if (*t.cur == '&') {
+                result.kind = Kind.AmpAmp;
+                result.len = 2;
+                t.cur++;
+                return;
+            }
+            if (*t.cur == '=') {
+                result.kind = Kind.AmpEqual;
+                result.len = 2;
+                t.cur++;
+                return;
+            }
+            result.kind = Kind.Amp;
+            return;
+        case CARET:
+            t.cur++;
+            if (*t.cur == '=') {
+                t.cur++;
+                result.kind = Kind.CaretEqual;
+                result.len = 2;
+                return;
+            }
+            result.kind = Kind.Caret;
+            return;
+        case LBRACE:
+            result.kind = Kind.LBrace;
+            t.cur++;
+            return;
+        case RBRACE:
+            result.kind = Kind.RBrace;
+            t.cur++;
+            return;
+        case PIPE:
+            t.cur++;
+            if (*t.cur == '|') {
+                result.kind = Kind.PipePipe;
+                result.len = 2;
+                t.cur++;
+                return;
+            }
+            if (*t.cur == '=') {
+                result.kind = Kind.PipeEqual;
+                result.len = 2;
+                t.cur++;
+                return;
+            }
+            result.kind = Kind.Pipe;
+            return;
+        case TILDE:
+            result.kind = Kind.Tilde;
+            t.cur++;
+            return;
+        case CR:
+            t.cur++;
+            if (*t.cur != '\n') {
+                if (t.raw_mode)
+                    continue;
+                t.error(result, "unexpected character 0x%02X after CR", *t.cur & 0xFF);
+                return;
+            }
+            if (t.stop_at_eol) {
+                result.kind = Kind.Eof;
+                result.len = 0;
+                return;
+            }
+            t.cur++;
+            t.line_start = t.cur;
+            continue;
+        case EOF:
+            if (t.feature_count) {
+                Feature* top = &t.feature_stack[t.feature_count];
+                t.cur = t.input_start + (top.loc - t.loc_start);
+                t.error(result, "un-terminated %s", top.kind.str());
+                return;
+            }
+            result.kind = Kind.Eof;
+            result.len = 0;
+            result.done = true;
+            return;
+        }
+        // should not come here without goto
+invalid_char:
+        if (t.raw_mode) {
+            result.kind = Kind.Invalid;
+            result.invalid[0] = *t.cur;
+            t.cur += 1;
+            return;
+        }
+        if (*t.cur >= ' ' && *t.cur < 0x7F)
+            t.error(result, "invalid char '%c'", *t.cur);
+        else
+            t.error(result, "invalid char 0x%02X", *t.cur & 0xFF);
+        return;
+    }
+}
+
+fn void Tokenizer.error(Tokenizer* t, Token* result, const char* format @(printf_format), ...) {
+    va_list args;
+    va_start(args, format);
+    vsnprintf(t.error_msg, sizeof(t.error_msg), format, args);
+    va_end(args);
+
+    result.loc = t.loc_start + (SrcLoc)(t.cur - t.input_start);
+    result.kind = Kind.Error;
+    result.error_msg = t.error_msg;
+    result.done = true;
+    if (t.on_error) t.on_error(t.fn_arg, result.loc);
+}
+
+// generate an error but keep parsing
+fn void Tokenizer.num_error(Tokenizer* t, Token* result, const char* p, const char* format @(printf_format), ...) {
+    va_list args;
+    va_start(args, format);
+    vsnprintf(t.error_msg, sizeof(t.error_msg), format, args);
+    va_end(args);
+
+    // XXX: error position should be passed separately from token start
+    result.loc = t.loc_start + (SrcLoc)(p - t.input_start);
+    // read the rest of the pp-number token
+    for (;;) {
+        if ((*p == 'e' || *p == 'E' || *p == 'p' || *p == 'P') && (p[1] == '+' || p[1] == '-')) {
+            p += 2;
+        } else
+        if (*p == '\'' && isalnum(p[1])) {
+            p += 2;
+        } else
+        if (isalnum(*p) || *p == '_' || (*p == '.' && p[1] != '.')) {
+            p++;
+        } else {
+            break;
+        }
+    }
+    t.cur = p;
+    result.len = (u16)((p - t.input_start) - (result.loc - t.loc_start));
+    if (t.on_warning) t.on_warning(t.fn_arg, result.loc);
+}
+
+fn void Tokenizer.lex_identifier(Tokenizer* t, Token* result) {
+    result.kind = Kind.Identifier;
+    const char* start = t.cur;
+    const char* end = t.cur + 1;
+    while (Identifier_char[(u8)(*end)]) end++;
+
+    usize len = (usize)(end - start);
+    if (len > constants.MaxIdentifierLen && !t.raw_mode) {
+        t.error(result, "identifier too long (max %d chars)", constants.MaxIdentifierLen);
+        return;
+    }
+    t.cur += len;
+    result.name_idx = t.pool.add(start, len, true);
+    result.len = (u16)len;
+}
+
+fn u8 hex2val(char c) {
+    if (c >= '0' && c <= '9') return (u8)(c - '0');
+    if (c >= 'a' && c <= 'f') return (u8)(c - 'a' + 10);
+    return (u8)(c - 'A' + 10);
+}
+
+fn bool is_octal(char c) {
+    return (c >= '0' && c <= '7');
+}
+
+fn bool is_binary(char c) {
+    return (c >= '0' && c <= '1');
+}
+
+fn void Tokenizer.lex_number_error(Tokenizer* t, Token* result, const char *p, const char *qual) {
+    if (isdigit(*p)) {
+        t.num_error(result, p, "invalid digit '%c' in %s constant", *p, qual);
+        return;
+    }
+    if (*p == '_') {
+        t.num_error(result, p, "digit separator '%c' not surrounded by digits", *p);
+        return;
+    }
+    if (isalpha(*p)) {
+        t.num_error(result, p, "invalid character '%c' in %s constant", *p, qual);
+        return;
+    }
+    t.num_error(result, p, "missing digits in %s constant", qual);
+}
+
+fn void Tokenizer.lex_number(Tokenizer* t, Token* result) {
+    result.kind = Kind.IntegerLiteral;
+    const char* start = t.cur;
+    const char* p = start;
+    u64 value = 0;
+    bool overflow = false;
+
+    if (p[0] == '0') {
+        if (p[1] == 'x' || p[1] == 'X') {  // hexadecimal
+            result.radix = Radix.Hex;
+            p += 2;
+            if (isxdigit(*p)) {
+                while (isxdigit(*p)) {
+                    if (value > max_u64 >> 4) {
+                        value = max_u64;
+                        overflow = true;
+                    } else {
+                        value = (value << 4) + hex2val(*p);
+                    }
+                    p++;
+                    if (*p == '_' && isxdigit(p[1]))
+                        p++;
+                }
+                if (*p == 'p' || *p == 'P' || (*p == '.' && p[1] != '.')) {
+                    t.lex_floating_point_hex(result, start);
+                    return;
+                }
+            } else {
+                if (*p == '.' && p[1] != '.' && isxdigit(p[1])) {
+                    t.lex_floating_point_hex(result, start);
+                    return;
+                }
+            }
+            if (*p == '_' || isalpha(*p) || p == start + 2) {
+                t.lex_number_error(result, p, "hexadecimal");
+                return;
+            }
+            goto check_overflow;
+        }
+        if (p[1] == 'b' || p[1] == 'B') {   // binary
+            result.radix = Radix.Binary;
+            p += 2;
+            while (is_binary(*p)) {
+                if (value > max_u64 >> 1) {
+                    value = max_u64;
+                    overflow = true;
+                } else {
+                    value = (value << 1) + (*p - '0');
+                }
+                p++;
+                if (*p == '_' && is_binary(p[1]))
+                    p++;
+            }
+            if (*p == '_' || isalnum(*p) || p == start + 2) {
+                t.lex_number_error(result, p, "binary");
+                return;
+            }
+            goto check_overflow;
+        }
+        // FIXME: should support 0o1234
+
+        while (is_octal(*p)) {
+            if (value > max_u64 >> 3) {
+                value = max_u64;
+                overflow = true;
+            } else {
+                value = (value << 3) + (*p - '0');
+            }
+            p++;
+            if (*p == '_' && isdigit(p[1]))
+                p++;
+        }
+        const char *p0 = p;
+        if (isdigit(*p)) {
+            // skip digits to check for floating point constant
+            while (isdigit(*p) || (*p == '_' && isdigit(p[1])))
+                p++;
+        }
+        if (*p == 'e' || *p == 'E' || (*p == '.' && p[1] != '.')) {
+            t.lex_floating_point(result, start);
+            return;
+        }
+        p = p0;
+        if (*p == '_' || isalnum(*p)) {
+            t.lex_number_error(result, p, "octal");
+            return;
+        }
+        t.cur = p;
+        if (p == start + 1) {
+            // value is 0, radix = Radix.Default, len = 1
+            return;
+        }
+        result.radix = Radix.Octal;
+        goto check_overflow;
+    }
+
+    while (isdigit(*p)) {
+        // ugly cast because u8 digit = *p++ - '0'; generates an error
+        u32 digit = (u32)(*p++ - '0');
+        if (value >= max_u64 / 10 && (value > max_u64 / 10 || digit > max_u64 % 10)) {
+            value = max_u64;
+            overflow = true;
+        } else {
+            value = value * 10 + digit;
+        }
+        if (*p == '_' && isdigit(p[1]))
+            p++;
+    }
+    if (*p == 'e' || *p == 'E' || (*p == '.' && p[1] != '.')) {
+        t.lex_floating_point(result, start);
+        return;
+    }
+    if (*p == '_' || isalpha(*p)) {
+        t.lex_number_error(result, p, "decimal");
+        return;
+    }
+check_overflow:
+    t.cur = p;
+    result.int_value = value;
+    result.len = (u16)(p - start);
+    if (overflow) {
+        t.num_error(result, p, "integer literal is too large to be represented in any integer type");
+        return;
+    }
+}
+
+fn void Tokenizer.lex_floating_point(Tokenizer* t, Token* result, const char* start) {
+    char[4096] buf;
+    const char* p = start;
+    usize pos = 0;
+    u8 seen_dot = 0;
+    result.kind = Kind.FloatLiteral;
+    result.float_value = 0;
+    for (;;) {
+        if (!isdigit(*p)) {
+            if (*p == '_' && isdigit(p[1]))
+                p++;
+            else
+            if (*p != '.' || seen_dot++)
+                break;
+        }
+        buf[pos++] = *p++;
+        if (pos == elemsof(buf))
+            goto too_large;
+    }
+    if (*p == 'e' || *p == 'E') {
+        if (pos >= elemsof(buf) - 2)
+            goto too_large;
+        buf[pos++] = *p++;
+        if (*p == '+' || *p == '-')
+            buf[pos++] = *p++;
+        if (!isdigit(*p)) {
+            t.num_error(result, p, "invalid exponent in floating point constant");
+            return;
+        }
+        while (isdigit(*p)) {
+            buf[pos++] = *p++;
+            if (pos == elemsof(buf))
+                goto too_large;
+            if (*p == '_' && isdigit(p[1]))
+                p++;
+        }
+    }
+    if (*p == 'f' || *p == 'F') {
+        result.suffix_F = true;
+        p++;
+    }
+    if (*p == '_' || isalpha(*p)) {
+        t.lex_number_error(result, p, "floating point");
+        return;
+    }
+    t.cur = p;
+    buf[pos] = '\0';
+    result.len = (u16)(p - start);
+    result.float_value = stdlib.strtod(buf, nil);
+    return;
+too_large:
+    t.num_error(result, p, "floating point constant too large");
+    return;
+}
+
+fn void Tokenizer.lex_floating_point_hex(Tokenizer* t, Token* result, const char* start) {
+    char[4096] buf;
+    const char* p = start;
+    usize pos = 0;
+    u8 seen_dot = 0;
+    result.kind = Kind.FloatLiteral;
+    result.float_value = 0;
+    if (*p == '0' && (p[1] == 'x' || p[1] == 'X')) {
+        buf[pos++] = *p++;
+        buf[pos++] = *p++;
+    }
+    for (;;) {
+        if (!isxdigit(*p)) {
+            if (*p == '_' && isxdigit(p[1]))
+                p++;
+            else
+            if (*p != '.' || seen_dot++)
+                break;
+        }
+        buf[pos++] = *p++;
+        if (pos == elemsof(buf))
+            goto too_large;
+    }
+    if (*p == 'p' || *p == 'P') {
+        if (pos >= elemsof(buf) - 2)
+            goto too_large;
+        buf[pos++] = *p++;
+        if (*p == '+' || *p == '-')
+            buf[pos++] = *p++;
+        if (!isdigit(*p)) {
+            t.num_error(result, p, "invalid exponent in floating point constant");
+            return;
+        }
+        while (isdigit(*p)) {
+            buf[pos++] = *p++;
+            if (pos == elemsof(buf))
+                goto too_large;
+            if (*p == '_' && isdigit(p[1]))
+                p++;
+        }
+    } else {
+        t.num_error(result, p, "hexadecimal floating constant requires an exponent");
+        return;
+    }
+    if (*p == 'f' || *p == 'F') {
+        result.suffix_F = true;
+        p++;
+    }
+    if (*p == '_' || isalpha(*p)) {
+        t.lex_number_error(result, p, "floating point");
+        return;
+    }
+    t.cur = p;
+    buf[pos] = '\0';
+    // FIXME: do not use strtod() on platforms that do not support the syntax
+    result.len = (u16)(p - start);
+    result.float_value = stdlib.strtod(buf, nil);
+    return;
+too_large:
+    t.num_error(result, p, "floating point constant too large");
+}
+
+// Returns how much to skip in source code (0 = error)
+fn u32 Tokenizer.lex_escaped_char(Tokenizer* t, Token* result, const char* stype) {
+    // Note: t.cur is after the '\'
+    const char* p = t.cur;  // after the backslash
+    u32 nc = 1;
+    u32 cc;
+    char c;
+
+    switch (c = *p) {
+    case 0:
+    case '\r':
+    case '\n':
+        t.error(result, "unterminated %s", stype);
+        return 0;
+    case '0':   // '0' ... '7'
+    case '1':
+    case '2':
+    case '3':
+    case '4':
+    case '5':
+    case '6':
+    case '7':
+        result.radix = Radix.Octal;
+        nc = octconv(p, 3, &cc);
+        if (cc > 255) {
+            t.error(result, "octal escape sequence out of range");
+            return 0;
+        }
+        c = cc & 0xFF;
+        goto add_char;
+    case 'x':
+        // C consumes all hex digits after \x (at least one)
+        // C2 requires 2 hex digits, but rejects extra digits to simplify C generation
+        result.radix = Radix.Hex;
+        nc = hexconv(p + 1, max_i32, &cc);
+        if (nc == 0) {
+            t.error(result, "expect hexadecimal number after '\\x'");
+            return 0;
+        } else
+        if (nc < 2) {
+            t.error(result, "expect 2 hexadecimal digits after '\\x'");
+            return 0;
+        } else
+        if (nc > 2) {
+            t.error(result, "too many digits in hexadecimal escape sequence '\\x'");
+            return 0;
+        }
+        nc++;
+        c = cc & 0xFF;
+        goto add_char;
+    case 'a':  c = '\a'; goto add_char;
+    case 'b':  c = '\b'; goto add_char;
+    case 'f':  c = '\f'; goto add_char;
+    case 'n':  c = '\n'; goto add_char;
+    case 'r':  c = '\r'; goto add_char;
+    case 't':  c = '\t'; goto add_char;
+    case 'v':  c = '\v'; goto add_char;
+    case '"':
+    case '\'':
+    case '?':
+    case '\\':
+    add_char:
+        t.buf.add1(c);
+        break;
+    case 'u':
+        result.radix = Radix.Hex;
+        nc = hexconv(p + 1, 4, &cc);
+        if (nc != 4) {
+            t.error(result, "expect 4 hexadecimal digits after '\\u'");
+            return 0;
+        }
+        nc++;
+        goto add_utf8;
+    case 'U':
+        result.radix = Radix.Hex;
+        nc = hexconv(p + 1, 8, &cc);
+        if (nc != 8) {
+            t.error(result, "expect 8 hexadecimal digits after '\\U'");
+            return 0;
+        }
+        nc++;
+        if (cc > 0x10FFFF) {
+            t.error(result, "code point value out of range: %08x", cc);
+            return 0;
+            //cc = 0xFFFD;
+        }
+    add_utf8:
+        {
+            char[4] tab;
+            u32 clen = utf8.encode(tab, elemsof(tab), cc);
+            t.buf.add2(tab, clen);
+        }
+        break;
+    default:
+        if (c < ' ' || c == 0x7F) {
+            t.error(result, "invalid character 0x%02X in %s", c, stype);
+        } else
+        if (c < 0x80) {
+            t.error(result, "unknown escape sequence '\\%c'", c);
+        } else {
+            t.error(result, "invalid UTF-8 escape sequence");
+        }
+        nc = 0;
+        break;
+    }
+    return nc;
+}
+
+fn void Tokenizer.lex_char_literal(Tokenizer* t, Token* result) {
+    result.kind = Kind.CharLiteral;
+    const char *start = t.cur;
+
+    t.cur++; // skip single quote
+    switch (*t.cur) {
+    case 0:
+    case '\r':
+    case '\n':
+        t.error(result, "unterminated %s", "character constant");
+        return;
+    case '\'':
+        t.error(result, "empty character constant");
+        return;
+    case '\\':
+        t.cur++; // skip the backslash
+        t.buf.clear();
+        u32 esc_len = t.lex_escaped_char(result, "character constant");
+        if (esc_len == 0) {
+            // invalid escape sequence, error already produced
+            return;
+        }
+        t.cur += esc_len;
+        if (t.buf.size() != 1) {
+            t.error(result, "multi-character character constant");
+            return;
+        }
+        result.char_value = *t.buf.udata();
+        break;
+    default:
+        u8 c = *t.cur;
+        u32 cc;
+        if ((c & 0x80) && utf8.decode(t.cur, 4, &cc) > 0) {
+            t.error(result, "multi-character character constant");
+            return;
+        } else
+        if (c < ' ' || c == 0x7F) {
+            t.error(result, "invalid character 0x%02X in %s", c, "character constant");
+            return;
+        } else {
+            result.char_value = c;
+            t.cur += 1;
+        }
+        break;
+    }
+    if (*t.cur != '\'') {
+        // TODO: make error non-fatal
+        if (*t.cur != '\0' && t.cur[1] == '\'') {
+            // TODO: scan for closing quote
+            t.error(result, "multi-character character constant");
+        } else {
+            t.error(result, "missing terminating ' character (GOT %c)", *t.cur);
+        }
+        return;
+    }
+    t.cur += 1; // skip the closing quote
+    result.len = (u16)(t.cur - start);
+}
+
+fn void Tokenizer.lex_raw_string_literal(Tokenizer* t, Token* result) {
+    result.kind = Kind.StringLiteral;
+    result.raw = 1;
+    const char* start = t.cur;
+
+    t.buf.clear();
+    // count the number of backticks that serve as the rawstring delimiter
+    u32 count = 1;
+    while (*++t.cur == '`') count++;
+
+    const char* p = t.cur;
+    const char* bol = p;
+    u32 indent = 0;
+    bool at_bol = false;
+
+    // check for tagged multi-line, compute indent
+    if (count >= 3) {
+        // check if the rawstring is multi-line
+        for (; *p && *p != '\n'; p++) {
+            if (*p == '`' && !string.memcmp(p, start, count))
+                break;
+        }
+        if (*p == '\n') {
+            // is multi-line: skip tag line, contents starts here
+            p++;
+            t.cur = p;
+            at_bol = true;
+            // determine the indentation of the first non-blank line
+            for (;; p++) {
+                for (bol = p; *p == ' ' || *p == '\t'; p++) continue;
+                indent = (u32)(p - bol);
+                if (*p == '\r') p++;
+                if (*p != '\n') break;
+            }
+            // check if the ``` is on its own line
+            for (p = start;;) {
+                if (p == t.input_start || p[-1] == '\n') {
+                    // if ``` is on its own line, it determines the indentation
+                    bol = p;
+                    indent = (u32)(start - bol);
+                    break;
+                }
+                p--;
+                if (*p != ' ' && *p != '\t') break;
+            }
+            // bol[0...indent] is the block indentation
+        }
+    }
+    for (p = t.cur;;) {
+        if (at_bol) {
+            at_bol = false;
+            u32 i;
+            for (i = 0; i < indent && p[i] == bol[i]; i++) continue;
+            p += i;
+            t.cur = p;
+            if (i < indent) {
+                // if blank line or end line, just skip the insufficient indentation
+                if (*p == '\n' || *p == '\r' || !*p || !string.strncmp(p, start, count)) continue;
+                t.error(result, "raw string indentation error: expected %d %s%.*s", indent,
+                        *bol == '\t' ? "tab" : "space", indent > 1 ? 1 : 0, "s");
+                return;
+            }
+        }
+        while (*p && *p >= ' ' && *p < 0x7F && *p != '`')
+            p++;
+        t.buf.add2(t.cur, (u32)(p - t.cur));
+        t.cur = p;
+        switch (*p) {
+        case '\0':
+            t.cur = start;  // make error point to beginning of rawstring
+            t.error(result, "unterminated %s", "raw string");
+            return;
+        case '\t':  // accept TABs
+            p++;
+            continue;
+        case '\r':
+            if (p[1] != '\n') goto invalid;
+            p++;
+            fallthrough;
+        case '\n':
+            t.buf.add1('\n');
+            p++;
+            t.cur = p;
+            at_bol = true;
+            continue;
+        case '`':
+            u32 i;
+            for (i = 1; *++p == '`'; i++) continue;
+            if (i < count) continue;
+            // if extra backquotes, they are part of the rawstring
+            if (i > count) t.buf.add2(t.cur, i - count);
+            t.cur += i; // skip string terminator
+            u32 len = t.buf.size();
+            result.text_len = len;
+            result.text_idx = t.pool.add(t.buf.data(), len, true);
+            result.len = (u16)(t.cur - start);
+            return;
+        default:
+            if (*p >= 0x80) {
+                u32 cc;
+                u32 nc = utf8.decode(p, 4, &cc);
+                if (nc > 0) {
+                    p += nc;
+                    continue;
+                } else {
+                    t.error(result, "invalid UTF-8 sequence");
+                    return;
+                }
+            }
+        invalid:
+            t.error(result, "invalid character 0x%02X in %s", *p, "raw string");
+            return;
+        }
+    }
+}
+
+fn void Tokenizer.lex_string_literal(Tokenizer* t, Token* result) {
+    result.kind = Kind.StringLiteral;
+    const char* start = t.cur;
+
+    t.buf.clear();
+    t.cur++; // skip double quote
+
+    for (;;) {
+        const char* p = t.cur;
+        while (*p && *p != '\\'  && *p != '"' && *p >= ' ' && *p < 0x7F)
+            p++;
+        t.buf.add2(t.cur, (u32)(p - t.cur));
+        t.cur = p;
+        switch (*p) {
+        case 0:
+        case '\r':
+        case '\n':
+            t.error(result, "unterminated %s", "string");
+            return;
+        case '"':
+            t.cur++; // skip string terminator
+            u32 len = t.buf.size();
+            result.text_len = len;
+            result.text_idx = t.pool.add(t.buf.data(), len, true);
+            result.len = (u16)(t.cur - start);
+            return;
+        case '\\':
+            t.cur++;
+            u32 esc_len = t.lex_escaped_char(result, "string");
+            if (esc_len == 0) return;
+            t.cur += esc_len;
+            break;
+        default:
+            if (*p >= 0x80) {
+                u32 cc;
+                u32 nc = utf8.decode(p, 4, &cc);
+                if (nc > 0) {
+                    t.buf.add2(p, nc);
+                    t.cur += nc;
+                    break;
+                } else {
+                    t.error(result, "invalid UTF-8 sequence");
+                    return;
+                }
+            } else {
+                t.error(result, "invalid character 0x%02X in %s", *p, "string");
+                return;
+            }
+        }
+    }
+}
+
+fn bool Tokenizer.lex_line_comment(Tokenizer* t, Token* result) {
+    t.cur += 1;
+    const char* start = t.cur;
+    const char* end = start;
+
+    while (*end) {
+        if (*end == '\r' || *end == '\n') break;
+        end++;
+    }
+
+    // TODO: complain about missing newline at end of file
+    u32 len = (u32)(end - start);
+    t.cur += len;
+
+    if (t.raw_mode) {
+        result.kind = Kind.LineComment;
+        result.text_len = len;
+        result.len = (u16)(len + 2);
+        result.text_idx = t.pool.add(start, len, false);
+        return true;
+    }
+    return false;
+}
+
+fn bool Tokenizer.lex_block_comment(Tokenizer* t, Token* result) {
+    t.cur += 1;
+    const char* start = t.cur;
+    while (1) {
+        switch (*t.cur) {
+        case 0:
+            t.error(result, "un-terminated block comment");
+            return true;
+        case '/':
+            if (t.cur[1] == '*' && !t.raw_mode) {
+                t.error(result, "'/*' within block comment");
+                return true;
+            }
+            break;
+        case '*':
+            if (t.cur[1] == '/') {
+                t.cur += 2;
+                if (t.raw_mode) {
+                    usize len = (usize)(t.cur - start - 2);
+                    result.kind = Kind.BlockComment;
+                    result.len = (u16)(len + 4);
+                    result.text_len = (u32)len;
+                    result.text_idx = t.pool.add(start, len, false);
+                    return true;
+                }
+                return false;
+            }
+            break;
+        default:
+            break;
+        }
+        t.cur++;
+    }
+}
+
+/*---- preprocessing ----*/
+
+fn bool compare_word(const char* cur, const char* expect) {
+    while (*expect) {
+        if (*cur != *expect) return false;
+        cur++;
+        expect++;
+    }
+    return !Identifier_char[(u8)(*cur)];
+}
+
+// return true if we pass result
+fn bool Tokenizer.lex_feature_cmd(Tokenizer* t, Token* result) {
+    const char *start = t.cur;
+
+    // skip '#' and blanks
+    t.cur = skip_blanks(t.cur + 1);
+
+    Kind kind;
+    for (kind = Kind.Feat_if; kind < Kind.Invalid; kind++) {
+        const char *word = kind.str() + 1;
+        if (compare_word(t.cur, word)) {
+            t.cur += string.strlen(word);
+            break;
+        }
+    }
+    result.kind = kind;
+
+    if (t.raw_mode) {
+        if (kind == Kind.Invalid) {
+            result.invalid[0] = '#';
+            t.cur = start + 1;
+        }
+        result.len = (u16)(t.cur - start);
+        return true;
+    }
+
+    t.cur = skip_blanks(t.cur);
+    switch (kind) {
+    case Feat_if:
+    case Feat_ifdef:
+    case Feat_ifndef:
+    case Feat_elif:
+        if (t.handle_if(result, kind)) return true;
+        break;
+    case Feat_else:
+        if (t.handle_else(result)) return true;
+        break;
+    case Feat_endif:
+        if (t.handle_endif(result)) return true;
+        break;
+    case Feat_error:
+    case Feat_warning:
+        if (!t.is_enabled()) return false; // if disabled, dont care if anything else
+        return t.parse_error_warn(result, kind);
+    default:
+        if (!t.is_enabled()) return false; // if disabled, dont care if anything else
+        t.cur = start;
+        t.error(result, "unknown feature-selection command");
+        return true;
+    }
+    return false;
+}
+
+fn bool Tokenizer.at_bol(Tokenizer* t) {
+    const char *p = t.cur;
+    while (p > t.line_start) {
+        if (!isblank(*--p))
+            return false;
+    }
+    return true;
+}
+
+fn bool Tokenizer.parse_error_warn(Tokenizer* t, Token* result, Kind kind) {
+    const char* start = t.cur;
+    while (*t.cur != '\0' && *t.cur != '\r' && *t.cur != '\n')
+        t.cur++;
+    usize len = (usize)(t.cur - start);
+    if (len > constants.MaxErrorMsgLen) {
+        t.error(result, "error msg too long (max %d bytes)", constants.MaxErrorMsgLen);
+        return true;
+    }
+    char[constants.MaxErrorMsgLen+1] msg;
+    string.memcpy(msg, start, len);
+    msg[len] = 0;
+
+    if (kind == Kind.Feat_error) {
+        t.cur = t.line_start;
+        t.error(result, "%s", msg);
+    } else {
+        // TODO: output diagnostic synchronously
+        string.strcpy(t.error_msg, msg);
+        result.kind = Kind.Warning;
+        result.len = (u16)((t.cur - t.input_start) - (result.loc - t.loc_start));
+        result.error_msg = t.error_msg;
+    }
+    return true;
+}
+
+fn bool Tokenizer.is_enabled(const Tokenizer* t) {
+    return !t.feature_stack[t.feature_count].skipping;
+}
+
+fn Kind Tokenizer.lex_preproc(Tokenizer* t, Token* result) {
+    t.stop_at_eol = true;
+    t.lex(result);
+    t.stop_at_eol = false;
+    return result.kind;
+}
+
+const u32 MAX_LEVEL = 16;
+
+type Operand struct {
+    i64 val;
+    Kind op;
+    u8 prec;
+}
+
+fn i64 Tokenizer.parse_ppexpr(Tokenizer* t, Token *result) {
+    Operand[MAX_LEVEL] stack;
+    Operand *sp;
+    Kind op;
+    u8 prec;
+    i64 val = 0;
+    bool prefix = true;
+
+    for (sp = stack;;) {
+        op = t.lex_preproc(result);
+        if (prefix) {
+            switch (op) {
+            case Identifier:
+                val = 0;
+                const char *id = t.pool.idx2str(result.name_idx);
+                if (!string.strcmp(id, "defined")) {
+                    bool has_paren = false;
+                    if (t.lex_preproc(result) == Kind.LParen) {
+                        has_paren = true;
+                        t.lex_preproc(result);
+                    }
+                    if (result.kind == Kind.Identifier) {
+                        id = t.pool.idx2str(result.name_idx);
+                    } else {
+                        t.error(result, "missing identifier after 'defined'");
+                        return 0;
+                    }
+                    if (has_paren) {
+                        if (t.lex_preproc(result) != Kind.RParen)
+                            goto syntax_error;
+                    }
+                    val = t.features.contains(id);
+                } else {
+                    // TODO: use feature value
+                    val = t.features.contains(id);
+                }
+                prefix = false;
+                continue;
+            case IntegerLiteral:
+                // TODO: handle signed/unsigned issues
+                val = (i64)(result.int_value);
+                prefix = false;
+                continue;
+            case CharLiteral:
+                val = result.char_value;
+                prefix = false;
+                continue;
+            case LParen:
+                if (sp >= stack + MAX_LEVEL) goto too_deep;
+                sp.op = op;
+                sp.prec = 19;
+                sp++;
+                continue;
+            case Exclaim:
+            case Plus:
+            case Minus:
+            case Tilde:
+                if (sp >= stack + MAX_LEVEL) goto too_deep;
+                sp.op = op;
+                sp.prec = 1;
+                sp++;
+                continue;
+            default:
+                break;
+            }
+            t.error(result, "missing operand in preprocessor expression");
+            return 0;
+        }
+        switch (op) {
+        case Identifier:
+        case IntegerLiteral:
+        case CharLiteral:
+        case LParen:
+            t.error(result, "missing operator in preprocessor expression");
+            return 0;
+        default:
+            break;
+        }
+        prefix = true;
+    unary:
+        /* handle unary operators */
+        while (sp > stack && sp[-1].prec == 1) {
+            --sp;
+            switch (sp.op) {
+            case Exclaim:
+                val = !val;
+                break;
+            case Plus:
+                break;
+            case Minus:
+                val = -val;
+                break;
+            case Tilde:
+                val = ~val;
+                break;
+            default:
+                break;
+            }
+        }
+        switch (op) {
+        case None:
+            prefix = false;
+            continue;
+        case Eof:
+            prec = 20;
+            break;
+        case RParen:
+            prec = 19;
+            break;
+        case Star:
+        case Slash:
+        case Percent:
+            prec = 3;
+            break;
+        case Plus:
+        case Minus:
+            prec = 4;
+            break;
+        case LessLess:
+        case GreaterGreater:
+            prec = 5;
+            break;
+        case Less:
+        case LessEqual:
+        case Greater:
+        case GreaterEqual:
+            prec = 6;
+            break;
+        case EqualEqual:
+        case ExclaimEqual:
+            prec = 7;
+            break;
+        case Amp:
+            prec = 8;
+            break;
+        case Caret:
+            prec = 9;
+            break;
+        case Pipe:
+            prec = 10;
+            break;
+        case AmpAmp:
+            prec = 11;
+            break;
+        case PipePipe:
+            prec = 12;
+            break;
+        case Question:
+        case Colon:
+            prec = 13;
+            break;
+        default:
+            t.error(result, "invalid token in preprocessor expression '%s'", result.kind.str());
+            return 0;
+        }
+
+        /* handle pending binary operators with higher precedence */
+        while (sp > stack && prec >= sp[-1].prec) {
+            sp--;
+            switch (sp.op) {
+            case LParen:
+                if (op != Kind.RParen) {
+                    t.error(result, "missing parenthesis in preprocessor expression");
+                    return 0;
+                }
+                op = Kind.None;
+                goto unary;
+            case Star:
+                val = sp.val * val; /* XXX: potential overflow */
+                continue;
+            case Slash:
+                if (val) val = sp.val / val; /* XXX: potential overflow */
+                continue;
+            case Percent:
+                if (val && !(sp.val == c2.min_i64 && val == -1))
+                    val = sp.val % val; /* XXX: potential overflow */
+                continue;
+            case Plus:
+                val = sp.val + val; /* XXX: potential overflow */
+                continue;
+            case Minus:
+                val = sp.val - val; /* XXX: potential overflow */
+                continue;
+            case LessLess:
+                val = sp.val << val; /* XXX: potential overflow */
+                continue;
+            case GreaterGreater:
+                val = sp.val >> val; /* XXX: potential overflow */
+                continue;
+            case Less:
+                val = sp.val < val;
+                continue;
+            case LessEqual:
+                val = sp.val <= val;
+                continue;
+            case Greater:
+                val = sp.val > val;
+                continue;
+            case GreaterEqual:
+                val = sp.val >= val;
+                continue;
+            case EqualEqual:
+                val = sp.val == val;
+                continue;
+            case ExclaimEqual:
+                val = sp.val != val;
+                continue;
+            case Amp:
+                val = sp.val & val;
+                continue;
+            case Caret:
+                val = sp.val ^ val;
+                continue;
+            case Pipe:
+                val = sp.val | val;
+                continue;
+            case AmpAmp:
+                val = sp.val && val;
+                continue;
+            case PipePipe:
+                val = sp.val || val;
+                continue;
+            case Colon:
+                if (sp > stack && sp[-1].op == Kind.Question) {
+                    sp--;
+                    val = sp.val ? sp[1].val : val;
+                    continue;
+                }
+                fallthrough;
+            default:
+                t.error(result, "invalid token in preprocessor expression '%s'", sp.op.str());
+                return 0;
+            }
+        }
+        if (op == Kind.Eof)
+            break;
+        if (sp >= stack + MAX_LEVEL) {
+        too_deep:
+            t.error(result, "preprocessor expression too complex");
+            return 0;
+        }
+        sp.val = val;
+        sp.op = op;
+        sp.prec = prec;
+        sp++;
+    }
+    if (sp > stack) {
+    syntax_error:
+        t.error(result, "syntax error in preprocessor expression");
+        return 0;
+    }
+    return val;
+}
+
+fn bool Tokenizer.handle_if(Tokenizer* t, Token* result, Kind kind) {
+    Feature* top = &t.feature_stack[t.feature_count];
+
+    if (kind == Kind.Feat_if || kind == Kind.Feat_ifdef || kind == Kind.Feat_ifndef) {
+        if (t.feature_count >= constants.MaxFeatureDepth) {
+            t.error(result, "feature nesting too much");
+            return true;
+        }
+        t.feature_count++;
+        top++;
+        top.kind = kind;
+        top.loc = result.loc;
+        top.is_else = false;
+        top.skipping = 0;
+        if (top[-1].skipping) { // don't bother parsing the condition
+            top.skipping = 2;
+            return false;
+        }
+    } else {
+        if (t.feature_count == 0) {
+            t.error(result, "%s without #if", kind.str());
+            return true;
+        }
+        if (top.is_else) {
+            t.error(result, "%s in #else", kind.str());
+            return true;
+        }
+        top.skipping ^= 1;
+        if (top.skipping) {
+            top.skipping = 2;  // skip the rest
+            return false;
+        }
+    }
+
+    if (kind == Kind.Feat_if || kind == Kind.Feat_elif) {
+        if (!t.parse_ppexpr(result))
+            top.skipping = 1;
+    } else {
+        /* handle Kind.Feat_ifdef, Kind.Feat_ifndef */
+        if (t.lex_preproc(result) == Kind.Identifier) {
+            // TODO use feature value
+            // XXX: cannot use t.features.contains_idx(result.name_idx)
+            //      because t.pool and t.features.pool are different in c2c
+            if (!t.features.contains(t.pool.idx2str(result.name_idx)))
+                top.skipping = 1;
+            if (kind == Kind.Feat_ifndef)
+                top.skipping ^= 1;
+        } else {
+            t.error(result, "missing identifier after %s, got %s",
+                    kind.str(), result.kind.str());
+            return true;
+        }
+    }
+    return false;
+}
+
+fn bool Tokenizer.handle_else(Tokenizer* t, Token* result) {
+    if (t.feature_count == 0) {
+        t.error(result, "#else without #if");
+        return true;
+    }
+    Feature* top = &t.feature_stack[t.feature_count];
+    if (top.is_else) {
+        t.error(result, "#else in #else");
+        return true;
+    }
+    top.is_else = true;
+    top.skipping ^= 1;
+    return false;
+}
+
+fn bool Tokenizer.handle_endif(Tokenizer* t, Token* result) {
+    if (t.feature_count == 0) {
+        t.error(result, "#endif without #if");
+        return true;
+    }
+    t.feature_count--;
+    return false;
+}
+
+fn bool Tokenizer.skip_feature(Tokenizer* t, Token* result) {
+    const char *p = t.cur;
+    for (;;) {
+        switch (*p++) {
+        case '\0':
+            Feature* top = &t.feature_stack[t.feature_count];
+            t.cur = t.input_start + (top.loc - t.loc_start);
+            t.error(result, "un-terminated %s", top.kind.str());
+            return true;
+        case '\n':
+            t.line_start = p;
+            break;
+        case '#':
+            t.cur = p - 1;
+            if (!t.at_bol())
+                break;
+            if (t.lex_feature_cmd(result)) return true;
+            if (t.is_enabled()) return false;
+            p = t.cur;
+            break;
+        case '"':
+        case '\'':
+            p = skip_string_literal(p - 1);
+            break;
+        case '`':
+            p = skip_raw_string_literal(p - 1);
+            break;
+        case '/':
+            if (*p == '/') {
+                p = skip_line_comment(p + 1);
+                break;
+            }
+            if (*p == '*') {
+                p = skip_block_comment(p + 1);
+                break;
+            }
+            break;
+        }
+    }
+}
+
+fn const char *skip_blanks(const char *p) {
+    while (isblank(*p)) p++;
+    return p;
+}
+
+fn const char *skip_string_literal(const char *p) {
+    char sep = *p++;
+
+    for (;;) {
+        switch (*p++) {
+        case '\0':
+        case '\n':
+            return p - 1;
+        case '\r':
+            return p;
+        case '"':
+        case '\'':
+            if (p[-1] == sep)
+                return p;
+            break;
+        case '\\':
+            if (*p == sep || *p == '\\')
+                p++;
+            break;
+        }
+    }
+}
+
+fn const char *skip_raw_string_literal(const char *p) {
+    u32 count;
+    for (count = 0; *p == '`'; count++) p++;
+
+    while (*p) {
+        if (*p++ == '`') {
+            u32 i;
+            for (i = 1; *p == '`'; i++) p++;
+            if (i >= count) break;
+        }
+    }
+    return p;
+}
+
+fn const char *skip_line_comment(const char *p) {
+    while (*p != '\0' && *p != '\r' && *p != '\n')
+        p++;
+    return p;
+}
+
+fn const char *skip_block_comment(const char *p) {
+    while (*p != '\0') {
+        if (*p == '*' && p[1] == '/') {
+            p += 2;
+            break;
+        }
+        p++;
+    }
+    return p;
+}
+
+fn u32 hexconv(const char* p, u32 maxn, u32* pc) {
+    u32 cc = 0;
+    u32 i;
+    for (i = 0; i < maxn; i++) {
+        i32 xval = 0;
+        char c = p[i];
+        if (c >= '0' && c <= '9')
+            xval = c - '0';
+        else
+        if (c >= 'a' && c <= 'f')
+            xval = c - 'a' + 10;
+        else
+        if (c >= 'A' && c <= 'F')
+            xval = c - 'A' + 10;
+        else
+            break;
+        cc = cc * 16 + xval;
+    }
+    *pc = cc;
+    return i;
+}
+
+fn u32 octconv(const char* p, u32 maxn, u32* pc) {
+    u32 cc = 0;
+    u32 i;
+    for (i = 0; i < maxn; i++) {
+        char c = p[i];
+        if (c >= '0' && c <= '7')
+            cc = cc * 8 + (c - '0');
+        else
+            break;
+    }
+    *pc = cc;
+    return i;
+}

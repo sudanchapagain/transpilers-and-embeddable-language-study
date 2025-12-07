@@ -1,0 +1,82 @@
+// @recipe bin
+    $warnings no-unused
+    $backend c
+
+// @file{file1}
+module test;
+
+fn i32 test1(char* str) {
+    switch (str) {
+    case "a":
+        return 1;
+    case "aa":
+        return 2;
+    case "aaa":
+    case "bbb":
+        return 3;
+    case nil:
+        return 4;
+    default:
+        break;
+    }
+    return 6;
+}
+
+fn void test2(char* str) {
+    switch (str) {
+    case nil:
+        break;
+    }
+}
+
+fn void test3(char* str) {
+    switch (str) {
+    case "\n":
+        break;
+    }
+}
+
+public fn i32 main(i32 argc, const char** argv) {
+    return 0;
+}
+
+// @expect{atleast, cgen/build.c}
+
+static int32_t test_test1(char* str);
+static void test_test2(char* str);
+
+static int32_t test_test1(char* str)
+{
+   switch (c2_strswitch(str, "\001a" "\002aa" "\003aaa" "\003bbb")) {
+   case 2: // "a"
+      return 1;
+   case 3: // "aa"
+      return 2;
+   case 4: // "aaa"
+      fallthrough;
+   case 5: // "bbb"
+      return 3;
+   case 0: // nil
+      return 4;
+   default:
+      break;
+   }
+   return 6;
+}
+
+static void test_test2(char* str)
+{
+   switch (c2_strswitch(str, "")) {
+   case 0: // nil
+      break;
+   }
+}
+
+static void test_test3(char* str)
+{
+   switch (c2_strswitch(str, "\001\n")) {
+   case 2: // "\n"
+      break;
+   }
+}
+

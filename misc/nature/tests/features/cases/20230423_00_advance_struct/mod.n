@@ -1,0 +1,8 @@
+type square = struct {
+    int length
+    int width
+}
+
+fn square.area():int {
+    return self.length * self.width
+}

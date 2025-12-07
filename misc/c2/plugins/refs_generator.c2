@@ -1,0 +1,254 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module refs_generator;
+
+import ast local;
+import ast_visitor;
+import c2refs as refs;
+import component;
+import console;
+import file_utils;
+import source_mgr;
+import string_utils local;
+
+import string;
+import stdlib;
+
+type Loc struct {
+    u32 line;
+    u32 column;
+}
+
+type LineCounter struct {
+    u32 count;
+    u32 cap;
+    u8* lengths;
+}
+
+fn void LineCounter.init(LineCounter* l) {
+    l.count = 0;
+    l.cap = 0;
+    l.resize(4096);
+}
+
+fn void LineCounter.free(LineCounter* l) {
+    stdlib.free(l.lengths);
+}
+
+fn void LineCounter.add(LineCounter* l, u32 len) {
+    assert(len <= 255);
+    if (l.count == l.cap) l.resize(l.cap * 2);
+
+    l.lengths[l.count++] = (u8)len;
+}
+
+fn void LineCounter.resize(LineCounter* l, u32 cap) {
+    l.cap = cap;
+    u8* lengths2 = stdlib.malloc(l.cap * sizeof(u8));
+    if (l.count) {
+        string.memcpy(lengths2, l.lengths, l.count);
+        stdlib.free(l.lengths);
+    }
+    l.lengths = lengths2;
+}
+
+fn Loc LineCounter.offset2loc(const LineCounter* l, u32 offset) {
+    // Note: offset should already be checked if it fits the file
+    u32 line = 0;
+    while (line < l.count) {
+        u8 line_len = l.lengths[line];
+        if (offset < line_len) break;
+        offset -= line_len;
+        line++;
+    }
+
+    // make line + column 1-based
+    Loc loc = { .line = line+1, .column = offset + 1}
+    return loc;
+}
+
+// offset 0 - line 1, column 1
+fn u32 LineCounter.loc2offset(const LineCounter* l, Loc loc) {
+    assert(loc.line != 0);
+    u32 offset = 0;
+    loc.line--;
+    for (u32 i = 0; i < loc.line; i++) {
+        offset += l.lengths[i];
+    }
+    return offset + loc.column - 1;
+}
+
+fn void LineCounter.handle(LineCounter* l, u32 size, const char* content) {
+    l.count = 0;
+
+    // Note: a line with just a newline is 1 byte long
+    u32 start = 0;
+    for (u32 i = 0; i < size; i++) {
+        if (content[i] == '\n') {
+            l.add(i - start + 1);
+            start = i + 1;
+        }
+    }
+    // note: dont need last line length
+}
+
+
+type Generator struct {
+    source_mgr.SourceMgr* sm;
+    refs.Refs* refs;
+    const char* curfile;
+    ast_visitor.Visitor* visitor;
+    LineCounter lines;
+}
+
+fn void Generator.on_decl(void* arg, Decl* d, bool global) {
+    Generator* gen = arg;
+
+    if (d.isImport()) return;
+
+    const char* name = d.getName();
+    if (name && global) {
+        gen.refs.add_symbol(d.getFullName(), d.getLoc());
+    }
+
+    switch (d.getKind()) {
+    case Function:
+        break;
+    case Import:
+        break;
+    case StructType:
+        break;
+    case EnumType:
+        EnumTypeDecl* etd = (EnumTypeDecl*)d;
+        EnumConstantDecl** constants = etd.getConstants();
+        for (u32 i=0; i<etd.getNumConstants(); i++) {
+            Decl* ecd = (Decl*)constants[i];
+            // NOTE: we add the symbol here, since we have the EnumDecl here
+            gen.refs.add_symbol(ecd.getFullName(), ecd.getLoc());
+            Generator.on_decl(arg, ecd, false);
+        }
+        return;
+    case EnumConstant:
+        break;
+    case FunctionType:
+        break;
+    case AliasType:
+        break;
+    case Variable:
+        break;
+    }
+
+    gen.visitor.handle(d);
+}
+
+fn void Generator.handleTypeRef(Generator* gen, const TypeRef* ref) {
+    const Ref* prefix = ref.getPrefix();
+    if (prefix) gen.handleRef(prefix);
+
+    const Ref* user = ref.getUser();
+    if (user) gen.handleRef(user);
+}
+
+fn void Generator.handleRef(Generator* gen, const Ref* ref) {
+    if (!ref.decl) {
+        console.warn("refs: Type Decl not set!");
+        return;
+    }
+    u16 len = (u16)string.strlen(idx2name(ref.name_idx));
+    assert(len <= 32);
+    gen.refs.add_link(ref.loc, ref.decl.getLoc(), len);
+}
+
+fn void Generator.on_global_decl(void* arg, Decl* d) {
+    Generator.on_decl(arg, d, true);
+}
+
+fn void Generator.on_static_assert(void* arg, StaticAssert* d) {
+    Generator* gen = arg;
+    gen.visitor.handleAssert(d);
+}
+
+fn void Generator.on_ast(void* arg, AST* a) {
+    if (a.isGenerated()) return;
+
+    Generator* gen = arg;
+    gen.curfile = a.getFilename();
+    gen.refs.start_file(gen.curfile);
+
+    a.visitDecls(Generator.on_global_decl, arg); // globals
+    a.visitStaticAsserts(Generator.on_static_assert, arg);
+
+    gen.refs.end_file();
+}
+
+fn void Generator.on_module(void* arg, Module* m) {
+    if (!m.isUsed()) return;
+    m.visitASTs(Generator.on_ast, arg);
+}
+
+fn void Generator.on_ref(void* arg, const Ref* ref) {
+    Generator* gen = arg;
+    gen.handleRef(ref);
+}
+
+fn void Generator.on_file(void* arg, u32 start, u32 size, const char* filename, const char* contents) {
+    Generator* gen = arg;
+
+    u32 len_start = 0;
+    u32 len_count = 0;
+
+    if (!endsWith(filename, ".c2") && !endsWith(filename, ".c2i")) {
+        filename = "-";
+    } else {
+        gen.lines.handle(size, contents);
+        len_count = gen.lines.count;
+        len_start = gen.refs.add_line_lengths(len_count, gen.lines.lengths);
+    }
+
+    gen.refs.add_file(start, size, filename, len_start, len_count);
+}
+
+fn void Generator.init(Generator* gen, source_mgr.SourceMgr* sm) {
+    gen.sm = sm;
+    gen.refs = refs.Refs.create(sm.getNumFiles());
+    gen.lines.init();
+    gen.curfile = nil;
+    gen.visitor = ast_visitor.create(gen, Generator.on_ref);
+}
+
+fn void Generator.free(Generator* gen) {
+    gen.visitor.free();
+    gen.lines.free();
+    gen.refs.free();
+}
+
+public fn void generate(source_mgr.SourceMgr* sm, const char* output_dir, component.List* comps, const char* filename) {
+    Generator gen.init(sm);
+
+    // for each file, store:  start, size, filename. Store line lengths
+    sm.visitFiles(&gen, Generator.on_file);
+
+    for (u32 i=0; i<comps.size(); i++) {
+        comps.get(i).visitModules(Generator.on_module, &gen);
+    }
+
+    char[file_utils.Max_path] outfile;
+    file_utils.make_path(outfile, elemsof(outfile), output_dir, filename);
+    gen.refs.write(outfile);
+
+    gen.free();
+}
+

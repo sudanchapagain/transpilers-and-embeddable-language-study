@@ -1,0 +1,2 @@
+module main;        // @error{module name 'main' is reserved}
+

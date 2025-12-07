@@ -1,0 +1,18 @@
+// @warnings{no-unused}
+module test;
+
+type Array2Dim char[50][50];
+Array2Dim array2par;
+
+fn void test1() {
+    char* a = array2par[2];
+}
+
+fn void test2() {
+    char** a = array2par;   // @error{invalid type conversion from '(alias)test.Array2Dim => char[50][50]' to 'char**'}
+}
+
+fn void test3() {
+    char* a = array2par;  // @error{invalid type conversion from '(alias)test.Array2Dim => char[50][50]' to 'char*'}
+}
+

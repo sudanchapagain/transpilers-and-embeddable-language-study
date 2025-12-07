@@ -1,0 +1,213 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module c_generator;
+
+import ast local;
+import printf_utils;
+import source_mgr;
+import src_loc local;
+import string_buffer;
+import string;
+
+fn void Generator.emitCall(Generator* gen, string_buffer.Buf* out, Expr* e) {
+    CallExpr* call = (CallExpr*)e;
+    bool is_tf = call.isTypeFunc();
+
+    Decl* dest;
+    if (call.isTemplateCall()) {
+        Expr* func = call.getFunc();
+        QualType qt = func.getType();
+        FunctionType* ft = qt.getFunctionTypeOrNil();
+        FunctionDecl* template_fd = ft.getDecl();
+        u32 idx = call.getTemplateIdx();
+        FunctionDecl* instance = gen.mod.getInstance(template_fd, idx);
+        assert(instance);
+
+        dest = instance.asDecl();
+        if (!dest.isGenerated()) {
+            gen.emitFunction(instance);
+            instance.asDecl().setGenerated();
+        }
+        gen.emitDeclName(out, dest);
+        out.lparen();
+    } else {
+        Expr* func = call.getFunc();
+        if (func.getKind() == ExprKind.ImplicitCast) {
+            ImplicitCastExpr* ic = (ImplicitCastExpr*)func;
+            func = ic.getInner();
+        }
+
+        if (is_tf || call.isStaticTypeFunc()) {
+            assert(func.getKind() == ExprKind.Member);
+            MemberExpr* m = (MemberExpr*)func;
+            dest = m.getFullDecl();
+            if (gen.trace_calls && !gen.no_trace) {
+                out.print("(c2_trace_counts[%d]++, ",
+                          gen.addCall(dest.getFullName(), call.getStartLoc()));
+                gen.emitCNameMod(out, dest, dest.getModule());
+                out.add1(')');
+            } else {
+                gen.emitCNameMod(out, dest, dest.getModule());
+            }
+            out.lparen();
+            if (is_tf) {
+                // Do auto-conversions if needed (Foo -> Foo*, Foo* -> Foo)
+                switch (m.getConversion()) {
+                case None:
+                    break;
+                case Addr:
+                    out.add1('&');
+                    break;
+                case Deref:
+                    out.add1('*');
+                    break;
+                }
+                gen.emitMemberExprBase(out, func);
+            }
+        } else {
+            bool no_trace = gen.no_trace;
+            // can be Member or Identifier
+            if (func.getKind() == ExprKind.Identifier) {
+                IdentifierExpr* i = (IdentifierExpr*)func;
+                // do not trace calls to va_start, va_arg, va_end...
+                const char *name = i.getName();
+                if (name && name[0] == 'v' && name[1] == 'a' && name[2] == '_')
+                    no_trace = true;
+                dest = i.getDecl();
+            } else if (func.getKind() == ExprKind.Member) {
+                MemberExpr* m = (MemberExpr*)func;
+                dest = m.getFullDecl();
+            } else {
+                func.dump();
+                assert(0);
+            }
+            if (gen.trace_calls && !no_trace) {
+                out.print("(c2_trace_counts[%d]++, ",
+                          gen.addCall(dest.getFullName(), call.getStartLoc()));
+                gen.emitExpr(out, func);
+                out.add1(')');
+            } else {
+                gen.emitExpr2(out, func, Postfix);
+            }
+            out.lparen();
+        }
+    }
+
+    assert(dest);
+    // Note: dest can be FunctionDecl or VarDecl (in case of function pointers)
+
+    bool needs_comma = is_tf;
+    u32 call_num_args = call.getNumArgs();
+    Expr** args = call.getArgs();
+
+    FunctionDecl* fd = get_function(dest);
+    u32 func_num_args = fd.getNumParams();
+    VarDecl** func_args = fd.getParams();
+    u32 format_idx = call.needFormatChange() ? call.getPrintfFormat() : 1000;
+
+    u32 call_index = 0;
+    u32 func_index = 0;
+    if (is_tf) func_index++;
+    source_mgr.Location loc;
+    if (call.hasAutoArgs()) loc = gen.sm.locate(e.getLoc());
+
+    while (1) {
+        if (func_index == func_num_args && call_index == call_num_args) break;
+        if (func_index < func_num_args) {
+            VarDecl* vd = func_args[func_index];
+            if (needs_comma) out.add(", ");
+            if (vd.hasAutoAttr()) {
+
+                if (vd.hasAttrAutoFile()) {
+                    out.print("\"%s\"", loc.filename);
+                }
+                if (vd.hasAttrAutoLine()) {
+                    out.print("%d", loc.line);
+                }
+                if (vd.hasAttrAutoFunc()) {
+                    out.print("\"%s\"", gen.cur_function.asDecl().getFullName());
+                }
+                needs_comma = true;
+                func_index++;
+                continue;
+            }
+
+            if (call_index == format_idx) {
+                SrcLoc format_loc;
+                Expr* format = args[call_index++];
+                assert(format.isImplicitCast());
+                ImplicitCastExpr* ic = (ImplicitCastExpr*)format;
+                if (!ic.isArrayToPointerDecay()) return;
+                format = ic.getInner();
+                const char* format_text = printf_utils.get_format(format, &format_loc);
+                assert(format_text);
+
+                FormatChanger fc = { format_text, &args[call_index], 0, 0, out }
+                out.add1('"');
+                printf_utils.parseFormat(format_text, on_format_specifier, &fc);
+                out.encodeBytes(format_text + fc.last_offset,
+                                (u32)(string.strlen(format_text + fc.last_offset)), '"');
+                out.add1('"');
+            } else {
+                Expr* arg;
+                Decl* d = vd.asDecl();
+
+                if (call_index < call_num_args) {
+                    arg = args[call_index++];
+                    if (arg.isNamedArgument()) {
+                        NamedArgument* n = (NamedArgument*)arg;
+                        u32 arg_name_idx = n.getNameIdx();
+                        if (d.getNameIdx() == arg_name_idx) {
+                            arg = n.getInner();
+                        } else {
+                            call_index--;
+                            arg = vd.getInit();
+                        }
+                    }
+                } else {
+                    arg = vd.getInit();
+                }
+                if (arg.isInitList()) {
+                    gen.emitCast(out, d.getType(), true);
+                }
+                gen.emitExpr(out, arg);
+            }
+            needs_comma = true;
+            func_index++;
+        } else {
+            // varargs, just emit
+            if (needs_comma) out.add(", ");
+            gen.emitExpr(out, args[call_index]);
+            call_index++;
+            needs_comma = true;
+        }
+    }
+    out.rparen();
+}
+
+fn FunctionDecl* get_function(Decl* dest) {
+    // Can also be VarDecl in case of callbacks
+    if (dest.getKind() == DeclKind.Variable) {
+        QualType qt = dest.getType();
+        assert(qt.isFunction());
+        FunctionType* ft = qt.getFunctionType();
+        FunctionDecl* fd = ft.getDecl();
+        dest = (Decl*)fd;
+    }
+    assert(dest.getKind() == DeclKind.Function);
+    return (FunctionDecl*)dest;
+}
+

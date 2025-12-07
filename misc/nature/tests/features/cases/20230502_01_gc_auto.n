@@ -1,0 +1,29 @@
+import co
+import runtime
+
+fn alloc():[i64] {
+    i16 a = 16
+    i32 b = 32
+    [i64] list = []
+    i64 c = 64
+    for int i = 0; i < 10000; i+=1 {
+        list.push(i)
+    }
+    u32 d = 321
+    u64 e = 1000000
+    return list
+}
+
+fn main() {
+    var list = alloc()
+    var before = runtime.malloc_bytes()
+
+    co.sleep(2000) // wait gc completed
+
+    var take = list[9999]
+    var after = runtime.malloc_bytes()
+    println(before, take, after)
+    assert(before > 200000 && after < 300000)
+    assert(take == 9999)
+    assert(after < 200000 && after > 100000)
+}

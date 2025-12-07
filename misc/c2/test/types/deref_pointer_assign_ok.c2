@@ -1,0 +1,8 @@
+// @warnings{no-unused}
+module test;
+
+fn void test1() {
+    i32* p;
+    *p = 10;
+}
+

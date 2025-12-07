@@ -1,0 +1,15 @@
+^neo_doxygen
+test_docdown
+test_neo
+test_phase
+test_parser
+test_highlight
+test_model_visitor
+test_model_index
+test_loader
+get_mclasses
+^nit
+test_astbuilder
+test_astprinter
+module_fictive
+module_injected

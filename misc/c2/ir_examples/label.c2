@@ -1,0 +1,32 @@
+module test;
+
+fn i32 test1(i32 a) {
+    while (a > 0) {
+begin:
+        if (a > 10) {
+            a++;
+            goto end;
+        } else {
+            a--;
+            goto begin;
+        }
+    }
+end:
+    return a;
+}
+
+public fn i32 test2() {
+    i32 a;
+    while (1) {
+label:
+    }
+    return 0;
+}
+
+public fn i32 main() {
+    test1(3);
+    test2();
+    return 0;
+}
+
+

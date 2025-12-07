@@ -1,0 +1,97 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import string_buffer;
+import src_loc local;
+
+type EnumConstantDeclBits struct {
+    u32 : NumDeclBits;
+    u32 has_init : 1;
+    u32 enum_index : 12;
+}
+
+public type EnumConstantDecl struct @(opaque) {
+    Decl base;
+    Value value;
+    Expr*[0] init;  // tail-allocated
+}
+
+public fn EnumConstantDecl* EnumConstantDecl.create(ast_context.Context* c,
+                                                      u32 name,
+                                                      SrcLoc loc,
+                                                      bool is_public,
+                                                      u32 ast_idx,
+                                                      Expr* initValue)
+{
+    u32 size = sizeof(EnumConstantDecl);
+    if (initValue) size += sizeof(Expr*);
+    EnumConstantDecl* d = c.alloc(size);
+    d.base.init(DeclKind.EnumConstant, name, loc, is_public, QualType_Invalid, ast_idx);
+    d.value.setUnsigned(0);
+    if (initValue) {
+        d.base.enumConstantDeclBits.has_init = 1;
+        d.init[0] = initValue;
+    }
+#if AstStatistics
+    Stats.addDecl(DeclKind.EnumConstant, size);
+#endif
+    return d;
+}
+
+public fn Decl* EnumConstantDecl.asDecl(EnumConstantDecl* d) {
+    return &d.base;
+}
+
+public fn Value EnumConstantDecl.getValue(const EnumConstantDecl* d) {
+    return d.value;
+}
+
+public fn void EnumConstantDecl.setValue(EnumConstantDecl* d, Value value) {
+    d.value = value;
+}
+
+public fn void EnumConstantDecl.setIndex(EnumConstantDecl* d, u32 index) {
+    d.base.enumConstantDeclBits.enum_index = index;
+}
+
+public fn u32 EnumConstantDecl.getIndex(const EnumConstantDecl* d) @(unused) {
+    return d.base.enumConstantDeclBits.enum_index;
+}
+
+public fn Expr* EnumConstantDecl.getInit(const EnumConstantDecl* d) {
+    if (d.base.enumConstantDeclBits.has_init) return d.init[0];
+    return nil;
+}
+
+public fn Expr** EnumConstantDecl.getInit2(EnumConstantDecl* d) {
+    if (d.base.enumConstantDeclBits.has_init) return &d.init[0];
+    return nil;
+}
+
+fn void EnumConstantDecl.print(const EnumConstantDecl* d, string_buffer.Buf* out, u32 indent) {
+    d.base.printKind(out, indent, true);
+    d.base.printBits(out);
+    d.base.printName(out);
+
+    out.color(col_Calc);
+    out.print(" [%d] %s", d.getIndex(), d.value.str());
+    out.newline();
+
+    if (d.base.enumConstantDeclBits.has_init) d.init[0].print(out, indent + 1);
+}
+

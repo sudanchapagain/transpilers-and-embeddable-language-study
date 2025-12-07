@@ -1,0 +1,45 @@
+// @recipe bin
+    $warnings no-unused
+    $backend c
+
+// @file{file1}
+module test;
+
+public fn i32 main(i32 argc, const char** argv) {
+    i32 a = 0;
+    if (a) {}
+
+    if (a)
+        if (i32 b = 10)
+            return 0;
+        else
+            return 1;
+
+    if (false) {
+        return 2;
+    }
+
+    return 0;
+}
+
+// @expect{atleast, cgen/build.c}
+
+int32_t main(int32_t argc, const char** argv)
+{
+    int32_t a = 0;
+    if (a) {
+    }
+
+    if (a) {
+        int32_t b = 10;
+        if (b) return 0;
+        else return 1;
+    }
+
+    if (false) {
+        return 2;
+    }
+
+    return 0;
+}
+

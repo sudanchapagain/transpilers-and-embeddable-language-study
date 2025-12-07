@@ -1,0 +1,387 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module process_utils;
+
+import file_utils;
+
+import ctype local;
+import string local;
+import stdarg local;
+import stdio local;
+import unistd local;
+import c_errno local;
+import sys_stat local;
+import stdlib local;
+import libc_fcntl local;
+
+const u32 MAX_ARG_LEN = 512;
+const u32 MAX_ARGS = 16;
+
+// TEMP here since C2C doesn't support implemented functions in libs (yet)
+fn bool doWIFSIGNALED(i32 state) {
+    return ((state & 0x7F) > 0 && (state & 0x7F) < 0x7F);
+}
+
+fn bool doWIFEXITED(i32 state) {
+    return ((state & 0xff) == 0);
+}
+
+fn char getWEXITSTATUS(i32 state) {
+    return (char)((state >> 8) & 0xff);
+}
+
+fn void child_error(i32 fd, const char* format @(printf_format), ...) @(noreturn) {
+    char[256] msg;
+    va_list args;
+    va_start(args, format);
+    i32 res = vsnprintf(msg, sizeof(msg), format, args);
+    va_end(args);
+    if (res >= 0) {
+        usize len = (usize)res;
+        msg[len++] = '\n';
+        msg[len] = '\0';
+        write(fd, msg, len);
+        fsync(fd);
+        fprintf(stderr, "[exec] %s\n", msg);
+        fflush(stderr);
+    }
+    _exit(EXIT_FAILURE);      // don't call atexit functions
+}
+
+public fn i32 run_args(const char* path, const char* cmd, const char* args, const char* logfile)
+{
+    // run a command in a child process
+    // - stdout and stderr are redirected together to a logfile
+
+    // flush all streams before forking to avoid duplicate output
+    fflush(nil);
+
+    i32[2] error_pipe;  // pipe for errors from the child process
+    if (pipe(error_pipe)) {
+        fprintf(stderr, "pipe() failed: %s\n", strerror(errno));
+        return -1;
+    }
+
+    // make error_pipe[1] close on exec so it does not need to be closed
+    // before exec() and error message for exec failure can be passed to parent
+    if (fcntl(error_pipe[1], F_SETFD, FD_CLOEXEC)) {
+        fprintf(stderr, "fcncl(FD_CLOEXEC) failed: %s\n", strerror(errno));
+        close(error_pipe[0]);
+        close(error_pipe[1]);
+        return -1;
+    }
+
+    Pid child_pid = fork();
+    if (child_pid == -1) {
+        fprintf(stderr, "fork() failed: %s\n", strerror(errno));
+        close(error_pipe[0]);
+        close(error_pipe[1]);
+        return -1;
+    }
+
+    if (child_pid == 0) {   // child
+
+        // close the reading end of the error pipe
+        close(error_pipe[0]);
+
+        // redirect output to logfile
+        char[file_utils.Max_path] filename;
+        file_utils.make_path(filename, elemsof(filename), path, logfile);
+        close(STDOUT_FILENO);
+        i32 fdout = open(filename, O_TRUNC | O_CREAT | O_WRONLY, 0644);
+        if (fdout == -1) {
+            child_error(error_pipe[1], "cannot open output '%s': %s", filename, strerror(errno));
+        }
+
+        // redirect stderr to stdout
+        while (dup2(STDOUT_FILENO, STDERR_FILENO) == -1) {
+            if (errno != EINTR)
+                child_error(error_pipe[1], "dup2(): %s", strerror(errno));
+        }
+
+        // change to working dir
+        if (path && *path) {
+            char *cwd = getcwd(nil, 0);
+            printf("current dir: %s\n", cwd);
+            free(cwd);
+
+            if (chdir(path) != 0) {
+                child_error(error_pipe[1], "cannot change to dir '%s': %s", path, strerror(errno));
+            }
+            printf("changing to dir: %s\n", path);
+        }
+
+        char[file_utils.Max_path] self;
+        if (!find_bin(self, elemsof(self), cmd)) {
+            child_error(error_pipe[1], "command not found: %s", cmd);
+        }
+
+        char*[MAX_ARGS + 2] argv;
+        char[MAX_ARG_LEN] argbuf;
+        u32 argc = 0;
+        argv[argc++] = self;   // should be (char*)cmd
+        if (args && *args) {
+            argc += parseArgs(args, &argv[1], MAX_ARGS, argbuf, elemsof(argbuf));
+        }
+        argv[argc] = nil;
+
+        printf("running command: %s %s\n", cmd, args ? args : "");
+        fflush(stdout);
+
+        execv(self, argv);
+        i32 lasterr = errno;
+        fprintf(stderr, "failed to start %s: %s\n", cmd, strerror(lasterr));
+        child_error(error_pipe[1], "error starting %s: %s", cmd, strerror(lasterr));
+        _exit(-1);  // to satisfy compiler
+    } else {    // parent
+        // close the writing end of the error pipe
+        close(error_pipe[1]);
+        char[256] error;
+        isize numread = read(error_pipe[0], error, sizeof(error)-1);
+        if (numread < 0) {
+            fprintf(stderr, "Error reading pipe\n");
+            close(error_pipe[0]);
+            return -1;
+        }
+        error[numread] = '\0';
+        close(error_pipe[0]);
+
+        if (numread != 0) {
+            //errorMsg = error;
+            // always give error
+            return -1;
+        }
+
+        // TODO handle output larger than pipe buffer length
+        i32 state = 0;
+        Pid pid = waitpid(child_pid, &state, 0);
+        if (pid == -1) {
+            fprintf(stderr, "Error waiting for pid: %s\n", strerror(errno));
+            return -1;
+        }
+        if (doWIFSIGNALED(state)) {
+            //bool termsig = WTERMSIG(state);
+            //bool coredump = WCOREDUMP(state);
+            //fprintf(stderr, "child was SIGNALED: term=%d core=%d\n", termsig, coredump);
+            return -1;
+        }
+        if (doWIFEXITED(state)) { // normal termination)
+            char exitcode = getWEXITSTATUS(state);
+            //fprintf(stderr, "child exited NORMALLY, exitcode=%d\n", exitcode);
+            if (exitcode != 0) return -1;
+        } else {
+            //fprintf(stderr, "child exited ABNORMALLY\n");
+            return -1;
+        }
+    }
+    return 0;
+}
+
+fn u32 parseArgs(const char* args, char** argv, u32 maxargs, char *tmp, usize tmp_size) {
+    // TODO accept quoted arguments
+    u32 argc = 0;
+    usize len = strlen(args);
+    if (len >= tmp_size)
+        len = tmp_size - 1;
+    memcpy(tmp, args, len);
+    tmp[len] = '\0';
+
+    char* token = strtok(tmp, " ");
+    while (argc + 1 < maxargs && token) {
+        argv[argc++] = token;
+        token = strtok(nil, " ");
+    }
+    argv[argc] = nil;
+    return argc;
+}
+
+/* Find file in one of the PATH directories */
+fn const char* find_bin(char *dest, usize size, const char* name) {
+    Stat statbuf;
+    const char *s = getenv("PATH");
+    if (!s) s = "";
+    for (;;) {
+        i32 len = 0;
+        while (s[len] && s[len] != ':')
+            len++;
+        i32 len2 = (len > 0 && s[len - 1] != '/');
+        i32 len3 = snprintf(dest, size, "%.*s%.*s%s", len, s, len2, "/", name);
+        if ((usize)len3 < size && stat(dest, &statbuf) == 0)
+            return dest;
+        s += len;
+        if (!*s++)
+            break;
+    }
+    return nil;
+}
+
+public fn i32 run2(const char* path, const char* cmd, const char* args, char* output, usize output_size)
+@(unused)
+{
+    // run a command in a child process
+    // - stdout and stderr are redirected together and captured into the `output` buffer
+    // TODO merge with run_args.
+
+    // flush all streams before forking to avoid duplicate output
+    fflush(nil);
+
+    i32[2] error_pipe;  // pipe for errors from the child process
+    if (pipe(error_pipe)) {
+        fprintf(stderr, "pipe() failed: %s\n", strerror(errno));
+        return -1;
+    }
+
+    // make error_pipe[1] close on exec so it does not need to be closed
+    // before exec() and error message for exec failure can be passed to parent
+    if (fcntl(error_pipe[1], F_SETFD, FD_CLOEXEC)) {
+        fprintf(stderr, "fcncl(FD_CLOEXEC) failed: %s\n", strerror(errno));
+        close(error_pipe[0]);
+        close(error_pipe[1]);
+        return -1;
+    }
+
+    i32[2] output_pipe; // for command output to stdout and stderr
+    if (pipe(output_pipe)) {
+        fprintf(stderr, "pipe() failed: %s\n", strerror(errno));
+        close(error_pipe[0]);
+        close(error_pipe[1]);
+        return -1;
+    }
+
+    Pid child_pid = fork();
+    if (child_pid == -1) {
+        fprintf(stderr, "fork() failed: %s\n", strerror(errno));
+        close(error_pipe[0]);
+        close(error_pipe[1]);
+        close(output_pipe[0]);
+        close(output_pipe[1]);
+        return -1;
+    }
+
+    if (child_pid == 0) {   // child
+
+        // close the reading end of both pipes
+        close(output_pipe[0]);
+        close(error_pipe[0]);
+
+        // redirect stdout to output_pipe[1]
+        while (dup2(output_pipe[1], STDOUT_FILENO) == -1) {
+            if (errno != EINTR)
+                child_error(error_pipe[1], "dup(): %s", strerror(errno));
+        }
+        close(output_pipe[1]);
+
+        // redirect stderr to stdout
+        while (dup2(STDOUT_FILENO, STDERR_FILENO) == -1) {
+            if (errno != EINTR)
+                child_error(error_pipe[1], "dup2(): %s", strerror(errno));
+        }
+
+        // change to working dir
+        if (path && *path) {
+            if (chdir(path) != 0) {
+                child_error(error_pipe[1], "cannot change to dir '%s': %s", path, strerror(errno));
+            }
+        }
+
+        char[file_utils.Max_path] self;
+        if (!find_bin(self, elemsof(self), cmd)) {
+            child_error(error_pipe[1], "command not found: %s", cmd);
+        }
+
+        char*[MAX_ARGS + 2] argv;
+        char[MAX_ARG_LEN] argbuf;
+        u32 argc = 0;
+        argv[argc++] = self;   // should be (char*)cmd
+        if (args && *args) {
+            argc += parseArgs(args, &argv[1], MAX_ARGS, argbuf, elemsof(argbuf));
+        }
+        argv[argc] = nil;
+
+        execv(self, argv);
+        i32 lasterr = errno;
+        fprintf(stderr, "failed to start %s: %s\n", cmd, strerror(lasterr));
+        child_error(error_pipe[1], "error starting %s: %s", cmd, strerror(lasterr));
+        _exit(-1);  // to satisfy compiler
+    } else { // parent
+        // close the writing end of both pipes
+        close(error_pipe[1]);
+        close(output_pipe[1]);
+        char[256] error;
+        isize numread = read(error_pipe[0], error, sizeof(error)-1);
+        if (numread < 0) {
+            fprintf(stderr, "Error reading pipe\n");
+            close(error_pipe[0]);
+            close(output_pipe[0]);
+            return -1;
+        }
+        error[numread] = '\0';
+        close(error_pipe[0]);
+
+        if (numread != 0) {
+            printf("ERROR %s\n", error);
+            //errorMsg = error;
+            // always give error
+            close(output_pipe[0]);
+            return -1;
+        }
+
+        // TODO handle output larger than pipe buffer length
+        i32 state = 0;
+        Pid pid = waitpid(child_pid, &state, 0);
+        if (pid == -1) {
+            fprintf(stderr, "Error waiting for pid: %s\n", strerror(errno));
+            close(output_pipe[0]);
+            return -1;
+        }
+        if (doWIFSIGNALED(state)) {
+            //bool termsig = WTERMSIG(state);
+            //bool coredump = WCOREDUMP(state);
+            //fprintf(stderr, "child was SIGNALED: term=%d core=%d\n", termsig, coredump);
+            close(output_pipe[0]);
+            return -1;
+        }
+        if (doWIFEXITED(state)) { // normal termination)
+            char exitcode = getWEXITSTATUS(state);
+            //fprintf(stderr, "child exited NORMALLY, exitcode=%d\n", exitcode);
+            if (exitcode != 0) return -1;
+            // capture process output to output buffer
+            numread = read(output_pipe[0], output, output_size - 1);
+            if (numread < 0) {
+                fprintf(stderr, "error reading process output\n");
+                close(output_pipe[0]);
+                return -1;
+            }
+            output[numread] = '\0';
+            // strip leading and trailing whitespace
+            while (numread > 0 && isspace(output[numread - 1]))
+                output[--numread] = '\0';
+            usize skip = 0;
+            while (isspace(output[skip]))
+                skip++;
+            if (skip) {
+                numread -= skip;
+                memmove(output, output + skip, (u32)numread + 1);
+            }
+        } else {
+            fprintf(stderr, "child exited ABNORMALLY\n");
+            close(output_pipe[0]);
+            return -1;
+        }
+        close(output_pipe[0]);
+    }
+    return 0;
+}

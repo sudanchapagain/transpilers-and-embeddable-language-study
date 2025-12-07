@@ -1,0 +1,240 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module string_pool;
+
+import string;
+import stdlib;
+import stdio;
+
+#if 1
+/* 32-bit pools can store up to 32K unique string for a combined length of 512KB */
+type HashEntry u32;
+const u32 NEXT_SHIFT = 17;
+const u32 INDEX_BITS = (1 << NEXT_SHIFT) - 1;
+const u32 INDEX_SHIFT = 2;
+const u32 DATA_ALIGN = 1 << INDEX_SHIFT;
+#else
+/* 64-bit pools can store up to 4G unique string for a combined length of 4GB */
+type HashEntry u64;
+const u32 NEXT_SHIFT = 32;
+const u64 INDEX_BITS = 0xffffffff;
+const u32 INDEX_SHIFT = 0;
+const u32 DATA_ALIGN = 1 << INDEX_SHIFT;
+#endif
+
+public type Pool struct @(opaque) {
+    u32 data_size;      // number of bytes used
+    u32 data_capacity;
+    char* data;
+
+    // statistics
+    u32 num_adds;
+    u32 total_size;     // total size that would have been allocated without filtering
+
+    // Hashtable
+    u32 hash_count;
+    u32 hash_mask;
+    u32 entry_size;     // index of the first available entry after hash table
+    u32 entry_capacity;
+    HashEntry* entries; // contain hash table followed by collision lists
+}
+static_assert(48, sizeof(Pool));
+
+public fn Pool* create(u32 data_capacity, u32 hash_size) {
+    Pool* p = stdlib.calloc(1, sizeof(Pool));
+    p.resize_data(data_capacity);
+    p.data[0] = 0;
+    p.data_size = DATA_ALIGN; // store empty string at index 0
+
+    /* round hash_capacity to the next power of 2, at least 256 */
+    if (hash_size & (hash_size - 1)) {
+        hash_size |= hash_size >> 16;
+        hash_size |= hash_size >> 8;
+        hash_size |= hash_size >> 4;
+        hash_size |= hash_size >> 2;
+        hash_size |= hash_size >> 1;
+        hash_size += 1;
+    }
+    if (hash_size < 256)
+        hash_size = 256;
+    /* allocate empty hash table with extra space for collision lists */
+    p.hash_mask = hash_size - 1;
+    p.entry_size = hash_size;
+    p.entry_capacity = hash_size * 2;
+    p.entries = stdlib.calloc(p.entry_capacity, sizeof(HashEntry));
+
+    return p;
+}
+
+public fn void Pool.free(Pool* p) {
+    stdlib.free(p.entries);
+    stdlib.free(p.data);
+    stdlib.free(p);
+}
+
+const u32 HASH_INITIAL = 13;
+const u32 HASH_PRIME = 17;
+
+fn u32 hash(const char* text, usize len) {
+    // FNV-1a hash
+    u32 result = HASH_INITIAL;
+    for (u32 i=0; i<len; i++) {
+        result = result ^ text[i];
+        result *= HASH_PRIME;
+    }
+    return result;
+}
+
+public fn const char* Pool.idx2str(const Pool* p, u32 idx) {
+    return p.data + idx;
+}
+
+// NOTE: right might NOT be 0-terminated!
+fn bool same_string(const char* left, const char* right, usize rlen) {
+    // cannot use memcmp because rlen bytes might not be accessible from left
+    for (u32 i = 0; i < rlen; i++) {
+        if (left[i] != right[i])
+            return false;
+    }
+    return (left[rlen] == '\0');
+}
+
+// NOTE: text is not 0-terminated!! len is strlen(text)
+public fn u32 Pool.add(Pool* p, const char* text, usize len, bool filter) {
+    p.num_adds++;
+    p.total_size += len + 1;
+
+    if (filter) {
+        usize i = hash(text, len) & p.hash_mask;
+        HashEntry v = p.entries[i];
+        if (v != 0) {
+            HashEntry next;
+            /* scan the list */
+            for (;;) {
+                u32 index = (v & INDEX_BITS) << INDEX_SHIFT;
+                const char* word = p.data + index;
+                if (same_string(word, text, len))
+                    return index;
+                next = v >> NEXT_SHIFT;
+                if (next == 0)
+                    break;
+                i = next;
+                v = p.entries[i];
+            }
+            next = p.entry_size;
+            if (next == p.entry_capacity) {
+                p.resize_entries(p.entry_capacity * 2);
+            }
+            p.entries[i] = v | (next << NEXT_SHIFT);
+            p.entry_size++;
+            i = next;
+        }
+        p.entries[i] = (p.data_size >> INDEX_SHIFT);
+        p.hash_count++;
+    }
+
+    while (p.data_size + len + 1 > p.data_capacity) {
+        if (text >= p.data && text < p.data + p.data_size) {
+            /* adding a fragment from an existing word in the array */
+            // NOTE: users should NOT keep pointers to data, because reallocating will move the array
+            isize offset = text - p.data;
+            p.resize_data(p.data_capacity * 2);
+            text = p.data + offset;
+        } else {
+            p.resize_data(p.data_capacity * 2);
+        }
+    }
+    u32 idx = p.data_size;
+    char* dest = p.data + idx;
+    string.memcpy(dest, text, len);
+    dest[len] = 0;
+    p.data_size += len / DATA_ALIGN * DATA_ALIGN + DATA_ALIGN;
+    //assert(p.data_size <= p.data_capacity);
+    return idx;
+}
+
+public fn u32 Pool.addStr(Pool* p, const char* text, bool filter) {
+    return p.add(text, string.strlen(text), filter);
+}
+
+fn void Pool.resize_data(Pool* p, u32 capacity) {
+    p.data_capacity = capacity;
+    char* data2 = stdlib.malloc(capacity);
+    if (p.data_size) {
+        string.memcpy(data2, p.data, p.data_size);
+        stdlib.free(p.data);
+    }
+    p.data = data2;
+}
+
+fn void Pool.resize_entries(Pool* p, u32 capacity) {
+    HashEntry* entries = stdlib.malloc(capacity * sizeof(HashEntry));
+    if (p.entries) {
+        string.memcpy(entries, p.entries, p.entry_size * sizeof(HashEntry));
+        stdlib.free(p.entries);
+    }
+    p.entry_capacity = capacity;
+    p.entries = entries;
+}
+
+public fn void Pool.report(const Pool* p, const char* name) @(unused) {
+    u32 max = 0;
+    u32 min = 999;
+    u32 hash_size = p.hash_mask + 1;
+    u32 count = 0;
+    u32[256] cc = {}
+    for (u32 i = 0; i < hash_size; i++) {
+        HashEntry v = p.entries[i];
+        if (v != 0) {
+            u32 num = 1;
+            while (v >> NEXT_SHIFT) {
+                num++;
+                v = p.entries[v >> NEXT_SHIFT];
+            }
+            count += num;
+            if (num < 256) cc[num]++;
+            if (num) {
+                if (num > max) max = num;
+                if (num < min) min = num;
+                //stdio.printf("[%4d] %d\n", i, num);
+            }
+        }
+    }
+    stdio.printf("%s: count %d, adds %d, data %d/%d\n", name,
+                 p.hash_count, p.num_adds, p.data_size, p.data_capacity);
+
+    stdio.printf("  hash: entries: %d/%d/%d/%d, min %d, max %d, avg %.2f, memory %d\n",
+                 hash_size, count, p.entry_size, p.entry_capacity,
+                 min, max, count ? (count + 0.0) / (hash_size - cc[0]) : 0.0,
+                 p.entry_capacity * sizeof(HashEntry));
+    stdio.printf("  buckets: %d", cc[0]);
+    for (u32 i = 1; i <= max; i++)
+        stdio.printf(", %d", cc[i]);
+    stdio.printf("\n");
+
+#if 0
+    const char* end = p.data + p.data_size;
+    const char* cp = p.data;
+    u32 idx = 0;
+    while (cp < end) {
+        stdio.printf("  [%5u] %s\n", idx, cp);
+        idx++;
+        while (*cp != 0) cp++;
+        cp++;
+    }
+#endif
+}
+

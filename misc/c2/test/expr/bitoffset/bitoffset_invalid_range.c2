@@ -1,0 +1,21 @@
+// @warnings{no-unused}
+module test;
+
+u32 a = 0;
+u32 b = 0;
+const u32 Index = 4;
+
+fn void test1() {
+    b = a[1:2];         // @error{left bitoffset index is smaller than right index}
+    b = a[a:10];
+}
+
+fn void test2() {
+    b = a[Index:2];
+    b = a[2:Index];     // @error{left bitoffset index is smaller than right index}
+}
+
+fn bool u8_topbit(u8 v) { return v[7:7]; }
+fn bool u16_topbit(u16 v) { return v[15:15]; }
+fn bool u32_topbit(u32 v) { return v[31:31]; }
+fn bool u64_topbit(u64 v) { return v[63:63]; }

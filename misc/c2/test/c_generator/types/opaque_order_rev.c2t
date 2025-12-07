@@ -1,0 +1,27 @@
+// @recipe bin
+    $warnings no-unused
+    $backend c no-build
+
+// @file{file1}
+module test;
+
+public type Public struct @(opaque) {
+    Priv p;
+}
+
+type Priv struct {
+    i32 x;
+}
+
+// @expect{atleast, cgen/build.c}
+typedef struct test_Public_ test_Public;
+typedef struct test_Priv_ test_Priv;
+
+struct test_Priv_ {
+    int32_t x;
+};
+
+struct test_Public_ {
+    test_Priv p;
+};
+

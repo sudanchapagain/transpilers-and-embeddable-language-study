@@ -1,0 +1,17 @@
+import http
+import co
+
+fn main():void! {
+    var app = http.server()
+
+    app.get('/', fn(http.request_t req, ptr<http.response_t> res):void! {
+        res.send('hello nature')
+    })
+
+    app.get('/close', fn(http.request_t req, ptr<http.response_t> res):void! {
+        app.close()
+    })
+
+    app.listen(8888)
+    println('server is closed')
+}

@@ -1,0 +1,524 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module c_generator;
+
+import ast local;
+import c_prec local;
+import printf_utils;
+import string_buffer;
+
+fn void Generator.emitExpr(Generator* gen, string_buffer.Buf* out, Expr* e) {
+    gen.emitExpr2(out, e, Assignment);
+}
+
+// TODO: use default argument: C_Prec = Assignment
+fn void Generator.emitExpr2(Generator* gen, string_buffer.Buf* out, Expr* e, C_Prec prec) {
+    switch (e.getKind()) {
+    case IntegerLiteral:
+        IntegerLiteral* i = (IntegerLiteral*)e;
+        i.printLiteral(out, true);
+        break;
+    case FloatLiteral:
+        FloatLiteral* f = (FloatLiteral*)e;
+        f.printLiteral(out);
+        break;
+    case BooleanLiteral:
+        BooleanLiteral* b = (BooleanLiteral*)e;
+        b.printLiteral(out);
+        break;
+    case CharLiteral:
+        CharLiteral* c = (CharLiteral*)e;
+        c.printLiteral(out);
+        break;
+    case StringLiteral:
+        StringLiteral* s = (StringLiteral*)e;
+        s.printLiteral(out);
+        break;
+    case Nil:
+        out.add("NULL");
+        break;
+    case Identifier:
+        IdentifierExpr* i = (IdentifierExpr*)e;
+        Decl* d = i.getDecl();
+        gen.genDeclIfNeeded(d);
+        gen.emitDeclName(out, d);
+        break;
+    case Type:
+        gen.emitTypePre(out, e.getType());
+        gen.emitTypePost(out, e.getType());
+        break;
+    case Call:
+        if (gen.need_const_expr)
+            gen.emitExprValue(out, e);
+        else
+            gen.emitCall(out, e);
+        break;
+    case InitList:
+        InitListExpr* ile = (InitListExpr*)e;
+        out.add1('{');
+        u32 num_values = ile.getNumValues();
+        Expr** values = ile.getValues();
+        bool newlines = false;
+        if (num_values > 6) newlines = true;
+        if (num_values && values[0].isInitList()) {
+            newlines = true;
+        }
+        if (newlines) out.newline();
+        else out.space();
+        for (u32 i=0; i<num_values; i++) {
+            if (newlines) out.indent(1);
+            gen.emitExpr(out, values[i]);
+            if (i+1 != num_values) out.add1(',');
+            if (newlines) out.newline();
+            else out.space();
+        }
+        out.add1('}');
+        break;
+    case FieldDesignatedInit:
+        gen.emitFieldDesigExpr(out, e);
+        break;
+    case ArrayDesignatedInit:
+        gen.emitArrayDesigExpr(out, e);
+        break;
+    case BinaryOperator:
+        gen.emitBinaryOperator(out, e, prec);
+        break;
+    case UnaryOperator:
+        gen.emitUnaryOperator(out, e, prec);
+        break;
+    case ConditionalOperator:
+        if (prec > Conditional) out.lparen();
+        ConditionalOperator* c = (ConditionalOperator*)e;
+        gen.emitExpr2(out, c.getCond(), LogicalOr);
+        out.add(" ? ");
+        gen.emitExpr2(out, c.getLHS(), Comma);
+        out.add(" : ");
+        gen.emitExpr2(out, c.getRHS(), Conditional);
+        if (prec > Conditional) out.rparen();
+        break;
+    case Builtin:
+        gen.emitBuiltinExpr(out, e);
+        break;
+    case ArraySubscript:
+        ArraySubscriptExpr* a = (ArraySubscriptExpr*)e;
+        Expr* index = a.getIndex();
+        if (index.isBitOffset()) {
+            gen.emitBitOffset(out, a.getBase(), index, prec);
+        } else {
+            gen.emitExpr2(out, a.getBase(), Postfix);
+            out.add1('[');
+            gen.emitExpr2(out, index, Comma);
+            out.add1(']');
+        }
+        break;
+    case Member:
+        gen.emitMemberExpr(out, e);
+        break;
+    case Paren:
+        ParenExpr* p = (ParenExpr*)e;
+        out.lparen();
+        gen.emitExpr2(out, p.getInner(), Comma);
+        out.rparen();
+        break;
+    case BitOffset:
+        // Already handled in ArraySubscript
+        assert(0);
+        break;
+    case ExplicitCast:
+        ExplicitCastExpr* c = (ExplicitCastExpr*)e;
+        if (prec > Prefix) out.lparen();
+        gen.emitCast(out, c.getDestType(), false);
+        if (c.getCStyle()) {
+            gen.emitExpr2(out, c.getInner(), Prefix);
+        } else {
+            // TODO remove these parentheses and pass Prefix prec
+            out.lparen();
+            gen.emitExpr(out, c.getInner());
+            out.rparen();
+        }
+        if (prec > Prefix) out.rparen();
+        break;
+    case ImplicitCast:
+        // TODO some casts might need to be explicit to prevent warnings
+        ImplicitCastExpr* i = (ImplicitCastExpr*)e;
+        if (i.getKind() == IntegralCast) {
+            QualType qt = e.getType();
+            if (qt.getBuiltinKind() == Float32) {
+                if (prec > Prefix) out.lparen();
+                gen.emitCast(out, qt, false);
+                gen.emitExpr2(out, i.getInner(), Prefix);
+                if (prec > Prefix) out.rparen();
+                break;
+            }
+        }
+        gen.emitExpr2(out, i.getInner(), prec);
+        break;
+    case Range:
+        if (prec > Assignment) out.lparen();
+        const RangeExpr* b = (RangeExpr*)e;
+        gen.emitExpr(out, b.getLHS());
+        out.add(" ... ");
+        gen.emitExpr(out, b.getRHS());
+        if (prec > Assignment) out.rparen();
+        return;
+    case NamedArgument:
+        NamedArgument* n = (NamedArgument*)e;
+        gen.emitExpr(out, n.getInner());
+        break;
+    }
+}
+
+fn void Generator.emitBitOffset(Generator* gen, string_buffer.Buf* out, Expr* base, Expr* index, C_Prec prec) {
+    // example: a[15:8] -> ((a>>8) & 0xFF)
+    BitOffsetExpr* bo = (BitOffsetExpr*)index;
+    // TODO use prec to remove these parentheses
+    out.lparen();
+    out.lparen();  // useless
+    gen.emitExpr2(out, base, Shift);
+    out.add(">>");
+    gen.emitExpr2(out, bo.getRHS(), Additive);
+    out.rparen();  // useless
+    out.add(" & ");
+    u64 mask = 1;
+    mask <<= bo.getWidth();
+    mask--;
+    out.print("0x%x", mask);
+    out.rparen();
+}
+
+fn void Generator.emitCast(Generator* gen, string_buffer.Buf* out, QualType qt, bool full) {
+    out.add1('(');
+    gen.emitTypePre(out, qt);
+    if (full) gen.emitTypePost(out, qt);
+    out.add1(')');
+}
+
+fn void Generator.emitBinaryOperator(Generator* gen, string_buffer.Buf* out, Expr* e, C_Prec prec) {
+    BinaryOperator* b = (BinaryOperator*)e;
+    BinaryOpcode opcode = b.getOpcode();
+    C_Prec prec2 = C_Prec_table[opcode];
+    bool need_paren = prec > prec2;
+    if (need_paren) out.lparen();
+    Expr* lhs = b.getLHS();
+    gen.emitExpr2(out, lhs, prec2);
+    out.space();
+    out.add(b.getOpcodeStr());
+    out.space();
+    Expr* rhs = b.getRHS();
+    if (opcode == BinaryOpcode.Assign && rhs.isInitList()) {
+        gen.emitCast(out, lhs.getType(), true);
+    }
+    // enforce left associativity if not assignment
+    if (prec2 > Assignment) prec2++;
+    gen.emitExpr2(out, rhs, prec2);
+    if (need_paren) out.rparen();
+}
+
+fn void Generator.emitUnaryOperator(Generator* gen, string_buffer.Buf* out, Expr* e, C_Prec prec) {
+    UnaryOperator* u = (UnaryOperator*)e;
+    if (u.isBefore()) {
+        if (prec > Prefix) out.lparen();
+        out.add(u.getOpcodeStr());
+        gen.emitExpr2(out, u.getInner(), Prefix);
+        if (prec > Prefix) out.rparen();
+    } else {
+        gen.emitExpr2(out, u.getInner(), Postfix);
+        out.add(u.getOpcodeStr());
+    }
+}
+
+fn void emitDotOrArrow(string_buffer.Buf* out, QualType qt) {
+    if (qt.isPointer()) out.add("->");
+    else out.add1('.');
+}
+
+fn void Generator.emitMemberExpr(Generator* gen, string_buffer.Buf* out, Expr* e) {
+    MemberExpr* m = (MemberExpr*)e;
+    bool need_dot = false;
+    QualType baseType = { }
+    if (m.hasExpr()) {
+        Expr* base = m.getExprBase();
+        gen.emitExpr2(out, base, Postfix);
+        baseType = base.getType();
+        need_dot = true;
+    }
+
+    // dont switch on final, just generate
+    u32 numrefs = m.getNumRefs();
+    bool is_local = false;
+    for (u32 i=0; i<numrefs; i++) {
+        Decl* d = m.getDecl(i);
+        switch (d.getKind()) {
+        case Function:
+            if (need_dot) emitDotOrArrow(out, baseType);
+            baseType = d.getType();
+            gen.emitCNameMod(out, d, d.getModule());
+            break;
+        case Import:
+            // ignore
+            break;
+        case StructType:
+            // Note: can be substruct here or Type
+            if (need_dot) emitDotOrArrow(out, baseType);
+            StructTypeDecl* std = (StructTypeDecl*)d;
+            // Dont generate anything for Type, will be in prefix
+            if (!std.isGlobal()) {
+                baseType = d.getType();
+                out.add(d.getName());
+                need_dot = true;
+            }
+            break;
+        case EnumType:
+            // ignore
+            gen.genDeclIfNeeded(d);
+            break;
+        case EnumConstant:
+            gen.emitCNameMod(out, d, d.getModule());
+            break;
+        case FunctionType:
+            assert(0);
+            break;
+        case AliasType:
+            gen.emitCNameMod(out, d, d.getModule());
+            break;
+        case Variable:
+            if (need_dot) emitDotOrArrow(out, baseType);
+            baseType = d.getType();
+            if (is_local) {
+                out.add(d.getName());
+            } else {
+                gen.emitDeclName(out, d);
+            }
+            need_dot = true;
+            is_local = true;
+            break;
+        }
+    }
+}
+
+fn void Generator.emitMemberExprBase(Generator* gen, string_buffer.Buf* out, Expr* e) {
+    // Note: used by SF/SSF calls
+    MemberExpr* m = (MemberExpr*)e;
+
+    bool need_dot = false;
+    QualType baseType = { }
+    if (m.hasExpr()) {
+        Expr* base = m.getExprBase();
+        gen.emitExpr2(out, base, Postfix);
+        baseType = base.getType();
+        need_dot = true;
+    }
+
+    // dont switch on final, just generate
+    u32 numrefs = m.getNumRefs();
+    numrefs -= 1;   // Skip final arg
+    bool is_local = false;
+    for (u32 i=0; i<numrefs; i++) {
+        Decl* d = m.getDecl(i);
+        switch (d.getKind()) {
+        case Function:
+            if (need_dot) emitDotOrArrow(out, baseType);
+            baseType = d.getType();
+            gen.emitCNameMod(out, d, d.getModule());
+            break;
+        case Import:
+            // ignore
+            break;
+        case StructType:
+            // Note: always substruct here
+            if (need_dot) emitDotOrArrow(out, baseType);
+            baseType = d.getType();
+            out.add(d.getName());
+            need_dot = true;
+            break;
+        case EnumType:
+            // ignore
+            gen.genDeclIfNeeded(d);
+            break;
+        case EnumConstant:
+            gen.emitCNameMod(out, d, d.getModule());
+            break;
+        case FunctionType:
+            assert(0);
+            break;
+        case AliasType:
+            gen.emitCNameMod(out, d, d.getModule());
+            break;
+        case Variable:
+            if (need_dot) emitDotOrArrow(out, baseType);
+            baseType = d.getType();
+            if (is_local) {
+                out.add(d.getName());
+            } else {
+                gen.emitDeclName(out, d);
+            }
+            need_dot = true;
+            is_local = true;
+            break;
+        }
+    }
+}
+
+fn void Generator.emitFieldDesigExpr(Generator* gen, string_buffer.Buf* out, Expr* e) {
+    // Cannot use printLiteral because expressions need C conversion
+    FieldDesignatedInitExpr* fdi = (FieldDesignatedInitExpr*)e;
+    out.add1('.');
+    out.add(fdi.getFieldName());
+    out.add(" = ");
+    gen.emitExpr(out, fdi.getInit());
+}
+
+fn void Generator.emitArrayDesigExpr(Generator* gen, string_buffer.Buf* out, Expr* e) {
+    // Cannot use printLiteral because expressions need C conversion
+    ArrayDesignatedInitExpr* ad = (ArrayDesignatedInitExpr*)e;
+    out.add1('[');
+    gen.emitExpr(out, ad.getDesignator());
+    out.add("] = ");
+    gen.emitExpr(out, ad.getInit());
+}
+
+type FormatChanger struct {
+    const char* format;
+    Expr** args;
+    u32 idx;
+    u32 last_offset;
+    string_buffer.Buf* out;
+}
+
+const bool[] Size_prefix = {
+    [BuiltinKind.Char] = false,
+    [BuiltinKind.Int8] = false,
+    [BuiltinKind.Int16] = false,
+    [BuiltinKind.Int32] = false,
+    [BuiltinKind.Int64] = true,
+    [BuiltinKind.UInt8] = false,
+    [BuiltinKind.UInt16] = false,
+    [BuiltinKind.UInt32] = false,
+    [BuiltinKind.UInt64] = true,
+    [BuiltinKind.Float32] = false,
+    [BuiltinKind.Float64] = true,
+    [BuiltinKind.ISize] = true,
+    [BuiltinKind.USize] = true,
+    [BuiltinKind.Bool] = false,
+    [BuiltinKind.Void] = false,
+}
+
+fn void emitNumberFormat(BuiltinKind kind, char letter, string_buffer.Buf* out) {
+    // TODO: use proper prefix depending on target
+#if 0
+    if (kind == BuiltinKind.ISize) {
+        return;
+    }
+    if (kind == BuiltinKind.USize) {
+        return;
+    }
+#endif
+    if (Size_prefix[kind]) out.add1('l');
+    if (letter == 'd' && !builtinKind2Signed(kind))
+        letter = 'u';
+    // Assume all supported formats are implemented in the target libc
+    out.add1(letter);
+}
+
+// TODO: move to generator/c_generator_call.c2
+fn bool on_format_specifier(void* context, printf_utils.Specifier specifier, u32 offset, i32 stars, char c) {
+    FormatChanger* fc = context;
+
+    /* copy optional flags, width and precision */
+    fc.out.encodeBytes(fc.format + fc.last_offset, offset - fc.last_offset, '"');
+
+    fc.idx += stars;
+    QualType qt = fc.args[fc.idx].getType();
+    qt = qt.getCanonicalType();
+    switch (specifier) {
+    case Integer:
+        if (qt.isEnum()) {
+            EnumType* et = qt.getEnumType();
+            qt = et.getImplType();
+        }
+        fallthrough;
+    case FloatingPoint:
+        BuiltinType* bt = qt.getBuiltinTypeOrNil();
+        if (!bt) {
+            fc.args[fc.idx].dump();
+        }
+        assert(bt);
+        emitNumberFormat(bt.getKind(), c, fc.out);
+        break;
+    default:
+        fc.out.add1(c);
+        // no need to change
+        break;
+    }
+
+    fc.last_offset = offset + 1;
+    fc.idx++;
+    return true;
+}
+
+fn void Generator.emitBuiltinExpr(Generator* gen, string_buffer.Buf* out, Expr* e) {
+    BuiltinExpr* b = (BuiltinExpr*)e;
+    switch (b.getKind()) {
+    case Sizeof:
+        Value v = b.getValue();
+        out.print("%s", v.str());
+/*
+        out.add("sizeof(");
+        gen.emitExpr(out, b.getInner());
+        out.rparen();
+*/
+        break;
+    case Elemsof:
+        Value v = b.getValue();
+        out.print("%s", v.str());
+/*
+        // Note: ARRAY_SIZE looks nicer, but doesn't work for elemsof(Enum)
+        out.add("ARRAY_SIZE(");
+        gen.emitExpr(out, b.getInner());
+        out.rparen();
+*/
+        break;
+    case EnumMin:
+        Value v = b.getValue();
+        out.print("%s", v.str());
+        break;
+    case EnumMax:
+        Value v = b.getValue();
+        out.print("%s", v.str());
+        break;
+    case OffsetOf:
+        Value v = b.getValue();
+        out.print("%s", v.str());
+/*
+        out.add("offsetof("); // type, member
+        gen.emitExpr(out, b.getInner());
+        out.add(", ");
+        gen.emitExpr(out, b.getOffsetOfMember());
+        out.rparen();
+*/
+        break;
+    case ToContainer:
+        out.add("to_container("); // type, member, ptr
+        gen.emitExpr(out, b.getInner());
+        out.add(", ");
+        gen.emitExpr(out, b.getToContainerMember());
+        out.add(", ");
+        gen.emitExpr(out, b.getToContainerPointer());
+        out.rparen();
+        break;
+    }
+}
+

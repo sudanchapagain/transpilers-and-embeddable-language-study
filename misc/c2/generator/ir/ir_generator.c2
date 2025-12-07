@@ -1,0 +1,753 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ir_generator;
+
+import ast local;
+import array_init_sorter;
+import build_file;
+import component;
+import console;
+import constants;
+import ctv_analyser;
+import file_utils;
+import ir local;
+import ir_context local;
+import ir_gen_locals local;
+import source_mgr;
+import string_buffer;
+import string_pool;
+import target_info;
+import value_maplist;
+
+import c_errno local;
+import string;
+
+type JumpScope struct {
+    u32 break_block;    // 0 means invalid (assert)
+    u32 continue_block;
+}
+
+type Generator struct {
+    ir_context.Context* ctx;
+    string_pool.Pool* names;
+    value_maplist.List labels;
+
+    JumpScope[constants.MaxScopes] scopes;
+    u32 num_scopes;
+
+    Locals locals;
+
+    const Decl* mainFunc;
+    string_buffer.Buf* name_buf;
+    bool assert_generated;
+    bool print;
+    bool enable_asserts;
+    ir.Type ptr_type;
+    u32 string_idx;     // for string literals
+    const char* target;
+    const char* output_dir;
+    source_mgr.SourceMgr* sm;
+    const target_info.Info* targetInfo;
+    FunctionDecl* cur_function;
+}
+
+fn void Generator.init(Generator* gen,
+                       source_mgr.SourceMgr* sm,
+                       const target_info.Info* targetInfo,
+                       const build_file.Info* buildInfo,
+                       const char* target,
+                       const char* output_dir,
+                       bool enable_asserts,
+                       bool print,
+                       bool print_all) {
+    string.memset(gen, 0, sizeof(Generator));
+
+    ir_context.BuildInfo build_info = {}
+    if (buildInfo) {
+        build_info.compiler = buildInfo.getCC();
+        build_info.linkerflags = buildInfo.getLinkerFlags();
+    }
+
+    gen.ctx = ir_context.create(print_all, targetInfo, &build_info);
+    gen.labels.init();
+    gen.target = target;
+    gen.output_dir = output_dir;
+    gen.string_idx = 1; // starting at 1 looks nicer
+    gen.locals.init();
+    gen.print = print;
+    gen.enable_asserts = enable_asserts;
+    gen.ptr_type = targetInfo.intWidth == 64 ? ir.Type.U64 : ir.Type.U32;
+    gen.sm = sm;
+    gen.name_buf = string_buffer.create(128, false, 0);
+}
+
+fn void Generator.free(Generator* gen) {
+    gen.labels.free();
+    gen.ctx.free();
+    gen.name_buf.free();
+    gen.locals.free();
+}
+
+fn void Generator.enterScope(Generator* gen, u32 break_block, u32 continue_block) {
+    assert(gen.num_scopes < elemsof(gen.scopes));
+    JumpScope* s = &gen.scopes[gen.num_scopes];
+    s.break_block = break_block;
+    if (continue_block) {
+        s.continue_block = continue_block;
+    } else {
+        // if if no continue block, take one from prev scope
+        if (gen.num_scopes >= 1) s.continue_block = gen.scopes[gen.num_scopes-1].continue_block;
+    }
+
+    gen.num_scopes++;
+}
+
+fn void Generator.leaveScope(Generator* gen) {
+    assert(gen.num_scopes > 0);
+    gen.num_scopes--;
+}
+
+fn const char* Generator.createLocalName(Generator* gen, const Decl* d) {
+    assert(gen.cur_function);
+    // a in function mod.func -> mod_func.a
+    string_buffer.Buf* out = gen.name_buf;
+    out.clear();
+    out.add(d.getModuleName());
+    out.add1('_');
+    out.add(gen.cur_function.asDecl().getName());
+    out.add1('.');
+    out.add(d.getName());
+    return out.data();
+}
+
+fn const char* Generator.createSymbolName(Generator* gen, const Decl* d) {
+    string_buffer.Buf* out = gen.name_buf;
+    out.clear();
+
+    if (d.isExternal() && d.getModule().isForeign()) {
+        const char* cname = d.getCName();
+        if (cname) {
+            out.add(cname);
+        } else {
+            out.add(d.getName());
+        }
+    } else {
+        if (d.isGlobal()) {
+            out.add(d.getModuleName());
+            out.add1('_');
+            if (d.isFunction()) {
+                FunctionDecl* fd = (FunctionDecl*)d;
+                ast.Ref* prefix = fd.getPrefix();
+                if (prefix) {
+                    out.add(ast.idx2name(prefix.name_idx));
+                    out.add1('_');
+                }
+            } else if (d.isEnumConstant()) {
+                QualType qt = d.getType();
+                EnumType* et = (EnumType*)qt.getType();
+                out.add(et.getName());
+                out.add1('_');
+            }
+        }
+        out.add(d.getName());
+    }
+    return out.data();
+}
+
+fn SymbolId Generator.createSymbol(Generator* gen, Decl* d) {
+    u32 gen_idx = d.getGenIdx();
+    if (!gen_idx) {
+        bool is_external = gen.isExternal(d);
+        if (d.isFunction()) {
+            gen_idx = gen.ctx.addFunction(gen.createSymbolName(d), is_external);
+        } else {
+            QualType qt = d.getType();
+            gen_idx = gen.ctx.addGlobalVar(gen.createSymbolName(d), qt.getAlignment(), is_external);
+        }
+        d.setGenIdx(gen_idx);
+    }
+    return gen_idx;
+}
+
+fn const char* Generator.createStringVar(Generator* gen) {
+    string_buffer.Buf* out = gen.name_buf;
+    out.clear();
+    out.print(".str%d", gen.string_idx);
+    gen.string_idx++;
+    return out.data();
+}
+
+const ir.Type[elemsof(BuiltinKind)] Ast_type2ir_type = {
+    [BuiltinKind.Char]    = I8,
+    [BuiltinKind.Int8]    = I8,
+    [BuiltinKind.Int16]   = I16,
+    [BuiltinKind.Int32]   = I32,
+    [BuiltinKind.Int64]   = I64,
+    [BuiltinKind.UInt8]   = U8,
+    [BuiltinKind.UInt16]  = U16,
+    [BuiltinKind.UInt32]  = U32,
+    [BuiltinKind.UInt64]  = U64,
+    [BuiltinKind.Float32] = F32,
+    [BuiltinKind.Float64] = F64,
+    [BuiltinKind.ISize]   = I64,  // TODO 32-bit
+    [BuiltinKind.USize]   = U64,  // TODO 32-bit
+    [BuiltinKind.Bool]    = I8,    // TODO ir.Type.I1?
+    [BuiltinKind.Void]    = None,
+}
+
+fn ir.Type builtin2irtype(BuiltinKind k) {
+    return Ast_type2ir_type[k];
+}
+
+fn ir.Type Generator.type2irtype(Generator* gen, QualType qt) {
+    QualType canon = qt.getCanonicalType();
+    switch (canon.getKind()) {
+    case Builtin:
+        BuiltinType* bi = canon.getBuiltin();
+        return builtin2irtype(bi.getKind());
+    case Pointer:
+        // TODO 32-bits
+        return ir.Type.I64;
+    case Array:
+        // return base type
+        ArrayType* at = canon.getArrayType();
+        return gen.type2irtype(at.getElemType());
+    case Struct:
+        StructType* st = canon.getStructType();
+        const StructTypeDecl* std = st.getDecl();
+        u32 align = std.getAlignment();
+        switch (align) {
+        case 1:
+            return ir.Type.I8;
+        case 2:
+            return ir.Type.I16;
+        case 4:
+            return ir.Type.I32;
+        default:
+            return ir.Type.I64;
+        }
+    case Enum:
+        EnumType* et = canon.getEnum();
+        return gen.type2irtype(et.getImplType());
+    case Function:
+        // TODO 32-bits
+        return ir.Type.I64;
+    case Alias:
+        assert(0);
+        break;
+    case Module:
+        assert(0);
+        break;
+    }
+    return ir.Type.None;
+}
+
+fn void Generator.emitInit(Generator* gen, const Expr* e, u32 size) {
+    if (e.isCtv()) {
+        Value v = ctv_analyser.get_value(e);
+        switch (size) {
+        case 1:
+            gen.ctx.addInitValueU8(v.as_u8());
+            break;
+        case 2:
+            gen.ctx.addInitValueU16(v.as_u16());
+            break;
+        case 4:
+            gen.ctx.addInitValueU32(v.as_u32());
+            break;
+        case 8:
+            gen.ctx.addInitValueU64(v.as_u64());
+            break;
+        }
+        return;
+    }
+
+    switch (e.getKind()) {
+    case IntegerLiteral:
+    case FloatLiteral:
+    case BooleanLiteral:
+    case CharLiteral:
+        assert(0);  // should be CTV
+        break;
+    case StringLiteral:
+        const StringLiteral* s = (StringLiteral*)e;
+        gen.ctx.addInitString(s.getText(), s.strlen());
+        break;
+    case Nil:
+        assert(0);  // should be CTV
+        break;
+    case Identifier:
+        const IdentifierExpr* i = (IdentifierExpr*)e;
+        Decl* d = i.getDecl();
+        SymbolId sid = gen.createSymbol(d);
+        gen.ctx.addInitSymbol(sid);
+        break;
+    case Type:
+    case Call:
+        e.dump();
+        assert(0);  // should be CTV
+        break;
+    case InitList:
+        const InitListExpr* ile = (InitListExpr*)e;
+        u32 num_values = ile.getNumValues();
+        if (num_values == 0) {   // { }
+            gen.ctx.addInitZero(size);
+        } else if (ile.isArray()) {
+            gen.emitArrayInit(e);
+        } else {
+            gen.emitGlobalStructInit(e);
+        }
+        break;
+    case FieldDesignatedInit:
+    case ArrayDesignatedInit:
+    case BinaryOperator:
+        e.dump();
+        assert(0);  // should be CTV
+        break;
+    case UnaryOperator:
+        UnaryOperator* uo = (UnaryOperator*)e;
+        assert(uo.isAddrOf());
+        gen.emitInit(uo.getInner(), size);
+        break;
+    case ConditionalOperator:
+    case Builtin:
+    case ArraySubscript:
+        e.dump();
+        assert(0);  // should be CTV
+        break;
+    case Member:
+        // should be Symbol ref
+        const MemberExpr* m = (MemberExpr*)e;
+        Decl* d = m.getFullDecl();
+        SymbolId sid = gen.createSymbol(d);
+        gen.ctx.addInitSymbol(sid);
+        break;
+    case Paren:
+    case BitOffset:
+        e.dump();
+        assert(0);  // should be CTV
+        break;
+    case ExplicitCast:
+        // ExplicitCast can be non-CTV:  .. = (void*)&a;
+        // just emit inner then
+        const ExplicitCastExpr* ec = (ExplicitCastExpr*)e;
+        gen.emitInit(ec.getInner(), size);
+        break;
+    case ImplicitCast:
+        const ImplicitCastExpr* ic = (ImplicitCastExpr*)e;
+        gen.emitInit(ic.getInner(), size);
+        break;
+    case Range:
+        assert(0);
+        break;
+    case NamedArgument:
+        NamedArgument* n = (NamedArgument*)e;
+        gen.emitInit(n.getInner(), size);
+        break;
+    }
+}
+
+fn void Generator.emitGlobalStructInit(Generator* gen, const Expr* e) {
+    const InitListExpr* ile = (InitListExpr*)e;
+    u32 num_values = ile.getNumValues();
+    const Expr** values = ile.getValues2();
+
+    QualType qt = e.getType();
+    StructType* st = qt.getStructType();
+    StructTypeDecl* std = st.getDecl();
+
+    if (ile.hasDesignators()) {
+        FieldStructLayouter layouter;
+        layouter.init(gen, std.getSize(), std.getDesigMemberCount());
+        for (u32 i=0; i<num_values; i++) {
+            FieldDesignatedInitExpr* fdi = (FieldDesignatedInitExpr*)values[i];
+            const FieldInitField* fif = fdi.getMemberInfo();
+            if (!fif.isZeroSizeBitfield()) {
+                layouter.add(fif, fdi.getInit());
+            }
+        }
+        layouter.finalize();
+    } else {
+        BasicStructLayouter layouter;
+        layouter.init(gen, std.getLayout());
+        for (u32 i=0; i<num_values; i++) layouter.add(i, values[i]);
+        layouter.finalize();
+    }
+}
+
+fn void on_zero(void* arg, u32 size) {
+    Generator* gen = arg;
+    gen.ctx.addInitZero(size);
+}
+
+fn void on_expr(void* arg, const Expr* e, u32 elem_size) {
+    Generator* gen = arg;
+    gen.emitInit(e, elem_size);
+}
+
+fn void Generator.emitArrayInit(Generator* gen, const Expr* e) {
+    const InitListExpr* ile = (InitListExpr*)e;
+    u32 num_values = ile.getNumValues();
+    // TODO store element_size / num-elements real, not just in inits) in ILE?
+    QualType qt = e.getType();
+    ArrayType* at = qt.getArrayType();
+    u32 array_size = at.getSize();  // TODO use for un-initialized stuff
+    QualType et = at.getElemType();
+    u32 elem_size = et.getSize(false);
+
+    if (ile.hasDesignators()) {
+        // TODO handle sparse arrays
+        array_init_sorter.Sorter sorter = array_init_sorter.create(num_values, array_size, elem_size);
+        const Expr** values = ile.getValues2();
+        for (u32 i=0; i<num_values; i++) {
+            const Expr* ie = values[i];
+            if (ie.isArrayDesignatedInit()) {
+                const ArrayDesignatedInitExpr* ad = (ArrayDesignatedInitExpr*)ie;
+                const Expr* desig = ad.getDesignator();
+                Value v = ctv_analyser.get_value(desig);
+                sorter.addAt(v.as_u32(), ad.getInit());
+            } else {
+                sorter.add(ie);
+            }
+        }
+        sorter.iterate(on_expr, on_zero, gen);
+        sorter.free();
+
+        // TODO sort in init_sorter
+        // ref = gen.ctx.addInitArray(array_size, elem_size);  // all set to Zero-init
+        // Hmm cannot use normal gen.ctx.addInitValueU32() ??
+
+        // TODO create array_size values, set to zero, update?
+        //assert(0); // TODO
+    } else {
+        const Expr** values = ile.getValues2();
+        for (u32 i=0; i<num_values; i++) {
+            gen.emitInit(values[i], elem_size);
+        }
+        u32 missing = array_size - num_values;
+        if (missing) {
+            gen.ctx.addInitZero(missing * elem_size);
+        }
+    }
+}
+
+fn bool Generator.isExternal(Generator* gen, const Decl* d) {
+    // Note: always single build (fast build not supported yet)
+    return d.isExported();
+}
+
+fn void Generator.emitFunction(Generator* gen, FunctionDecl* fd) {
+    ir_context.Context* c = gen.ctx;
+
+    gen.labels.clear();
+    gen.locals.clear();
+    Decl* d = (Decl*)fd;
+    gen.cur_function = fd;
+
+    u32 gen_idx = d.getGenIdx();
+    if (!gen_idx) {
+        const char* name;
+        if (d == gen.mainFunc) {
+            name = "main";
+        } else {
+            name = gen.createSymbolName(d);
+        }
+        gen_idx = c.addFunction(name, gen.isExternal(d));
+        d.setGenIdx(gen_idx);
+    }
+
+    c.startFunc(gen_idx);
+
+    // add params
+    ir.Type rt = ir.Type.None;
+    if (fd.hasReturn()) {
+        rt = gen.type2irtype(fd.getRType());
+        c.setFunctionReturnType(rt);
+    } else {
+        c.setFunctionReturnType(ir.Type.None);
+    }
+
+    ir.BlockId body_blk = c.createBlock(BlockKind.FnStart);
+    c.startBlock(body_blk);
+
+    // Note: this also adds instructions
+    u32 num_params = fd.getNumParams();
+    VarDecl** params = fd.getParams();
+    ir.Ref[constants.MaxCallArgs] param_refs;
+    // first add all %x = param
+    for (u32 i=0; i<num_params; i++) {
+        VarDecl* v = params[i];
+        ir.Type t2 = gen.type2irtype(v.asDecl().getType());
+        param_refs[i] = c.addFuncArg(t2);
+        // TODO pass-by-value structs can be turned into pointer or 1-2 words
+#if 0
+        // NOTE: not cleanup up during unused removal pass
+        // only if debugging
+        // params may be unnamed
+        const char* name = v.asDecl().getName();
+        string_buffer.Buf* out = gen.name_buf;
+        out.clear();
+        if (name) out.add(name);
+        else out.add("(unnamed)");
+        gen.ctx.addComment(out.data());
+#endif
+    }
+    for (u32 i=0; i<num_params; i++) {
+        VarDecl* v = params[i];
+        gen.addLocalVar(v);
+    }
+    //if (d.isPublic()) out.add("export "); // TEMP not if single file, unless main
+
+    // generate a map for all locals, allocate stack slots. Also define 'local' locals
+    gen.collectLocalVars((Stmt*)fd.getBody());
+
+    // create stores for params
+    for (u32 i=0; i<num_params; i++) {
+        VarDecl* v = params[i];
+        StackVar* var = gen.locals.find(v);
+        c.addStoreInstr(var.ir_type, param_refs[i], var.ref);
+    }
+
+    gen.emitStmt((Stmt*)fd.getBody());
+
+    if (!c.isBlockTerminated()) {
+        c.addRet0Instr();
+    }
+    c.endBlock();
+    c.endFunc();
+}
+
+fn void on_var_decl(void* arg, VarDecl* vd) {
+    Generator* gen = arg;
+    ir_context.Context* c = gen.ctx;
+
+    Decl* d = (Decl*)vd;
+    if (!d.isUsed()) return;
+
+    QualType qt = d.getType();
+    u32 gen_idx = d.getGenIdx();
+    if (!gen_idx) {
+        gen_idx = gen.ctx.addGlobalVar(gen.createSymbolName(d), qt.getAlignment(), gen.isExternal(d));
+        d.setGenIdx(gen_idx);
+    }
+
+    c.startGlobal(gen_idx);
+    const Expr* ie = vd.getInit();
+    u32 size = qt.getSize(false);
+    if (ie) {
+        gen.emitInit(ie, size);
+    } else {
+        c.addInitZero(size);
+    }
+    c.endGlobal();
+}
+
+fn void on_function_decl(void* arg, FunctionDecl* d) {
+    if (!d.asDecl().isUsed()) return;
+    Generator* gen = arg;
+    gen.emitFunction(d);
+}
+
+fn void Generator.on_ast(void* arg, AST* a) {
+    a.visitVarDecls(on_var_decl, arg);
+    a.visitFunctions(on_function_decl, arg);
+}
+
+fn void Generator.on_module(void* arg, Module* m) {
+    if (!m.isUsed()) return;
+
+    m.visitASTs(Generator.on_ast, arg);
+}
+
+// TODO only pass main component
+public fn void generate(const char* target,
+                        const char* output_dir,
+                        component.List* comps,
+                        source_mgr.SourceMgr* sm,
+                        const target_info.Info* targetInfo,
+                        const build_file.Info* buildInfo,   // can be nil
+                        const Decl* mainFunc,
+                        bool enable_asserts,
+                        bool print,
+                        bool print_all) {
+    char[file_utils.Max_path] ir_dir;
+    if (!file_utils.make_path(ir_dir, elemsof(ir_dir), output_dir, "ir")
+    ||  file_utils.create_path(ir_dir)) {
+        console.error("cannot create directory %s: %s", ir_dir, string.strerror(errno));
+        return;
+    }
+
+    Generator gen;
+    gen.init(sm, targetInfo, buildInfo, target, ir_dir, enable_asserts, print, print_all);
+    gen.mainFunc = mainFunc;
+
+    // TODO also generate source libs, inline functions for interface files
+    component.Component* mainComp = comps.getLast();
+    mainComp.visitModules(Generator.on_module, &gen);
+
+    gen.ctx.convert_functions();
+
+    if (gen.print) gen.ctx.print();
+
+    gen.ctx.writeOutput(ir_dir, target);
+
+    gen.free();
+}
+
+fn void Generator.addLocalVar(Generator* gen, VarDecl* vd) {
+    QualType qt = vd.asDecl().getType();
+    const StructType* s = qt.getStructTypeOrNil();
+    u32 width;
+    u32 align;
+    if (s) {
+        const StructTypeDecl* std = s.getDecl();
+        width = std.getSize();
+        align = std.getAlignment();
+    } else {
+        width = qt.getAlignment();
+        align = width;
+    }
+
+    // emit alloc (LocalSlot)
+    u32 size = qt.getSize(false);
+    // TODO filter duplicates (0-100?) Q: filter here or in Context?
+    ir.Ref size_ref = gen.ctx.addIntegerConstant(size);
+    ir.Ref slot = gen.ctx.addStackSlot(align, size_ref);
+    // TODO dont pass type again, since doing duplicate work with above code (with+align)
+    ir.Type ir_type = gen.type2irtype(qt);
+    gen.locals.add(vd, width, align, size, slot, ir_type);
+#if 1
+    // only if debugging
+    // params may be unnamed
+    const char* name = vd.asDecl().getName();
+    string_buffer.Buf* out = gen.name_buf;
+    out.clear();
+    out.print("s%d ", slot.value);
+    if (name) out.add(name);
+    else out.add("(unnamed)");
+    gen.ctx.addComment(out.data());
+#endif
+}
+
+fn void Generator.collectLocalVars(Generator* gen, Stmt* s) {
+    switch (s.getKind()) {
+    case If:
+        const IfStmt* if_stmt = (IfStmt*)s;
+        gen.collectLocalVars(if_stmt.getCond());
+        Stmt* then_stmt = if_stmt.getThen();
+        if (then_stmt) gen.collectLocalVars(then_stmt);
+        Stmt* else_stmt = if_stmt.getElse();
+        if (else_stmt) gen.collectLocalVars(else_stmt);
+        break;
+    case While:
+        const WhileStmt* while_stmt = (WhileStmt*)s;
+        gen.collectLocalVars(while_stmt.getCond());
+        gen.collectLocalVars(while_stmt.getBody());
+        break;
+    case For:
+        const ForStmt* for_stmt = (ForStmt*)s;
+        Stmt* init_stmt = for_stmt.getInit();
+        if (init_stmt) gen.collectLocalVars(init_stmt);
+        Stmt* body_stmt = for_stmt.getBody();
+        if (body_stmt) gen.collectLocalVars(body_stmt);
+        break;
+    case Switch:
+        SwitchStmt* sw = (SwitchStmt*)s;
+        u32 num_cases = sw.getNumCases();
+        SwitchCase** cases = sw.getCases();
+        for (u32 i=0; i<num_cases; i++) {
+            SwitchCase* sc = cases[i];
+            u32 num_stmts = sc.getNumStmts();
+            Stmt** stmts = sc.getStmts();
+            for (u32 j=0; j<num_stmts; j++) {
+                gen.collectLocalVars(stmts[j]);
+            }
+        }
+        break;
+    case Label:
+        LabelStmt* ls = (LabelStmt*)s;
+        Stmt* inner = ls.getStmt();
+        if (inner) gen.collectLocalVars(inner);
+        break;
+    case Compound:
+        CompoundStmt* c = (CompoundStmt*)s;
+        const u32 num_stmts = c.getCount();
+        Stmt** stmts = c.getStmts();
+        for (u32 i=0; i<num_stmts; i++) {
+            // Note: does not handle unreachable code
+            gen.collectLocalVars(stmts[i]);
+        }
+        break;
+    case Decl:
+        const DeclStmt* ds = (DeclStmt*)s;
+        u32 count = ds.getDeclCount();
+        for (u32 i = 0; i < count; i++) {
+            VarDecl* vd = ds.getDecl(i);
+            if (vd.hasLocalQualifier()) {
+                // TODO move to collectLocals?
+                Decl* d = (Decl*)vd;
+                ir.Ref ref;
+                gen.emitVarDecl(&ref, d);
+                QualType qt = d.getType();
+                u32 size = qt.getSize(false);
+
+                const Expr* ie = vd.getInit();
+                gen.ctx.startGlobal((u32)ref.value);
+                if (ie) {
+                    gen.emitInit(ie, size);
+                } else {
+                    gen.ctx.addInitZero(size);
+                }
+                gen.ctx.endGlobal();
+            } else {
+                gen.addLocalVar(vd);
+            }
+        }
+        break;
+    default:
+        break;
+    }
+}
+
+fn BlockId Generator.getLabelBlock(Generator* gen, u32 label_idx) {
+    BlockId b_id = gen.labels.get(label_idx);
+    if (!b_id) {
+        b_id = gen.ctx.createBlock(BlockKind.Label);
+        gen.labels.add(label_idx, b_id);
+    }
+    return b_id;
+}
+
+fn void Generator.emitBitfield(Generator* gen, u8 size, u64 value) {
+    switch (size) {
+    case 1:
+        gen.ctx.addInitValueU8((u8)value);
+        break;
+    case 2:
+        gen.ctx.addInitValueU16((u16)value);
+        break;
+    case 4:
+        gen.ctx.addInitValueU32((u32)value);
+        break;
+    case 8:
+        gen.ctx.addInitValueU64(value);
+        break;
+    default:
+        assert(0);
+        break;
+    }
+}
+

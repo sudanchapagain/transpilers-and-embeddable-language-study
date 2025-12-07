@@ -1,0 +1,138 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ir_generator;
+
+import ast local;
+import bit_utils;
+import ir local;
+import ir_context;
+
+// NOTE: should not be used for LHS bitfields!
+fn void Generator.emitMemberExpr(Generator* gen, ir.Ref* result, const Expr* e) {
+    const MemberExpr* m = (MemberExpr*)e;
+    ir_context.Context* c = gen.ctx;
+
+    u32 tail = 0;
+
+    IdentifierKind kind = m.getKind();
+    if (kind == IdentifierKind.Var || kind == IdentifierKind.Function) {
+        // TODO handle struct function (Analyser will have checked that it's followed by call)
+        if (m.isTypeFunc()) {
+            // only emit base part, not last
+            tail = 1;
+            goto next;
+        }
+
+        if (m.hasExpr()) {
+            // TODO can be <expr>.<type_func> or <expr>.a.<type_func>
+            //e.dump();
+            goto next;
+        }
+        assert(!m.hasExpr());
+        Decl* d = m.getFullDecl();
+        gen.emitSymbol(result, d);
+        return;
+    }
+
+    assert(kind == IdentifierKind.StructMember);
+next:
+    // base
+    ir.Ref base_ref;
+    QualType base_type;
+    u32 idx = 0;
+    if (m.hasExpr()) {
+        const Expr* base = m.getExprBase();
+        gen.emitExpr(&base_ref, base);
+        base_type = base.getType();
+    } else {
+        Decl* base = m.getDecl(idx);
+        if (base.isImport()) {  // skip module prefix
+            idx++;
+            base = m.getDecl(idx);
+        }
+        idx++;
+        assert(base.isVarDecl());
+        gen.emitVarDecl(&base_ref, base);
+        base_type = base.getType();
+    }
+
+    // member (a.b.c.etc)
+    u32 numrefs = m.getNumRefs();
+    numrefs -= tail;
+
+    // TODO needs overhaul, a big mess at the moment
+
+    for (u32 i=idx; i<numrefs; i++) {
+        // for final only load if conversion is set?
+        // First add offset, then deref!, also should not have to do this here anymore!
+        bool is_pointer = base_type.isPointer();
+        if (is_pointer) {
+            base_type = base_type.getPointerBaseType();
+        }
+
+        assert(base_type.isStruct());
+        const StructType* st = base_type.getStructType();
+        const StructTypeDecl* std = st.getDecl();
+
+        Decl* d = m.getDecl(i);
+
+        u32 offset = 0;
+        Decl* dd = std.findMember(d.getNameIdx(), &offset);
+        if (!dd) {
+            e.dump();
+        }
+        assert(dd);
+
+        if (is_pointer && i < numrefs) {
+            // DONT deref last, will be de-refed by LToRValue Conversion
+            // will be added below
+            base_ref = c.addLoadInstr(gen.ptr_type, base_ref);
+        }
+
+        if (offset != 0) {
+            ir.Ref offset_ref = c.addIntegerConstant(offset);
+            base_ref = c.addBinaryInstr(InstrKind.Add, base_ref, offset_ref);
+        }
+
+        if (dd.isBitfield()) {
+            // NOTE: only for RHS
+            const VarDecl* vd = (VarDecl*)d;
+            const BitFieldLayout* layout = vd.getBitfieldLayout();
+            u32 mask = bit_utils.get_mask32(layout.bit_width); // TEMP u32
+            // generate: (base_ref >> offset) & mask
+            if (layout.bit_offset) {
+                ir.Ref shift_ref = c.addIntegerConstant(layout.bit_offset);
+                base_ref = c.addBinaryInstr(InstrKind.Shr, base_ref, shift_ref);
+            }
+            ir.Ref mask_ref = c.addIntegerConstant(mask);
+            base_ref = c.addBinaryInstr(InstrKind.And, base_ref, mask_ref);
+        }
+
+        base_type = d.getType();
+    }
+
+    MemberConversion conv = m.getConversion();
+    //printf("CONVERSION %d TAIL %d\n", conv, tail);
+
+    if (tail && conv != Addr) {
+        // for type functions, always pointer?
+        // If type-function (with ptr base?), add extra LoadInstr since no LToRValue Cast is present then
+        // Q: add in Analyser?
+        base_ref = c.addLoadInstr(gen.ptr_type, base_ref);
+    }
+    *result = base_ref;
+}
+

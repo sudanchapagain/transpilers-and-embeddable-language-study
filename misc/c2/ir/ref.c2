@@ -1,0 +1,132 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ir;
+
+import stdio;
+
+public type RefKind enum u8 {
+    None,
+    Slot,      // slot_idx
+    Temp,      // temp_idx (already resolved)
+    JmpDest,   // for jmp/jmp_if, value is cur BlockId
+    Symbol,    // index into symbols
+    Value,     // unsigned int value that fits 28 bits
+    Integer,   // constant_idx
+    Float,     // constant_idx
+    Double,    // constant_idx
+    Text,      // idx into string pool, for comment
+    Register,  // nr (0,1,..)
+    Block,     // only used by Switch to store join_blk in args[1], and for Arch jump/branch instructions
+    PhiClause, // only for Phi instructions. args[0]=start, args[1]=count
+    CallNumArgs, // only for Call instructions
+}
+
+fn const char* RefKind.str(RefKind k) {
+    switch (k) {
+    case None:        return "none";
+    case Slot:        return "slot";
+    case Temp:        return "temp";
+    case JmpDest:     return "jmp-dest";
+    case Symbol:      return "symbol";
+    case Value:       return "value";
+    case Integer:     return "integer";
+    case Float:       return "float";
+    case Double:      return "double";
+    case Text:        return "text";
+    case Register:    return "register";
+    case Block:       return "block";
+    case PhiClause:   return "clause";
+    case CallNumArgs: return "callargs";
+    }
+    return nil;
+}
+
+public type Ref struct {
+    u32 kind : 4;   // RefKind
+    i32 value : 28;
+}
+static_assert(4, sizeof(Ref));
+
+public fn void Ref.init(Ref* r, RefKind kind, u32 value) {
+    r.kind = kind;
+    r.value = (i32)value;
+}
+
+public fn void Ref.clear(Ref* r) {
+    r.kind = RefKind.None;
+    r.value = 0;
+}
+
+fn bool Ref.equals(const Ref* r1, Ref r2) {
+    // TODO compare as u32?
+    if (r1.value != r2.value) return false;
+    return r1.kind == r2.kind;
+}
+
+public fn RefKind Ref.getKind(const Ref* r) {
+    return (RefKind)r.kind;
+}
+
+public fn bool Ref.isValid(const Ref* r) {
+    return r.kind != RefKind.None;
+}
+
+public fn void Ref.setRegister(Ref* r, u32 value) {
+    r.kind = RefKind.Register;
+    r.value = (i32)value;
+}
+
+public fn bool Ref.isNone(const Ref* r) {
+    return r.kind == RefKind.None;
+}
+
+public fn bool Ref.isTemp(const Ref* r) {
+    return r.kind == RefKind.Temp;
+}
+
+public fn bool Ref.isSlot(const Ref* r) {
+    return r.kind == RefKind.Slot;
+}
+
+public fn bool Ref.isValue(const Ref* r) {
+    return r.kind == RefKind.Value;
+}
+
+public fn bool Ref.isRegister(const Ref* r) {
+    return r.kind == RefKind.Register;
+}
+
+public fn bool Ref.isConstant(const Ref* r) @(unused) {
+    return r.kind >= RefKind.Value && r.kind <= RefKind.Double;
+}
+
+public fn bool Ref.isZero(const Ref* r) {
+    return r.kind == RefKind.Value && r.value == 0;
+}
+
+public fn const char* Ref.getKindName(const Ref* r) {
+    return r.getKind().str();
+}
+
+public fn const char* Ref.str(const Ref* r) @(unused) {
+    local char[4][24] buf;
+    local u32 idx;
+    idx = (idx+1) % 4;
+    char* tmp = buf[idx++];
+    stdio.sprintf(tmp, "%s %d", r.getKind().str(), r.value);
+    return tmp;
+}
+

@@ -1,0 +1,18 @@
+// @warnings{no-unused}
+module test;
+
+type Type struct {
+    i32 x;
+}
+
+type Type2 struct {
+    i32 x;
+}
+
+fn void Type.init(Type2*) {}
+
+fn void myfunc() {
+    Type t;
+    t.init();       // @error{cannot access static type-function through variable}
+}
+

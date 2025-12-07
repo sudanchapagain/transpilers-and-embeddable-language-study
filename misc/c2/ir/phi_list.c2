@@ -1,0 +1,156 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ir;
+
+import string local;
+import stdlib local;
+
+public type PhiClause struct {
+    BlockId src;
+    u32 dest_idx;   // = TempRef value
+    Ref ref;
+}
+static_assert(12, sizeof(PhiClause));
+
+public type PhiList struct {
+    u32 count;
+    u32 capacity;
+    PhiClause* clauses;
+}
+
+fn void PhiList.init(PhiList* l) {
+    l.count = 0;
+    l.capacity = 0;
+    l.clauses = nil;
+}
+
+fn void PhiList.free(PhiList* l) {
+    if (l.clauses) free(l.clauses);
+}
+
+public fn void PhiList.clear(PhiList* l) {
+    l.count = 0;
+    l.capacity = 0;
+    if (l.clauses) {
+        free(l.clauses);
+        l.clauses = nil;
+    }
+}
+
+fn void PhiList.resize(PhiList* l, u32 extra) {
+    l.capacity += extra;
+    PhiClause* clauses2 = calloc(l.capacity, sizeof(PhiClause));
+    if (l.count != 0) memcpy(clauses2, l.clauses, l.count * sizeof(PhiClause));
+    if (l.clauses) free(l.clauses);
+    l.clauses = clauses2;
+}
+
+public fn void PhiList.add(PhiList* l, u32 dest, BlockId src, Ref ref) {
+    if (l.count == l.capacity) l.resize(2);
+    PhiClause* c = &l.clauses[l.count++];
+    c.src = src;
+    c.dest_idx = dest;
+    c.ref = ref;
+}
+
+public fn u32 PhiList.addCache(PhiList* l, u32 dest, const PhiClauses* cache) {
+    u32 extra = cache.getCount();
+    if (l.count + extra >= l.capacity) l.resize(extra);
+
+    u32 start = l.count;
+    const PhiClause* src = cache.getClauses();
+    for (u32 i=0; i<extra; i++) {
+        l.clauses[l.count] = src[i];
+        l.clauses[l.count].dest_idx = dest;
+        l.count++;
+    }
+    return start;
+}
+
+public fn u32 PhiList.getCount(const PhiList* l) {
+    return l.count;
+}
+
+public fn PhiClause* PhiList.get(const PhiList* l, u32 idx) {
+    return &l.clauses[idx];
+}
+
+
+public type PhiClauses struct {
+    u32 count;
+    u32 capacity;
+    PhiClause* clauses;
+    PhiClause[2] stash;
+}
+
+public fn void PhiClauses.init(PhiClauses* c) {
+    c.count = 0;
+    c.capacity = 0;
+}
+
+public fn void PhiClauses.free(PhiClauses* c) {
+    if (c.capacity > elemsof(c.stash)) free(c.clauses);
+}
+
+public fn u32 PhiClauses.getCount(const PhiClauses* c) {
+    return c.count;
+}
+
+fn bool PhiClauses.contains(const PhiClauses* c, Ref ref) {
+    const PhiClause* clauses = c.getClauses();
+    for (u32 i=0; i<c.count; i++) {
+        if (clauses[i].ref.equals(ref)) return true;
+    }
+
+    return false;
+}
+
+public fn void PhiClauses.add(PhiClauses* c, BlockId blk_id, Ref ref) {
+    // TODO also check if blk_id is the same
+    if (c.contains(ref)) return;
+
+    PhiClause* clause;
+    if (c.count >= c.capacity) {
+        if (c.capacity == 0) {
+            c.capacity = elemsof(c.stash);
+            clause = c.stash;
+        } else {
+            u32 cap2 = c.capacity + c.capacity / 2 + 2;
+            PhiClause* clauses2 = malloc(cap2 * sizeof(PhiClause));
+            memcpy(clauses2, c.getClauses(), c.count * sizeof(PhiClause));
+            if (c.capacity > elemsof(c.stash)) free(c.clauses);
+            c.capacity = cap2;
+            c.clauses = clauses2;
+
+            clause = &c.clauses[c.count];
+        }
+    } else {
+        if (c.count > elemsof(c.stash)) clause = &c.clauses[c.count];
+        else clause = &c.stash[c.count];
+    }
+    c.count++;
+    clause.src = blk_id;
+    clause.dest_idx = 0;    // will be set on insertion
+    clause.ref = ref;
+}
+
+public fn const PhiClause* PhiClauses.getClauses(const PhiClauses* c) {
+    if (c.count <= elemsof(c.stash)) return c.stash;
+    return c.clauses;
+}
+
+public fn void PhiClauses.dump(const PhiClauses* c) @(unused) {
+}

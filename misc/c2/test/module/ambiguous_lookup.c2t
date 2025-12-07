@@ -1,0 +1,19 @@
+// @recipe bin
+    $warnings no-unused
+
+// @file{file1}
+module foo;
+
+public i32 a;   // @note{did you mean 'foo.a'?}
+
+// @file{file2}
+module bar;
+
+import foo local;
+
+public i8 a;   // @note{did you mean 'bar.a'?}
+
+fn void test2() {
+    i32 b = a;  // @error{symbol 'a' is ambiguous}
+}
+

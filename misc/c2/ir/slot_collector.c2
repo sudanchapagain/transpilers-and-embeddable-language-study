@@ -1,0 +1,410 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ir_slot_collector;
+
+import ir local;
+import ir_slot_writes_map local;
+
+import stdlib;
+import string local;
+import stdio local;
+
+public type ReadSlotAccess struct {
+    u16 done : 1;
+    u16 slot : 15;
+}
+static_assert(2, sizeof(ReadSlotAccess));
+
+type WriteSlotAccess struct {
+    u16 slot;
+    // u16 pad
+    Ref ref;
+}
+static_assert(8, sizeof(WriteSlotAccess));
+
+public type BlockIndex struct {
+    u16 rd_start;
+    u16 rd_count;
+}
+
+public type StaticSlot struct {
+    u16 slot;
+    u32 temp_idx;
+}
+
+public type SlotCollector struct {
+    Map* writes;
+
+    u32 read_idx;
+    u32 num_blocks;
+    ReadSlotAccess* reads;
+    BlockIndex* indexes;
+    FunctionInfo* info;
+
+    // TEMP hardcoded limit
+    u32 num_static_slots;
+    u32 slot_idx;   // incremented on every alloc
+    BlockId cur_blk;
+    // static slots are slots used outside load/store and cannot be removed
+    // TODO just use array[SlotMax]
+    StaticSlot[32] static_slots;
+}
+
+public fn void SlotCollector.create(SlotCollector* c) {
+    memset(c, 0, sizeof(SlotCollector));
+
+    // TODO scale with blocks
+    c.writes = ir_slot_writes_map.create(1024, 256);
+    // TEMP hardcoded max
+
+    c.reads = stdlib.malloc(SlotMax * sizeof(ReadSlotAccess));
+
+    // TEMP hardcoded max
+    c.indexes = stdlib.malloc(256 * sizeof(BlockIndex));
+
+}
+
+public fn void SlotCollector.free(SlotCollector* c) {
+    stdlib.free(c.indexes);
+    stdlib.free(c.reads);
+    c.writes.free();
+}
+
+fn void SlotCollector.addStaticSlot(SlotCollector* c, u16 slot) {
+    for (u32 i=0; i<c.num_static_slots; i++) {
+        if (c.static_slots[i].slot == slot) return; // already static
+    }
+    assert(c.num_static_slots < elemsof(c.static_slots));
+    c.static_slots[c.num_static_slots].slot = slot;
+    c.static_slots[c.num_static_slots].temp_idx = 0;
+    c.num_static_slots++;
+}
+
+fn StaticSlot* SlotCollector.getStaticSlot(SlotCollector* c, u16 slot) {
+    for (u32 i=0; i<c.num_static_slots; i++) {
+        if (c.static_slots[i].slot == slot) return &c.static_slots[i];
+    }
+    return nil;
+}
+
+fn void SlotCollector.checkStaticSlots(SlotCollector* c, FunctionInfo* info) {
+    // find all slots used outside load/stores, dont remove those
+    // also convert slot x -> temp y for non-removed allocs
+
+    Instr* instrs = c.info.instructions.get(0);
+    u32 count = c.info.instructions.getCount();
+    for (u32 i=0; i<count; i++) {
+        const Instr* ii = &instrs[i];
+
+        switch (ii.getKind()) {
+        case Load1...Load8:
+            // skip
+            break;
+        case Store1...Store8:
+            if (ii.args[0].isSlot()) c.addStaticSlot((u16)ii.args[0].value);
+            // Note: slot as dest is ok
+            break;
+        case Alloc1...Alloc8:
+            assert(ii.args[0].isValue());
+            // Note: should not be needed, but workaround until pointer stuff works
+            // TODO 4 on 32-bit systems
+            // TODO store slot value in args[1]?
+            if (ii.args[0].value > 8) c.addStaticSlot((u16)c.slot_idx);
+            c.slot_idx++;
+            break;
+        case Switch:
+            // TODO
+            break;
+        case Phi:
+            // should not exist yet
+            break;
+        default:
+            if (ii.args[0].isSlot()) c.addStaticSlot((u16)ii.args[0].value);
+            if (ii.args[1].isSlot()) c.addStaticSlot((u16)ii.args[1].value);
+            break;
+        }
+    }
+}
+
+public fn void SlotCollector.fill(SlotCollector* c, FunctionInfo* info) {
+    c.read_idx = 0;
+    c.num_blocks = info.blocks.getCount();
+    c.info = info;
+    c.num_static_slots = 0;
+    c.slot_idx = 0;
+    c.writes.clear();
+
+    c.checkStaticSlots(info);
+
+    for (u32 i=0; i<c.num_blocks; i++) c.promoteBlockSlots(i);
+}
+
+public fn ReadSlotAccess* SlotCollector.findRead(const SlotCollector* c, BlockId blk_id, u16 slot) {
+    const BlockIndex* bi = &c.indexes[blk_id];
+
+    u32 slot_start = bi.rd_start;
+    u32 slot_end = bi.rd_start + bi.rd_count;
+    for (u32 i=slot_start; i<slot_end; i++) {
+        ReadSlotAccess* ra = &c.reads[i];
+        if (ra.slot == slot) return ra;
+    }
+    return nil;
+}
+
+public fn const Ref* SlotCollector.findWrite(const SlotCollector* c, BlockId blk_id, u16 slot) {
+    Iter iter = c.writes.getList((u16)blk_id);
+    for (u32 i = 0; i < iter.count; i++) {
+        if (iter.ids[i].slot == slot) return &iter.ids[i].ref;
+    }
+    return nil;
+}
+
+fn void SlotCollector.checkRef(SlotCollector* c, Ref* r) {
+    if (!r.isSlot()) return;
+
+    u16 slot = (u16)r.value;
+    const StaticSlot* s = c.getStaticSlot(slot);
+    if (s) {
+        r.kind = RefKind.Temp;
+        r.value = (i32)s.temp_idx;
+        return;
+    }
+
+    // needs separate list of writes for current block?
+
+    Iter iter = c.writes.getList((u16)c.cur_blk);
+    for (u32 i = 0; i < iter.count; i++) {
+        SlotWrite* wr = &iter.ids[i];
+        if (wr.slot == slot) {
+            // replace slot-ref with write-ref
+            *r = wr.ref;
+            return;
+        }
+    }
+}
+
+fn void SlotCollector.promoteBlockSlots(SlotCollector* c, BlockId blk_id) {
+    /*
+        Algorithm, for each block:
+        - store last store per slot, replace slots (if we have a write)
+            replace with copy:
+                    store8 %1, s0  ->  %12 = copy %1
+                    last write s0: %12
+        - store first load per slot in block (if not after write)
+        - replace slot read with last write (or leave)
+        - replace slot writes with with write+copy (or leave)
+    */
+
+    Block* b = c.info.blocks.get(blk_id);
+    BlockIndex* bi = &c.indexes[blk_id];
+    c.cur_blk = blk_id;
+
+    bi.rd_start = (u16)c.read_idx;
+
+    u16 alloc_slot = 0;
+    // for each block, trace reads-after-write, replace Sx with Temp
+
+    Instr* ii = c.info.instructions.get(b.instr.start);
+    for (u32 i=0; i<b.instr.count; i++) {
+        Instr* cur = &ii[i];
+
+        switch(cur.getKind()) {
+        case Load1:
+        case Load2:
+        case Load4:
+        case Load8:
+            Ref* ref = &cur.args[0];
+            if (!ref.isSlot()) continue;
+
+            // convert to Copy
+            cur.instrBits.kind = InstrKind.Copy;
+
+            u16 slot = (u16)ref.value;
+            const StaticSlot* s = c.getStaticSlot(slot);
+            if (s) {
+                ref.kind = RefKind.Temp;
+                ref.value = (i32)s.temp_idx;
+                break;
+            }
+
+            //printf("B%d LOAD Slot %d\n", blk_id, slot);
+            // TODO could use bit-vector for reads/writes
+            bool found = false;
+            //printf("[%d] load %d (%s %d)\n", i, slot, cur.args[0].getKindName(), cur.args[0].value);
+            // ignore if already written here. Cannot use findWrite yet!
+            Iter iter = c.writes.getList((u16)blk_id);
+            for (u32 j = 0; j < iter.count; j++) {
+                SlotWrite* wr = &iter.ids[j];
+                if (wr.slot == slot) {
+                    // replace slot-ref with write-ref
+                    cur.args[0] = wr.ref;
+                    //printf("  replace with %s%d (0x%x)\n", cur.args[0].getKindName(), cur.args[0].value, wr.ref);
+                    found = true;
+                    break;
+                }
+            }
+            if (found) continue;    // already have write, so no need to store read
+
+            // for reads without a write this block, just convert to copy <slot> and leave for later
+
+            // only capture first read
+            for (u32 j=bi.rd_start; j<c.read_idx; j++) {
+                if (c.reads[j].slot == slot) {
+                    found = true;
+                    break;
+                }
+            }
+            if (found) continue;
+
+            assert(c.read_idx < SlotMax);
+            ReadSlotAccess* ra = &c.reads[c.read_idx++];
+            ra.done = 0;
+            ra.slot = slot;
+            break;
+        case Store1:
+        case Store2:
+        case Store4:
+        case Store8:
+            c.checkRef(&cur.args[0]);
+
+            Ref* ref = &cur.args[1];
+            if (!ref.isSlot()) continue;
+
+            // if non-removed alloc slot, replace with Temp
+
+            u16 slot = (u16)ref.value;
+            //printf("B%d STORE Slot %d\n", blk_id, slot);
+            const StaticSlot* s = c.getStaticSlot(slot);
+            if (s) {
+                ref.kind = RefKind.Temp;
+                ref.value = (i32)s.temp_idx;
+                break;
+            }
+
+            // convert into Copy, convert Slot to Temp, store that as last write
+            cur.instrBits.kind = InstrKind.Copy;
+            cur.instrBits.has_result = 1;
+            ref.kind = RefKind.None;
+            ref.value = 0;
+
+            u16 idx = (u16)(b.instr.start + i);
+
+            Iter iter = c.writes.getList((u16)blk_id);
+            Ref tmp_ref = { RefKind.Temp, idx }
+            //printf("  becomes %s%d\n", tmp_ref.getKindName(), tmp_ref.value);
+            for (u32 j = 0; j < iter.count; j++) {
+                SlotWrite* wr = &iter.ids[j];
+                if (wr.slot == slot) {
+                    wr.ref = tmp_ref;
+                    goto next;
+                }
+            }
+            //printf("  new write B%d slot %d 0x%x\n", blk_id, slot, wr_ref);
+            c.writes.add((u16)blk_id, slot, tmp_ref);
+next:
+
+            //printf("[%d] store %d (%s %d)\n", i, slot, wa.ref.getKindName(), wa.ref.value);
+#if 0
+            cur.clear();
+            if (i + 1 < b.instr.count) {
+                Instr* next = &ii[i+1];
+                if (next.isComment()) {
+                    next.clear();
+                    i++;
+                }
+            }
+#endif
+            break;
+        case Alloc1:
+        case Alloc2:
+        case Alloc4:
+        case Alloc8:
+            // check if used outside load/store (eg in add for array index)
+            // only remove if only used as load/store (eg. can be a register)
+            // TODO store slot ref as arg?
+            StaticSlot* s = c.getStaticSlot(alloc_slot);
+            if (s) {
+                s.temp_idx = i;
+            } else {
+                cur.clear();
+                if (i + 1 < b.instr.count) {
+                    Instr* next = &ii[i+1];
+                    if (next.isComment()) {
+                        next.clear();
+                        i++;
+                    }
+                }
+            }
+            alloc_slot++;
+            break;
+        case Switch:
+            assert(0); // TODO
+            break;
+        case Phi:
+            // should not exist yet
+            break;
+        default:
+            c.checkRef(&cur.args[0]);
+            c.checkRef(&cur.args[0]);
+            break;
+        }
+    }
+
+    bi.rd_count = (u16)c.read_idx - bi.rd_start;
+}
+
+public fn void SlotCollector.insertWriteIfNone(SlotCollector* c, BlockId blk_id, u16 slot, Ref ref) {
+    Iter iter = c.writes.getList((u16)blk_id);
+    for (u32 i = 0; i < iter.count; i++) {
+        SlotWrite* wr = &iter.ids[i];
+        if (wr.slot == slot) return;
+    }
+
+    c.insertWrite(blk_id, slot, ref);
+}
+
+public fn void SlotCollector.insertWrite(SlotCollector* c, BlockId blk_id, u16 slot, Ref ref) {
+    c.writes.add((u16)blk_id, slot, ref);
+}
+
+public fn void SlotCollector.dump(const SlotCollector* c) @(unused) {
+    printf("Access: [%d reads, %d blocks]\n", c.read_idx, c.num_blocks);
+    for (u32 i=0; i<c.num_blocks; i++) {
+        const BlockIndex* bi = &c.indexes[i];
+        printf("  B%d  %2d %2d", i, bi.rd_start, bi.rd_count);
+        printf(" R");
+        if (bi.rd_count) {
+            u32 start = bi.rd_start;
+            u32 end = bi.rd_start + bi.rd_count;
+            for (u32 j=start; j<end; j++) {
+                const ReadSlotAccess* ra = &c.reads[j];
+                printf(" %d", ra.slot);
+            }
+        }
+        printf(" | W");
+        Iter iter = c.writes.getList((u16)i);
+        if (iter.count) {
+            for (u32 j = 0; j < iter.count; j++) {
+                SlotWrite* wr = &iter.ids[j];
+                printf(" %d", wr.slot);
+                printf("(%s %d)", wr.ref.getKindName(), wr.ref.value);
+            }
+        }
+        printf("\n");
+    }
+    printf("\n");
+}
+

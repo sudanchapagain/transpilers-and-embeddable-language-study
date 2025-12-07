@@ -1,0 +1,13 @@
+/build
+/build-*
+/build_*
+bin
+release/
+tmp/
+.vscode
+.idea
+.DS_store
+test.text
+libruntime.a
+.clion.source.upload.marker
+.zig-cache/*

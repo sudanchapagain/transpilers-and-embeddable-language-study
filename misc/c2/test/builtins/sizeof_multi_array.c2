@@ -1,0 +1,8 @@
+// @warnings{no-unused}
+
+module test;
+
+u8[4][20] array1;
+
+static_assert(80, sizeof(array1));
+

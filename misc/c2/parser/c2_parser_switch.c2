@@ -1,0 +1,115 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module c2_parser;
+
+import stmt_list;
+import case_list;
+import expr_list;
+import ast local;
+import token local;
+import src_loc local;
+
+fn Stmt* Parser.parseSwitchStmt(Parser* p) {
+    SrcLoc loc = p.tok.loc;
+    p.consumeToken();
+
+    p.expectAndConsume(Kind.LParen);
+
+    if (p.isDeclaration()) {
+        p.error("declarations inside a switch condition are not allowed");
+    }
+    Expr* cond = p.parseExpr();
+
+    p.expectAndConsume(Kind.RParen);
+
+    p.expectAndConsume(Kind.LBrace);
+
+    // TODO: potential memory leak on error
+    case_list.List cases.init();
+
+    bool has_default = false;
+    while (p.tok.kind != Kind.RBrace) {
+        SwitchCase* c = nil;
+        switch (p.tok.kind) {
+        case KW_case:
+            c = p.parseCase(false);
+            break;
+        case KW_default:
+            has_default = true;
+            c = p.parseCase(true);
+            break;
+        default:
+            p.error("expected 'case' or 'default' keyword");
+            break;
+        }
+        cases.add(c);
+    }
+
+    p.expectAndConsume(Kind.RBrace);
+
+    Stmt* s = p.builder.actOnSwitchStmt(loc, cond, cases.getData(), cases.size(), has_default);
+    cases.free();
+    return s;
+}
+
+fn void Parser.parseCaseCondition(Parser* p, expr_list.List* list) {
+    for (;;) {
+        Expr* e = p.parseExpr();
+        if (p.tok.kind == Kind.Ellipsis) {
+            SrcLoc loc = p.tok.loc;
+            p.consumeToken();
+            Expr* e1 = p.parseExpr();
+            e = p.builder.actOnRange(loc, e, e1);
+        }
+        list.add(e);
+        if (p.tok.kind == Kind.Colon) break;
+        p.expectAndConsume(Kind.Comma);
+    }
+}
+
+fn SwitchCase* Parser.parseCase(Parser* p, bool is_default) {
+    SrcLoc loc = p.tok.loc;
+    p.consumeToken();
+
+    // TODO: potential memory leak on error
+    expr_list.List conds.init();
+    if (!is_default) {
+        p.parseCaseCondition(&conds);
+    }
+    p.expectAndConsume(Kind.Colon);
+
+    stmt_list.List* stmts = p.getStmtList();
+
+    bool more = true;
+    while (more) {
+        switch (p.tok.kind) {
+        case RBrace:
+        case KW_case:
+        case KW_default:
+            more = false;
+            break;
+        default:
+            stmts.add(p.parseStmt());
+            break;
+        }
+    }
+
+    SwitchCase* s = p.builder.actOnCase(loc, is_default, conds.getData(), conds.size(), stmts.getData(), stmts.size());
+    conds.free();
+    p.putStmtList();
+    return s;
+}
+

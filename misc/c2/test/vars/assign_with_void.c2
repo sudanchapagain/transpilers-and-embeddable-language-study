@@ -1,0 +1,11 @@
+// @warnings{no-unused}
+module test;
+
+fn void foo() {}
+
+fn void test1() {
+    i32 b;
+    b = foo();          // @error{invalid type conversion from 'void' to 'i32'}
+}
+
+

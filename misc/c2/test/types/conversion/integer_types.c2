@@ -1,0 +1,171 @@
+// @warnings{no-unused}
+module test;
+
+/*
+    char
+    i8
+    i16
+    i32
+    i64
+    u8
+    u16
+    u32
+    u64
+    isize
+    usize
+*/
+
+fn void test_char(char a) {
+    char c = a;
+    i8  m = a; // @error{implicit conversion changes signedness: 'char' to 'i8'}
+    i16 s = a;
+    i32 i = a;
+    i64 l = a;
+    u8  m2 = a;
+    u16 s2 = a;
+    u32 i2 = a;
+    u64 l2 = a;
+    isize is = a;
+    usize us = a;
+}
+
+fn void test_i8(i8 a) {
+    char c = a; // @error{implicit conversion changes signedness: 'i8' to 'char'}
+    i8  m = a;
+    i16 s = a;
+    i32 i = a;
+    i64 l = a;
+    u8  m2 = a; // @error{implicit conversion changes signedness: 'i8' to 'u8'}
+    u16 s2 = a; // @error{implicit conversion changes signedness: 'i8' to 'u16'}
+    u32 i2 = a; // @error{implicit conversion changes signedness: 'i8' to 'u32'}
+    u64 l2 = a; // @error{implicit conversion changes signedness: 'i8' to 'u64'}
+    isize is = a;
+    usize us = a; // @error{implicit conversion changes signedness: 'i8' to 'usize'}
+}
+
+fn void test_i16(i16 a) {
+    char c = a; // @error{implicit conversion loses integer precision: 'i16' to 'char'}
+    i8  m = a;  // @error{implicit conversion loses integer precision: 'i16' to 'i8'}
+    i16 s = a;
+    i32 i = a;
+    i64 l = a;
+    u8  m2 = a; // @error{implicit conversion loses integer precision: 'i16' to 'u8'}
+    u16 s2 = a; // @error{implicit conversion changes signedness: 'i16' to 'u16'}
+    u32 i2 = a; // @error{implicit conversion changes signedness: 'i16' to 'u32'}
+    u64 l2 = a; // @error{implicit conversion changes signedness: 'i16' to 'u64'}
+    isize is = a;
+    usize us = a; // @error{implicit conversion changes signedness: 'i16' to 'usize'}
+}
+
+fn void test_i32(i32 a) {
+    char c = a; // @error{implicit conversion loses integer precision: 'i32' to 'char'}
+    i8  m = a;  // @error{implicit conversion loses integer precision: 'i32' to 'i8'}
+    i16 s = a; // @error{implicit conversion loses integer precision: 'i32' to 'i16'}
+    i32 i = a;
+    i64 l = a;
+    u8  m2 = a; // @error{implicit conversion loses integer precision: 'i32' to 'u8'}
+    u16 s2 = a; // @error{implicit conversion loses integer precision: 'i32' to 'u16'}
+    u32 i2 = a; // @error{implicit conversion changes signedness: 'i32' to 'u32'}
+    u64 l2 = a; // @error{implicit conversion changes signedness: 'i32' to 'u64'}
+    isize is = a;
+    usize us = a; // @error{implicit conversion changes signedness: 'i32' to 'usize'}
+}
+
+fn void test_i64(i64 a) {
+    char c = a;  // @error{implicit conversion loses integer precision: 'i64' to 'char'}
+    i8  m = a;  // @error{implicit conversion loses integer precision: 'i64' to 'i8'}
+    i16 s = a;  // @error{implicit conversion loses integer precision: 'i64' to 'i16'}
+    i32 i = a;  // @error{implicit conversion loses integer precision: 'i64' to 'i32'}
+    i64 l = a;
+    u8  m2 = a; // @error{implicit conversion loses integer precision: 'i64' to 'u8'}
+    u16 s2 = a; // @error{implicit conversion loses integer precision: 'i64' to 'u16'}
+    u32 i2 = a; // @error{implicit conversion loses integer precision: 'i64' to 'u32'}
+    u64 l2 = a; // @error{implicit conversion changes signedness: 'i64' to 'u64'}
+    isize is = a;
+    usize us = a; // @error{implicit conversion changes signedness: 'i64' to 'usize'}
+}
+
+fn void test_u8(u8 a) {
+    char c = a;
+    i8  m = a; // @error{implicit conversion changes signedness: 'u8' to 'i8'}
+    i16 s = a;
+    i32 i = a;
+    i64 l = a;
+    u8  m2 = a;
+    u16 s2 = a;
+    u32 i2 = a;
+    u64 l2 = a;
+    isize us = a;
+    usize is = a;
+}
+
+fn void test_u16(u16 a) {
+    char c = a; // @error{implicit conversion loses integer precision: 'u16' to 'char'}
+    i8  m = a; // @error{implicit conversion loses integer precision: 'u16' to 'i8'}
+    i16 s = a; // @error{implicit conversion changes signedness: 'u16' to 'i16'}
+    i32 i = a;
+    i64 l = a;
+    u8  m2 = a; // @error{implicit conversion loses integer precision: 'u16' to 'u8'}
+    u16 s2 = a;
+    u32 i2 = a;
+    u64 l2 = a;
+    isize us = a;
+    usize is = a;
+}
+
+fn void test_u32(u32 a) {
+    char c = a; // @error{implicit conversion loses integer precision: 'u32' to 'char'}
+    i8  m = a; // @error{implicit conversion loses integer precision: 'u32' to 'i8'}
+    i16 s = a; // @error{implicit conversion loses integer precision: 'u32' to 'i16'}
+    i32 i = a; // @error{implicit conversion changes signedness: 'u32' to 'i32'}
+    i64 l = a;
+    u8  m2 = a; // @error{implicit conversion loses integer precision: 'u32' to 'u8'}
+    u16 s2 = a; // @error{implicit conversion loses integer precision: 'u32' to 'u16'}
+    u32 i2 = a;
+    u64 l2 = a;
+    isize us = a;
+    usize is = a;
+}
+
+fn void test_u64(u64 a) {
+    char c = a; // @error{implicit conversion loses integer precision: 'u64' to 'char'}
+    i8  m = a; // @error{implicit conversion loses integer precision: 'u64' to 'i8'}
+    i16 s = a; // @error{implicit conversion loses integer precision: 'u64' to 'i16'}
+    i32 i = a; // @error{implicit conversion loses integer precision: 'u64' to 'i32'}
+    i64 l = a; // @error{implicit conversion changes signedness: 'u64' to 'i64'}
+    u8  m2 = a; // @error{implicit conversion loses integer precision: 'u64' to 'u8'}
+    u16 s2 = a; // @error{implicit conversion loses integer precision: 'u64' to 'u16'}
+    u32 i2 = a; // @error{implicit conversion loses integer precision: 'u64' to 'u32'}
+    u64 l2 = a;
+    isize us = a; // @error{implicit conversion changes signedness: 'u64' to 'isize'}
+    usize is = a;
+}
+
+fn void test_isize(isize a) {
+    char c = a;  // @error{implicit conversion loses integer precision: 'isize' to 'char'}
+    i8  m = a;  // @error{implicit conversion loses integer precision: 'isize' to 'i8'}
+    i16 s = a;  // @error{implicit conversion loses integer precision: 'isize' to 'i16'}
+    i32 i = a;  // @error{implicit conversion loses integer precision: 'isize' to 'i32'}
+    i64 l = a;
+    u8  m2 = a; // @error{implicit conversion loses integer precision: 'isize' to 'u8'}
+    u16 s2 = a; // @error{implicit conversion loses integer precision: 'isize' to 'u16'}
+    u32 i2 = a; // @error{implicit conversion loses integer precision: 'isize' to 'u32'}
+    u64 l2 = a; // @error{implicit conversion changes signedness: 'isize' to 'u64'}
+    isize is = a;
+    usize us = a; // @error{implicit conversion changes signedness: 'isize' to 'usize'}
+}
+
+fn void test_usize(usize a) {
+    char c = a; // @error{implicit conversion loses integer precision: 'usize' to 'char'}
+    i8  m = a; // @error{implicit conversion loses integer precision: 'usize' to 'i8'}
+    i16 s = a; // @error{implicit conversion loses integer precision: 'usize' to 'i16'}
+    i32 i = a; // @error{implicit conversion loses integer precision: 'usize' to 'i32'}
+    i64 l = a; // @error{implicit conversion changes signedness: 'usize' to 'i64'}
+    u8  m2 = a; // @error{implicit conversion loses integer precision: 'usize' to 'u8'}
+    u16 s2 = a; // @error{implicit conversion loses integer precision: 'usize' to 'u16'}
+    u32 i2 = a; // @error{implicit conversion loses integer precision: 'usize' to 'u32'}
+    u64 l2 = a;
+    isize us = a; // @error{implicit conversion changes signedness: 'usize' to 'isize'}
+    usize is = a;
+}
+

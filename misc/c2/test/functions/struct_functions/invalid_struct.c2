@@ -1,0 +1,13 @@
+// @warnings{no-unused}
+module test;
+
+type Enum enum i8 { A, B }
+
+fn void Enum.init(Enum* t) {
+}
+
+i32 var;
+fn void var.init(i32* t) {  // @error{a type-function type must be a struct/union/enum}
+
+}
+

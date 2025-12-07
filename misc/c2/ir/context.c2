@@ -1,0 +1,722 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ir_context;
+
+import index_list;
+import ir local;
+import ir_tools local;
+import string_pool;
+import target_info;
+
+import stdio;
+import stdlib;
+
+type Builder struct {
+    u32 slot_idx;
+    u32 num_scopes;
+    SymbolId cur_func;
+    SymbolId cur_global;
+    BlockId cur_block;
+    u32 blk_start_instr;    // used to note starting instruction
+    bool block_terminated;
+    bool in_block;
+
+    // only used during function generation
+    index_list.List block_order;
+    FunctionInfo* tmp_info;
+}
+
+fn void Builder.init(Builder* b) {
+    b.block_order.init(64);
+    b.tmp_info = nil;
+}
+
+fn void Builder.free(Builder* b) {
+    if (b.tmp_info) b.tmp_info.free();
+    b.block_order.free();
+}
+
+public type Context struct @(opaque) {
+    // context stuff
+    string_pool.Pool* pool;
+    ConstantList constants;
+    SymbolList symbols;
+    InitValueList init_values;
+
+    Builder b;
+
+    // used during conversion of IR -> ASM
+    const target_info.Info* target_info;
+    BuildInfo build_info;
+    const Target* target; // no ownership
+    Tools tools;
+
+    bool single_thread;
+    bool print_all;
+
+    WorkQueue queue;
+}
+
+public type BuildInfo struct {
+    const char* compiler;   // no ownership
+    const char* linkerflags;    // no ownership
+}
+
+public fn Context* create(bool print, const target_info.Info* info, const BuildInfo* buildInfo) {
+    Context* c = stdlib.calloc(1, sizeof(Context));
+    c.pool = string_pool.create(2*1024, 256);
+    c.constants.init(128);
+    c.symbols.init(128);
+    c.init_values.init(128);
+    c.queue.init();
+    c.single_thread = true;
+    c.print_all = print;
+    //c.single_thread = false;
+
+    // pre-load pool with slot names
+    for (u32 slot = 0; slot < SlotMax; slot++) {
+        char[8] slot_name;
+        // Result: starts at 4, then +4 each
+        // Note: just 4,8,12,
+        stdio.sprintf(slot_name, "s%d", slot);
+        u32 idx = c.pool.addStr(slot_name, false);
+    }
+
+    c.b.init();
+
+    c.target_info = info;
+    c.build_info = *buildInfo;
+    c.target = getArchTarget(info);
+    c.tools.init(c.target, c, print_function);
+    return c;
+}
+
+public fn void Context.free(Context* c) {
+    c.queue.free();
+    c.tools.free();
+    for (u32 i=1; i<c.symbols.getCount(); i++) {
+        const Symbol* s = c.symbols.get(i);
+        if (s.is_function && s.f.info) {
+            s.f.info.free();
+        }
+    }
+
+    c.b.free();
+
+    c.init_values.free();
+    c.symbols.free();
+    c.constants.free();
+    c.pool.free();
+    stdlib.free(c);
+}
+
+public fn void Context.convert_functions(Context* c) {
+    // already done if single threaded
+    if (!c.single_thread) c.queue.run(c, 0);
+}
+
+fn void print_function(const void* arg1, const void* arg2, const FunctionInfo* fi, const char* label) {
+    const Context* c = arg1;
+    if (!c.print_all) return;
+
+    c.print_function(arg2, fi, label);
+}
+
+public fn SymbolId Context.addStringLiteral(Context* c, const char* name, const char* text, u32 size) {
+#if DebugIr
+    stdio.printf("addStringLiteral(%s)\n", text);
+#endif
+    SymbolId id = c.addGlobalVar(name, 1, false);
+    u32 text_idx = c.pool.addStr(text, false);
+
+    Symbol* s = c.symbols.get(id);
+    s.g.init_value_idx = c.init_values.getCount();
+    s.g.init_value_count = 1;
+
+    InitValue* v = c.init_values.add();
+    v.init(InitValueKind.Text, text_idx);
+    return id;
+}
+
+public fn SymbolId Context.addGlobalVar(Context* c, const char* name, u32 align, bool is_external) {
+    u32 name_idx = c.pool.addStr(name, false);
+    SymbolId id = c.symbols.add(name_idx, false, align, is_external);
+#if DebugIr
+    stdio.printf("addGlobalVar(%s) id=%d external=%d\n", name, id, is_external);
+#endif
+    return id;
+}
+
+public fn SymbolId Context.addFunction(Context* c, const char* name, bool is_external) {
+    u32 name_idx = c.pool.addStr(name, false);
+    // TODO 4/8 bytes, ARCH
+    SymbolId id = c.symbols.add(name_idx, true, 4, is_external);
+#if DebugIr
+    stdio.printf("addFunction(%s) id=%d external=%d\n", name, id, is_external);
+#endif
+    return id;
+}
+
+public fn void Context.startFunc(Context* c, SymbolId id) {
+    Builder* b = &c.b;
+#if DebugIr
+    stdio.printf("startFunc(%d)  cur %d\n", id, b.cur_func);
+#endif
+    assert(b.tmp_info == nil);
+    b.tmp_info = FunctionInfo.create(id, 8, 16, 16);
+    assert(b.cur_func == 0);
+    b.cur_func = id;
+    b.num_scopes = 0;
+    b.slot_idx = 0;
+}
+
+public fn void Context.endFunc(Context* c) {
+    Builder* b = &c.b;
+#if DebugIr
+    stdio.printf("endFunc() cur %d\n", b.cur_func);
+#endif
+    assert(b.num_scopes == 0);
+    assert(b.cur_func);
+
+    c.finalizeFunction(b.cur_func);
+
+    b.cur_func = 0;
+}
+
+public fn void Context.startGlobal(Context* c, SymbolId id) {
+    Builder* b = &c.b;
+#if DebugIr
+    stdio.printf("startGlobal(%d)  cur %d\n", id, b.cur_global);
+#endif
+    assert(b.cur_global == 0);
+    b.cur_global = id;
+    Symbol* s = c.symbols.get(b.cur_global);
+    s.g.init_value_idx = c.init_values.getCount();
+}
+
+public fn void Context.endGlobal(Context* c) {
+    Builder* b = &c.b;
+#if DebugIr
+    stdio.printf("endGlobal()  cur %d\n", b.cur_global);
+#endif
+    assert(b.cur_global);
+    Symbol* s = c.symbols.get(b.cur_global);
+    s.g.init_value_count = c.init_values.getCount() - s.g.init_value_idx;
+    b.cur_global = 0;
+}
+
+public fn void Context.addInitZero(Context* c, u32 size) {
+#if DebugIr
+    stdio.printf("addInitZero()  %d\n", size);
+#endif
+    assert(size < 0x0FFFFFFF);
+    assert(c.b.cur_global);
+    InitValue* v = c.init_values.add();
+    v.init(InitValueKind.Zero, size);
+}
+
+public fn void Context.addInitValueU8(Context* c, u8 value) {
+    InitValue* v = c.init_values.add();
+    v.init(InitValueKind.Byte, value);
+}
+
+public fn void Context.addInitValueU16(Context* c, u16 value) {
+    InitValue* v = c.init_values.add();
+    v.init(InitValueKind.Short, value);
+}
+
+public fn void Context.addInitValueU32(Context* c, u32 value) {
+    InitValue* v = c.init_values.add();
+    if (value < 0x0FFFFFFF) {
+        v.init(InitValueKind.Word, value);
+    } else {
+        Constant constant = { .uvalue = value }
+        u32 idx = c.constants.add(&constant);
+        v.init(InitValueKind.Word2, idx);
+    }
+}
+
+public fn void Context.addInitValueU64(Context* c, u64 value) {
+    InitValue* v = c.init_values.add();
+    if (value < 0x0FFFFFFF) {
+        v.init(InitValueKind.Long, (u32)value);
+    } else {
+        Constant constant = { .uvalue = value }
+        u32 idx = c.constants.add(&constant);
+        v.init(InitValueKind.Long2, idx);
+    }
+}
+
+public fn void Context.addInitSymbol(Context* c, SymbolId id) {
+    InitValue* v = c.init_values.add();
+    v.init(InitValueKind.Symbol, id);
+}
+
+// size = strlen()
+public fn void Context.addInitString(Context* c, const char* text, u32 size) {
+    InitValue* v = c.init_values.add();
+    u32 text_idx = c.pool.add(text, size, false);
+    v.init(InitValueKind.Text, text_idx);
+}
+
+public fn void Context.setFunctionReturnType(Context* c, Type t) {
+    c.b.tmp_info.setReturnType(t);
+}
+
+public fn Ref Context.addFuncArg(Context* c, Type t) {
+    c.b.tmp_info.addArg(t);
+
+    u32 idx = c.b.tmp_info.instructions.getCount();
+    Instr* i = c.b.tmp_info.instructions.add();
+    i.init0b(InstrKind.Param);
+    Ref ref.init(RefKind.Temp, idx);
+    return ref;
+}
+
+public fn BlockId Context.createBlock(Context* c, BlockKind kind) {
+    BlockId id = c.b.tmp_info.blocks.add(kind);
+#if DebugIr
+    stdio.printf(" createBlock(%s) id=%d\n", kind.str(), id);
+#endif
+    return id;
+}
+
+public fn bool Context.isBlockTerminated(const Context* c) {
+    return c.b.block_terminated;
+}
+
+// Note: blocks are not implemented in order! (can be nested statements)
+public fn void Context.startBlock(Context* c, BlockId id) {
+#if DebugIr
+    Block* b = c.b.tmp_info.blocks.get(id);
+    stdio.printf(" startBlock(%s.%d) cur %d\n", b.getKindName(), id, c.b.cur_block);
+#endif
+    assert(!c.b.in_block);
+    c.b.in_block = true;
+    c.b.block_order.add(id);
+    c.b.cur_block = id;
+    c.b.block_terminated = false;
+    c.b.blk_start_instr = c.b.tmp_info.instructions.getCount();
+}
+
+public fn void Context.endBlock(Context* c) {
+#if DebugIr
+    stdio.printf(" endBlock()\n");
+#endif
+    if (!c.b.block_terminated) {
+        // always close block with jmp to next block
+        c.addJmpInstr(c.b.cur_block+1);
+    }
+    Block* b = c.b.tmp_info.blocks.get(c.b.cur_block);
+    b.setInstructions(c.b.blk_start_instr, c.b.tmp_info.instructions.getCount() - c.b.blk_start_instr);
+    c.b.cur_block = 0;
+    c.b.in_block = false;
+}
+
+public fn BlockId Context.getCurBlock(const Context* c) {
+    return c.b.cur_block;
+}
+
+public fn void Context.addJmpInstr(Context* c, BlockId dest) {
+    assert(c.b.in_block);
+    Block* b = c.b.tmp_info.blocks.get(c.b.cur_block);
+#if DebugIr
+    stdio.printf("  jmp(%s.%d)\n", b.getKindName(), dest);
+#endif
+    // destination blocks are stored inside Block, not jmp instr
+    b.setDest(dest, 0);
+    Ref ref.init(RefKind.JmpDest, 0);
+    Instr* i = c.b.tmp_info.instructions.add();
+    i.init1(InstrKind.Jmp, ref);
+    c.b.block_terminated = true;
+}
+
+public fn void Context.addJmpIfInstr(Context* c, Ref cond, BlockId dest1, BlockId dest2) {
+    assert(c.b.in_block);
+    Block* b = c.b.tmp_info.blocks.get(c.b.cur_block);
+#if DebugIr
+    Block* d1 = c.b.tmp_info.blocks.get(dest1);
+    Block* d2 = c.b.tmp_info.blocks.get(dest2);
+    stdio.printf("  jmp_if %s.%d, %s.%d\n", d1.getKindName(), dest1, d2.getKindName(), dest2);
+#endif
+    b.setDest(dest1, dest2);
+    Ref ref.init(RefKind.JmpDest, 0);
+    Instr* i = c.b.tmp_info.instructions.add();
+    i.init2(InstrKind.JmpIf, cond, ref);
+    c.b.block_terminated = true;
+}
+
+public fn void Context.addRet0Instr(Context* c) {
+#if DebugIr
+    stdio.printf("  ret\n");
+#endif
+    assert(c.b.in_block);
+    Instr* i = c.b.tmp_info.instructions.add();
+    i.init0(InstrKind.Ret);
+    c.b.block_terminated = true;
+    Block* b = c.b.tmp_info.blocks.get(c.b.cur_block);
+    b.end_block = 1;
+}
+
+public fn void Context.addRet1Instr(Context* c, Ref ref) {
+#if DebugIr
+    stdio.printf("  ret <val>\n");
+#endif
+    assert(c.b.in_block);
+    Instr* i = c.b.tmp_info.instructions.add();
+    i.init1(InstrKind.Ret, ref);
+    c.b.block_terminated = true;
+    Block* b = c.b.tmp_info.blocks.get(c.b.cur_block);
+    b.end_block = 1;
+}
+
+public fn Ref Context.addLoadInstr(Context* c, Type t, Ref src) {
+#if DebugIr
+    stdio.printf("  load %s %s %d\n", t.str(), src.getKindName(), src.value);
+#endif
+    assert(c.b.in_block);
+
+    Ref out.init(RefKind.Temp, c.b.tmp_info.instructions.getCount());
+
+    InstrKind k = None;     // prevent C warning
+    switch (t) {
+    case None:
+        assert(0);
+        return out;
+    case I8:
+        k = InstrKind.Load1;
+        break;
+    case I16:
+        k = InstrKind.Load2;
+        break;
+    case I32:
+        k = InstrKind.Load4;
+        break;
+    case I64:
+        k = InstrKind.Load8;
+        break;
+    case U8:
+        k = InstrKind.Load1;
+        break;
+    case U16:
+        k = InstrKind.Load2;
+        break;
+    case U32:
+        k = InstrKind.Load4;
+        break;
+    case U64:
+        k = InstrKind.Load8;
+        break;
+    case F32:
+        k = InstrKind.Load4;
+        break;
+    case F64:
+        k = InstrKind.Load8;
+        break;
+    }
+    Instr* i = c.b.tmp_info.instructions.add();
+    i.init1b(k, src);
+    return out;
+}
+
+const InstrKind[elemsof(Type)] Type2Store = {
+    [Type.I8]  = InstrKind.Store1,
+    [Type.I16] = InstrKind.Store2,
+    [Type.I32] = InstrKind.Store4,
+    [Type.I64] = InstrKind.Store8,
+    [Type.U8]  = InstrKind.Store1,
+    [Type.U16] = InstrKind.Store2,
+    [Type.U32] = InstrKind.Store4,
+    [Type.U64] = InstrKind.Store8,
+    [Type.F32] = InstrKind.Store4,
+    [Type.F64] = InstrKind.Store8,
+}
+
+public fn void Context.addStoreInstr(Context* c, Type t, Ref src, Ref dest) {
+#if DebugIr
+    stdio.printf("  store %s  %s %d -> %s %d\n", t.str(),
+        src.getKindName(), src.value,
+        dest.getKindName(), dest.value);
+#endif
+    assert(c.b.in_block);
+    Instr* i = c.b.tmp_info.instructions.add();
+    assert (t != Type.None);
+    InstrKind k = Type2Store[t];
+    i.init2(k, src, dest);
+}
+
+public fn Ref Context.addBinaryInstr(Context* c, InstrKind k, Ref left, Ref right) {
+#if DebugIr
+    stdio.printf("  binary Instr %s (%s %d, %s %d) \n", k.str(),
+        left.getKindName(), left.value,
+        right.getKindName(), right.value);
+#endif
+    Ref out.init(RefKind.Temp, c.b.tmp_info.instructions.getCount());
+
+    Instr* i = c.b.tmp_info.instructions.add();
+    i.init2b(k, left, right);
+    return out;
+}
+
+public fn Ref Context.addCallInstr(Context* c, Ref name, const Ref* args, u32 num_args, bool has_result, bool noreturn) {
+#if DebugIr
+    stdio.printf("  call %s%d\n", name.getKindName(), name.value);
+#endif
+    for (u32 i = 0; i < num_args; i++) {
+        Instr* ii = c.b.tmp_info.instructions.add();
+        ii.init1(InstrKind.Arg, args[i]);
+    }
+
+    Ref out.init(RefKind.Temp, c.b.tmp_info.instructions.getCount());
+    Ref argsref.init(RefKind.CallNumArgs, num_args);
+
+    Instr* i = c.b.tmp_info.instructions.add();
+    if (has_result) {
+        i.init2b(InstrKind.Call, name, argsref);
+    } else {
+        i.init2(InstrKind.Call, name, argsref);
+    }
+    if (noreturn) {
+        Block* b = c.b.tmp_info.blocks.get(c.b.cur_block);
+        b.end_block = 1;
+        c.b.block_terminated = true;
+    }
+    return out;
+}
+
+// Temp only for 2 refs, could be more
+public fn Ref Context.addPhi2Instr(Context* c, BlockId b1, Ref r1, BlockId b2, Ref r2) {
+#if DebugIr
+    stdio.printf("  phi2  %d, %d\n", b1, b2);
+#endif
+    Ref out.init(RefKind.Temp, c.b.tmp_info.instructions.getCount());
+
+    Instr* i = c.b.tmp_info.instructions.add();
+    i.initPhi(c.b.tmp_info.phis.getCount(), 2);
+
+    Block* blk = c.b.tmp_info.blocks.get(b1);
+    blk.phi_source = 1;
+    blk = c.b.tmp_info.blocks.get(b2);
+    blk.phi_source = 1;
+
+    c.b.tmp_info.phis.add((u32)out.value, b1, r1);
+    c.b.tmp_info.phis.add((u32)out.value, b2, r2);
+    return out;
+}
+
+public fn Ref Context.addStackSlot(Context* c, u32 align, Ref size) {
+#if DebugIr
+    stdio.printf("  slot (%d)\n", c.b.slot_idx);
+#endif
+    u32 idx = c.b.slot_idx;
+    c.b.slot_idx++;
+    assert(c.b.slot_idx < 65536); // to fit in u16
+    // TODO use Temp (or convert after SSA creation)
+    //Ref out.init(RefKind.Temp, c.b.tmp_info.instructions.getCount());
+    Ref out.init(RefKind.Slot, idx);
+    Instr* i = c.b.tmp_info.instructions.add();
+
+    InstrKind kind;
+    switch (align) {
+    case 1:
+        kind = InstrKind.Alloc1;
+        break;
+    case 2:
+        kind = InstrKind.Alloc2;
+        break;
+    case 4:
+        kind = InstrKind.Alloc4;
+        break;
+    case 8:
+        kind = InstrKind.Alloc8;
+        break;
+    default:
+        //stdio.printf("WARN: implement other alignment (%d)\n", align);
+        kind = InstrKind.Alloc8;
+        break;
+    }
+    i.init1b(kind, size);
+    return out;
+}
+
+public fn Ref Context.addIntegerConstant(Context* c, i64 size) {
+#if DebugIr
+    stdio.printf("  integer (%d)\n", size);
+#endif
+    // if signed value fits in 27 bits, store it in Ref directly
+    const i32 min_27bits = -0x3FFFFFF-1;
+    const i32 max_27_bits = 0x3FFFFFF;
+    Ref ref;
+    if (size >= min_27bits && size <= max_27_bits) {
+        ref.init(RefKind.Value, (u32)size);
+    } else {
+        Constant constant = { .ivalue = size }
+        u32 idx = c.constants.add(&constant);
+        ref.init(RefKind.Integer, idx);
+    }
+    return ref;
+}
+
+public fn void Context.addComment(Context* c, const char* text) {
+    FunctionInfo* fi = c.b.tmp_info;
+    u32 idx = c.pool.addStr(text, false);
+    Ref out.init(RefKind.Temp, fi.instructions.getCount());
+    Instr* i = fi.instructions.add();
+    Ref ref.init(RefKind.Text, idx);
+    i.init1(InstrKind.Comment, ref);
+}
+
+public fn CaseId Context.addSwitchInstr(Context* c, Ref cond, BlockId join_blk, u32 num_cases) {
+#if DebugIr
+    stdio.printf("  switch (join %d, %d cases)\n", join_blk, num_cases);
+#endif
+    CaseId case_id = c.b.tmp_info.cases.reserve(num_cases);
+
+    assert(c.b.in_block);
+    Instr* i = c.b.tmp_info.instructions.add();
+    Ref join_ref.init(RefKind.Block, join_blk);
+    i.init2(InstrKind.Switch, cond, join_ref);
+    c.b.block_terminated = true;
+    Block* b = c.b.tmp_info.blocks.get(c.b.cur_block);
+    b.end_with_switch = 1;
+    b.setDest(case_id, num_cases);
+    return case_id;
+}
+
+public fn void Context.setCase(Context* c, CaseId case_id, u32 value, BlockId blk_id) {
+#if DebugIr
+    stdio.printf("  case (%d) value %d blk %d\n", case_id, value, blk_id);
+#endif
+    c.b.tmp_info.cases.set(case_id, value, blk_id);
+}
+
+fn void Context.finalizeFunction(Context* c, SymbolId id) {
+    // prune unused blocks and flatten blocks with only a jmp instruction
+    Tools* t = &c.tools;
+    Symbol* symbol = c.symbols.get(id);
+    FunctionInfo* fi = c.b.tmp_info;
+
+    t.arg2 = symbol;
+    t.fi = fi;
+
+    u32 num_blocks = fi.blocks.getCount();
+    fi.num_slots = (u16)c.b.slot_idx;
+
+    //const char* name = c.pool.idx2str(symbol.name);
+
+    //dump_function(fi, name);
+    t.print_func("after generation");
+    // prune unused and empty blocks, possible convert jmp_if to jmp
+    checkDest(fi, 0);
+    t.print_func("after check dest");
+
+    // TODO use Builder 2nd BlockList here (pass as well)
+    t.reorder_blocks(fi, &c.b.block_order);
+    c.b.block_order.clear();
+
+    symbol.f.info = fi;
+    c.b.tmp_info = nil;
+
+    // TODO can be multi-threaded after this point (ready for inlining)
+    if (c.single_thread) {
+        t.convert_fn();
+        //dump_function(fi, "TODO");
+    } else {
+        c.queue.add(fi);
+    }
+}
+
+fn bool empty_block(const Block* b, const InstrList* instructions) {
+    // empty means only a jump
+    if (b.instr.count == 1) return true;
+    if (b.instr.count == 2) {
+        Instr* instr = instructions.get(b.instr.start);
+        if (instr.getKind() == InstrKind.Comment) return true;
+
+        instr = instructions.get(b.instr.start+1);
+        if (instr.getKind() == InstrKind.Comment) return true;
+    }
+    return false;
+}
+
+// uses tmp_info! TODO could also just use cur_info (points to current)
+fn BlockId checkDest(FunctionInfo* fi, BlockId id) {
+    Block* b = fi.blocks.get(id);
+
+    if (b.checked) {
+        if (b.used) return id;  // avoid circular loops
+        assert(!b.end_with_switch);
+        return b.dests[0];
+    }
+    b.checked = true;
+
+    if (b.end_with_switch) {
+        b.used = true;
+        CaseId case_id = b.dests[0];
+        u32 num_cases = b.dests[1];
+        for (u32 i=0; i<num_cases; i++) {
+            Case* cs = fi.cases.get(case_id+i);
+            BlockId new_blk = checkDest(fi, cs.block);
+            cs.block = new_blk;
+        }
+
+        // update join blk
+        u32 instr_idx = b.instr.start + b.instr.count - 1;
+        Instr* switch_instr = fi.instructions.get(instr_idx);
+        assert(switch_instr.isSwitch());
+        Ref* join_ref = &switch_instr.args[1];
+        join_ref.value = (i32)checkDest(fi, (u32)join_ref.value);
+        return id;
+    }
+
+    if (b.dests[0] == 0 && b.dests[1] == 0) {   // last one
+        b.used = true;
+        return id;
+    }
+
+    if (!b.phi_source && id != 0 && empty_block(b, &fi.instructions)) {
+        BlockId new_blk = checkDest(fi, b.dests[0]);
+        if (new_blk == id) {
+            b.used = true;
+            b.dests[0] = id;    // create circular loop
+        } else {
+            b.used = false;
+            b.dests[0] = new_blk;   // set for next queries
+        }
+        return new_blk;
+    }
+
+    b.used = true;
+    if (b.dests[0]) {
+        b.dests[0] = checkDest(fi, b.dests[0]);
+    }
+    if (b.dests[1]) {
+        b.dests[1] = checkDest(fi, b.dests[1]);
+    }
+
+    if (b.dests[0] == b.dests[1]) {
+        // both jumps go to same dest, convert cmp + jmp_if -> jmp
+        Instr* last = fi.instructions.get(b.instr.start + b.instr.count -1);
+        Ref ref.init(RefKind.JmpDest, id);
+        last.init1(InstrKind.Jmp, ref);
+        b.dests[1] = 0;
+        // unroll all unused temps -> after re-writing?
+    }
+
+    return id;
+}
+
+

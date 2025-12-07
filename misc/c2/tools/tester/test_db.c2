@@ -1,0 +1,879 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module test_db;
+
+import c_errno local;
+import stdio local;
+import stdarg local;
+import stdlib local;
+import string local;
+import unistd local;
+
+import expect_file local;
+import file_utils;
+import issues local;
+import string_buffer;
+import string_utils local;
+import test_utils local;
+
+public const u32 MAX_LINE = 512;
+
+// TODO move to libc (now supported)
+fn bool doWIFEXITED(i32 state) {
+    return ((state & 0xff) == 0);
+}
+
+fn char getWEXITSTATUS(i32 state) {
+    return (char)((state >> 8) & 0xff);
+}
+
+
+public type TestKind enum u8 {
+    C2,
+    C2T,
+    C2A,
+}
+
+public type Mode enum u8 {
+    Outside,
+    Infile,
+    InExpectFile,
+}
+
+// TODO rename
+type Type enum u8 { ERROR, WARNING, NOTE }
+
+public type Db struct {
+    string_buffer.Buf* output;  // no ownership
+    const char* source;    // no ownership
+    const char* filename;
+    TestKind kind;
+    const char* tmp_dir;
+    const char* c2c_cmd;    // no ownership
+
+    // TODO use vector<ExpectFile>
+    ExpectFile** expectedFiles;
+    u32 expectedCount;
+    u32 expectedCapacity;
+    ExpectFile* currentExpect;  // points into expectedFiles
+
+    Issues* errors;
+    Issues* warnings;
+    Issues* notes;
+
+    Mode mode;
+    const char* file_start;
+    u32 line_offset;
+    bool hasErrors;
+    bool skip;
+    bool runSkipped;        // TODO pass from init
+    const char* cur;
+    u32 line_nr;
+    string_buffer.Buf* errorMsg;    // ownership
+    string_buffer.Buf* recipe;      // ownership
+    char[file_utils.Max_path] current_file;
+    char[64] target;
+
+    char[32] word_buffer;
+    char[MAX_LINE] line_buffer;
+}
+
+public fn void Db.init(Db* db,
+                         string_buffer.Buf* output,
+                         const char* source,
+                         const char* filename,
+                         TestKind kind,
+                         const char* tmp_dir,
+                         const char* c2c_cmd,
+                         const char* cwd,
+                         bool runSkipped)
+{
+    memset(db, 0, sizeof(Db));
+    db.output = output;
+    db.source = source;
+    db.filename = filename;
+    db.kind = kind;
+    db.tmp_dir = tmp_dir;
+    db.c2c_cmd = c2c_cmd;
+    db.runSkipped = runSkipped;
+
+    db.errors = issues.create();
+    db.warnings = issues.create();
+    db.notes = issues.create();
+
+    db.line_nr = 1;
+    db.errorMsg = string_buffer.create(128, false, 2);
+    db.recipe = string_buffer.create(4096, false, 2);
+
+    if (kind == TestKind.C2) { // only for single file test
+        file_utils.make_path(db.current_file, elemsof(db.current_file), cwd, filename);
+    }
+}
+
+public fn void Db.destroy(Db* db) {
+
+    for (u32 i=0; i<db.expectedCount; i++) {
+        db.expectedFiles[i].destroy();
+    }
+    free(db.expectedFiles);
+    db.errorMsg.free();
+    db.recipe.free();
+    db.notes.destroy();
+    db.warnings.destroy();
+    db.errors.destroy();
+}
+
+public fn bool Db.haveErrors(const Db* db) {
+    return db.hasErrors;
+}
+
+fn void Db.addExpected(Db* db, ExpectFile* f) {
+    if (db.expectedCount == db.expectedCapacity) {
+        db.expectedCapacity += 4;
+        ExpectFile* exp2 = malloc(db.expectedCapacity * sizeof(ExpectFile*));
+        if (db.expectedCount) {
+            memcpy(exp2, db.expectedFiles, db.expectedCount * sizeof(ExpectFile*));
+            free(db.expectedFiles);
+        }
+        db.expectedFiles = (ExpectFile**)exp2;
+    }
+
+    db.expectedFiles[db.expectedCount] = f;
+    db.expectedCount++;
+}
+
+fn void Db.matchNote(Db* db, const char* filename, u32 linenr, const char* msg) {
+    Iter iter = db.notes.getIter();
+    if (iter.find(filename, linenr)) {
+        const char* match = iter.getMsg();
+        if (iter.getFound()) {
+            color_print2(db.output, colError, "%s:%d: duplicate note: %s", relativeFilename(filename), linenr, msg);
+            db.hasErrors = true;
+        } else
+        if (!same_string(match, msg)) {
+            color_print2(db.output, colError, "%s:%d: wrong note: %s", relativeFilename(filename), linenr, msg);
+            color_print2(db.output, colError, "     expected: %s", match);
+            db.hasErrors = true;
+        }
+        iter.setFound();
+        return;
+    }
+    // ignore unexpected notes
+    //color_print2(db.output, colError, "%s:%d: unexpected note: %s", relativeFilename(filename), linenr, msg);
+    //db.hasErrors = true;
+}
+
+fn void Db.matchWarning(Db* db, const char* filename, u32 linenr, const char* msg) {
+    Iter iter = db.warnings.getIter();
+    if (iter.find(filename, linenr)) {
+        const char* match = iter.getMsg();
+        if (iter.getFound()) {
+            color_print2(db.output, colError, "%s:%d: duplicate warning: %s", relativeFilename(filename), linenr, msg);
+            db.hasErrors = true;
+        } else
+        if (!same_string(match, msg)) {
+            color_print2(db.output, colError, "%s:%d: wrong warning: %s", relativeFilename(filename), linenr, msg);
+            color_print2(db.output, colError, "     expected: %s", match);
+            db.hasErrors = true;
+        }
+        iter.setFound();
+        return;
+    }
+    // not expected
+    color_print2(db.output, colError, "%s:%d: unexpected warning: %s", relativeFilename(filename), linenr, msg);
+    db.hasErrors = true;
+}
+
+fn void Db.matchError(Db* db, const char* filename, u32 linenr, const char* msg) {
+    Iter iter = db.errors.getIter();
+    if (iter.find(filename, linenr)) {
+        const char* match = iter.getMsg();
+        if (iter.getFound()) {
+            color_print2(db.output, colError, "%s:%d: duplicate error: %s", relativeFilename(filename), linenr, msg);
+            db.hasErrors = true;
+        } else
+        if (!same_string(match, msg)) {
+            color_print2(db.output, colError, "%s:%d: wrong error: %s", relativeFilename(filename), linenr, msg);
+            color_print2(db.output, colError, "     expected: %s", match);
+            db.hasErrors = true;
+        }
+        iter.setFound();
+        return;
+    }
+    // not expected
+    color_print2(db.output, colError, "%s:%d: unexpected error: %s", relativeFilename(filename), linenr, msg);
+    db.hasErrors = true;
+}
+
+fn void Db.writeFile(Db* db, const char* filename, const char* data, u32 len) {
+    file_utils.File file.init(db.tmp_dir, filename);
+    if (!file.write(data, len)) {
+        print_error("error writing %s: %s", file.path, file.getError());
+        exit(EXIT_FAILURE);
+    }
+}
+
+fn void Db.skipLine(Db* db) {
+    while (*db.cur != 0) {
+        if (*db.cur == '\n') {
+            db.line_nr++;
+            db.cur++;
+            return;
+        }
+        db.cur++;
+    }
+}
+
+fn const char* Db.findEndOfLine(Db* db) {
+    const char* cp = db.cur;
+    while (*cp != 0 && *cp != '\n') {
+        cp++;
+    }
+    return cp;
+}
+
+fn const char* Db.readWord(Db* db) {
+    const char* cp = db.cur;
+    while (*cp != 0 && cp - db.cur < 31) {
+        if ((*cp < 'a' || *cp > 'z') && *cp != '-' && *cp != '_') break;
+        cp++;
+    }
+    u32 len = (u32)(cp - db.cur);
+    memcpy(db.word_buffer, db.cur, len);
+    db.word_buffer[len] = 0;
+    return db.word_buffer;
+}
+
+fn const char* Db.readLine(Db* db) {
+    const char* cp = db.cur;
+    while (*cp != 0 && cp - db.cur < MAX_LINE) {
+        if (*cp == 0 || *cp == '\n') break;
+        cp++;
+    }
+    u32 len = (u32)(cp - db.cur);
+    memcpy(db.line_buffer, db.cur, len);
+    db.line_buffer[len] = 0;
+    return db.line_buffer;
+}
+
+fn bool Db.readUntil(Db* db, char* dst, u32 size, const char* cp, char delim, const char* item) {
+    // extract a string to a buffer
+    // stop on newline and delim
+    // return true on success, show error message and return false on error
+
+    u32 len = 0;
+    while (1) {
+        if (*cp == 0 || *cp == '\n') {
+            db.error("missing '%c'", delim);
+            return false;
+        }
+        if (*cp == delim) break;
+        if (len + 2 >= size) {
+            db.error("%s too long", item);
+            return false;
+        }
+        dst[len++] = *cp++;
+    }
+    dst[len] = '\0';
+    return true;
+}
+
+fn bool Db.parseRecipe(Db* db) {
+    if (strstart(db.cur, "bin", nil)) {
+        db.recipe.add("executable test\n");
+    } else if (strstart(db.cur, "lib ", nil)) {
+        db.cur += 4;
+        // Syntax lib dynamic/static
+        const char* libtype = db.readWord();
+        if (same_string(libtype, "dynamic") || same_string(libtype, "static") || same_string(libtype, "source")) {
+        } else {
+            db.errorMsg.print("unknown library type '%s'", libtype);
+            return false;
+        }
+        db.recipe.print("lib test %s\n", libtype);
+    } else {
+        db.errorMsg.print("unknown target type '%s'", db.readWord());
+        return false;
+    }
+    db.skipLine();
+    // TODO check that each line starts with $? (after optional whitespace)
+    while (1) {
+        if (*db.cur == 0 || strstart(db.cur, "// @", nil)) return true;
+
+        if (*db.cur != '\n') {
+            db.recipe.add(db.readLine());
+            db.recipe.newline();
+        }
+        db.skipLine();
+    }
+
+    return true;
+}
+
+fn bool Db.parseFile(Db* db) {
+    // Syntax file{name}
+    if (*db.cur != '{') {
+        db.errorMsg.add("expected { after file");
+        return false;
+    }
+    db.cur++;
+
+    if (!db.readUntil(db.current_file, elemsof(db.current_file), db.cur, '}', "filename"))
+        return false;
+    if (db.current_file[0] == 0) {
+        db.errorMsg.add("expected filename");
+        return false;
+    }
+    if (!endsWith(db.current_file, ".c2"))
+        append(db.current_file, elemsof(db.current_file), ".c2");
+    db.recipe.print("    %s\n", db.current_file);
+    db.line_offset = db.line_nr;
+    db.skipLine();
+    const char* start = db.cur;
+    while (1) {
+        if (*db.cur == 0 || strstart(db.cur, "// @", nil)) {
+            db.writeFile(db.current_file, start, (u32)(db.cur - start));
+            break;
+        }
+        db.parseTags(db.cur, db.findEndOfLine());
+        db.skipLine();
+    }
+    return true;
+}
+
+fn bool Db.parseExpect(Db* db) {
+    // Syntax expect{mode, name}
+    if (*db.cur != '{') {
+        db.errorMsg.add("expected { after expect");
+        return false;
+    }
+    db.cur++;
+    const char* modeStr = db.readWord();
+    ExpectMode em = ExpectMode.ATLEAST;
+    if (same_string(modeStr, "atleast")) {
+        em = ExpectMode.ATLEAST;
+    } else if (same_string(modeStr, "complete")) {
+        em = ExpectMode.COMPLETE;
+    } else {
+        db.errorMsg.print("unknown mode: %s", modeStr);
+        return false;
+    }
+
+    db.cur += strlen(modeStr);
+    if (*db.cur != ',') {
+        db.errorMsg.add("expected comma");
+        return false;
+    }
+    db.cur++;
+
+    while (*db.cur == ' ') db.cur++;
+
+    char[128] filename;
+    if (!db.readUntil(filename, elemsof(filename), db.cur, '}', "filename"))
+        return false;
+    if (filename[0] == 0) {
+        db.errorMsg.add("expected filename");
+        return false;
+    }
+    db.skipLine(); // skip rest of the line
+
+    db.currentExpect = expect_file.create(filename, em);
+    // TODO check for name duplicates
+    db.addExpected(db.currentExpect);
+    while (*db.cur != 0 && !strstart(db.cur, "// @", nil)) {
+        if (*db.cur != '\n') {
+            db.currentExpect.addLine(db.line_nr, db.cur, db.findEndOfLine());
+        }
+        db.skipLine();
+    }
+    db.currentExpect = nil;
+    return true;
+}
+
+fn bool Db.parseKeyword(Db* db) {
+    // NOTE: cur points to start of keyword after // @
+    const char* keyword = db.readWord();
+
+    switch (keyword) {
+    case "skip":
+        if (!db.runSkipped) db.skip = true;
+        return true;
+    case "recipe":
+        if (db.kind != TestKind.C2T) {
+            db.errorMsg.add("keyword 'recipe' only allowed in .c2t files");
+            return false;
+        }
+        db.cur += 7;
+        return db.parseRecipe();
+    case "warnings":
+        if (db.kind != TestKind.C2) {
+            db.errorMsg.add("keyword 'warnings' only allowed in .c2 files");
+            return false;
+        }
+        db.recipe.print("  $warnings %s\n", db.readLine());
+        db.skipLine();
+        break;
+    case "file":
+        if (db.kind == TestKind.C2) {
+            db.errorMsg.add("keyword 'file' only allowed in .c2t/.c2a files");
+            return false;
+        }
+        db.cur += 4;
+        return db.parseFile();
+    case "expect":
+        if (db.kind != TestKind.C2T && db.kind != TestKind.C2A) {
+            db.errorMsg.add("keyword 'expect' only allowed in .c2t/.c2a files");
+            return false;
+        }
+        db.cur += 6;
+        return db.parseExpect();
+    default:
+        db.errorMsg.print("unknown keyword '%s'", keyword);
+        return false;
+    }
+    return true;
+}
+
+// returns if OK
+fn bool Db.parseOuter(Db* db) {
+    // NOTE: cur always points to beginning of line
+
+    while (*db.cur != 0) {
+        if (*db.cur == '\n') {
+            db.skipLine();
+            continue;
+        }
+        // search for lines starting with // @..
+        if (strstart(db.cur, "// @", nil)) {
+            db.cur += 4;
+            if (!db.parseKeyword()) return false;
+            continue;
+        }
+
+        // TODO give error on non-empty lines
+        db.skipLine();
+    }
+    return true;
+}
+
+
+// TODO use errorMsg.print()? and wrap that?
+fn void Db.error(Db* db, const char* format @(printf_format), ...) {
+    char[1024] msg;
+    va_list args;
+    va_start(args, format);
+    vsnprintf(msg, sizeof(msg), format, args);
+    va_end(args);
+    color_print2(db.output, colError, "%s:%d: %s", db.filename, db.line_nr, msg);
+    db.hasErrors = true;
+}
+
+fn void Db.parseTags(Db* db, const char* start, const char* end) {
+    // if finding '// @' somewhere else, it's a note/warning/error
+    const char* cp = find(start, end, "// @");
+    if (!cp) cp = find(start, end, "/* @");
+    if (!cp) return;
+    cp += 4;    // skip "// @";
+
+    Type kind = Type.ERROR;
+    if (strstart(cp, "error{", &cp)) {
+        kind = Type.ERROR;
+    } else
+    if (strstart(cp, "warning{", &cp)) {
+        kind = Type.WARNING;
+    } else
+    if (strstart(cp, "note{", &cp)) {
+        kind = Type.NOTE;
+    } else {
+        db.error("unknown tag, expect note/warning/error");
+        return;
+    }
+    char[128] msg;
+    if (!db.readUntil(msg, elemsof(msg), cp, '}', "message"))
+        return;
+    u32 line_nr = db.line_nr - db.line_offset;
+    switch (kind) {
+    case ERROR:
+#if TesterDebug
+        color_print(color.Blue, "  expecting error '%s' at %d", msg, line_nr);
+#endif
+        db.errors.add(db.current_file, line_nr, msg);
+        break;
+    case WARNING:
+#if TesterDebug
+        color_print(color.Blue, "  expecting warning '%s' at %d", msg, line_nr);
+#endif
+        db.warnings.add(db.current_file, line_nr, msg);
+        break;
+    case NOTE:
+#if TesterDebug
+        color_print(color.Blue, "  expecting note '%s' at %d", msg, line_nr);
+#endif
+        db.notes.add(db.current_file, line_nr, msg);
+        break;
+    }
+}
+
+fn void Db.parseLineOutside(Db* db, const char* start, const char* end) {
+    const char* cp = start;
+    skipInitialWhitespace(&cp, end);
+    if (cp == end) return;
+
+    // TODO if .c2t/.cta, only accept tags or comments
+    if (db.kind != TestKind.C2 && !strstart(cp, "// ", nil)) {
+        db.error("unexpected line");
+        return;
+    }
+
+    if (strstart(cp, "// @", &cp)) {
+        if (strstart(cp, "warnings{", &cp)) {
+            char[128] name;
+            if (!db.readUntil(name, elemsof(name), cp, '}', "list"))
+                return;
+            db.recipe.print("    $warnings %s\n", name);
+        } else if (strstart(cp, "target{", &cp)) {
+            if (db.kind != TestKind.C2) {
+                db.error("keyword 'target' only allowed in .c2 files");
+                return;
+            }
+            if (!db.readUntil(db.target, elemsof(db.target), cp, '}', "target"))
+                return;
+        } else if (strstart(cp, "file{", &cp)) {
+            if (db.kind == TestKind.C2) {
+                db.error("invalid @file tag in .c2 test");
+                return;
+            }
+            if (!db.readUntil(db.current_file, elemsof(db.current_file), cp, '}', "filename"))
+                return;
+            if (!endsWith(db.current_file, ".c2"))
+                append(db.current_file, elemsof(db.current_file), ".c2");
+
+            db.recipe.print("  %s\n", db.current_file);
+            db.file_start = end + 1;
+            db.line_offset = db.line_nr;
+            db.mode = Mode.Infile;
+        } else if (strstart(cp, "expect{", &cp)) {
+            if (db.kind != TestKind.C2T) {
+                db.error("invalid @expect tag in .c2/.cta test");
+                return;
+            }
+            char[128] name;
+            if (!db.readUntil(name, elemsof(name), cp, '}', "filename"))
+                return;
+            db.currentExpect = expect_file.create(name, ExpectMode.ATLEAST);
+            // TODO check for name duplicates
+            db.addExpected(db.currentExpect);
+            db.mode = Mode.InExpectFile;
+        } else if (strstart(cp, "backend c", &cp)) {
+            if (db.kind != TestKind.C2T) {
+                db.error("invalid @backend c tag in .c2/c2a test");
+                return;
+            }
+            char[128] args;
+            if (!db.readUntil(args, elemsof(args), cp, '}', "argument"))
+                return;
+            db.recipe.print("  $ansi-c %s\n", args);
+        } else if (strstart(cp, "skip", &cp)) {
+            // just skip
+        } else {
+            db.error("unknown tag");
+        }
+        return;
+    }
+    db.parseTags(start, end);
+}
+
+fn void Db.parseLineFile(Db* db, const char* start, const char* end) {
+    // if line starts with '// @' stop Infile mode
+    if (strstart(start, "// @", nil)) {
+        assert(db.file_start);
+        const char* file_end = start;
+        db.writeFile(db.current_file, db.file_start, (u32)(file_end - db.file_start));
+        db.file_start = nil;
+        db.mode = Mode.Outside;
+        db.parseLine(start, end);
+        return;
+    }
+
+    db.parseTags(start, end);
+}
+
+fn void Db.parseLineExpect(Db* db, const char* start, const char* end) {
+    // if line starts with '// @' stop InExpectFile mode
+    if (strstart(start, "// @", nil)) {
+        db.currentExpect = nil;
+        db.mode = Mode.Outside;
+        db.parseLine(start, end);
+        return;
+    }
+    assert(db.currentExpect);
+    db.currentExpect.addLine(db.line_nr, start, end);
+    // TODO add non-empty lines (stripped of heading+trailing whitespace) to list
+}
+
+fn void Db.parseLine(Db* db, const char* start, const char* end) {
+    switch (db.mode) {
+    case Outside:
+        db.parseLineOutside(start, end);
+        break;
+    case Infile:
+        db.parseLineFile(start, end);
+        break;
+    case InExpectFile:
+        db.parseLineExpect(start, end);
+        break;
+    }
+}
+
+public fn bool Db.parse(Db* db) {
+    const char* cp = db.source;
+    db.cur = cp;
+    db.line_nr = 1;
+
+    bool hasSkip = strstart(cp, "// @skip", nil);
+    if (db.runSkipped != hasSkip) return true;
+
+    switch (db.kind) {
+    case C2:
+        db.recipe.add("executable test\n");
+        db.recipe.add("  $warnings unreachable-code\n");
+        db.recipe.add("  $warnings no-unused-module\n");
+        db.recipe.add("  $backend c\n");
+
+        while (*cp != '\0') {
+            const char* line_start = cp;
+            while (*cp != '\n' && *cp != '\0') cp++;
+            if (cp != line_start) db.parseLine(line_start, cp);
+            db.line_nr++;
+            if (*cp == '\n') cp++;
+        }
+
+        db.recipe.print("  %s\n", db.current_file);
+        if (db.target[0] != 0) {
+            string_buffer.Buf* build = string_buffer.create(1024, false, 0);
+            build.print("target: \"%s\"\n", db.target);
+            build.add("libdir:\n");
+            build.add("   - \"$C2_LIBDIR\"\n");
+            db.writeFile("build.yaml", build.data(), build.size());
+            build.free();
+        }
+        db.recipe.add("end\n");
+        db.writeFile("recipe.txt", db.recipe.data(), db.recipe.size());
+        return false;
+    case C2T:
+        if (!db.parseOuter()) {
+            print_error("%s: error in recipe: %s on line %d", db.filename, db.errorMsg.data(), db.line_nr);
+            return false;
+        }
+        db.recipe.add("end\n");
+        db.writeFile("recipe.txt", db.recipe.data(), db.recipe.size());
+        break;
+    case C2A:
+        db.recipe.add("executable test\n");
+        db.recipe.add("  $warnings unreachable-code\n");
+        db.recipe.add("  $warnings no-unused\n");
+        db.recipe.add("  $backend c skip\n");
+        db.recipe.add("  $write-AST\n");
+        if (!db.parseOuter()) {
+            print_error("%s: error in recipe: %s on line %d", db.filename, db.errorMsg.data(), db.line_nr);
+            return false;
+        }
+        db.recipe.add("end\n");
+        db.writeFile("recipe.txt", db.recipe.data(), db.recipe.size());
+        break;
+    }
+
+    return db.skip;
+}
+
+public fn void Db.testFile(Db* db) {
+    // flush all streams before forking to avoid duplicate output
+    fflush(nil);
+
+    i32[2] pipe_stdout;
+    if (pipe(pipe_stdout) == -1) {
+        fprintf(stderr, "pipe() failed: %s\n", strerror(errno));
+        exit(1);
+    }
+    i32[2] pipe_stderr;
+    if (pipe(pipe_stderr) == -1) {
+        fprintf(stderr, "pipe() failed: %s\n", strerror(errno));
+        exit(1);
+    }
+
+    // spawn a child to run c2c
+    Pid pid = fork();
+    if (pid == -1) {
+        fprintf(stderr, "fork() failed: %s\n", strerror(errno));
+        exit(1);
+    }
+    if (pid==0) { // child
+        while ((dup2(pipe_stdout[1], STDOUT_FILENO) == -1) && (errno == EINTR)) {}
+        close(pipe_stdout[1]);
+        close(pipe_stdout[0]);
+        while ((dup2(pipe_stderr[1], STDERR_FILENO) == -1) && (errno == EINTR)) {}
+        close(pipe_stderr[1]);
+        close(pipe_stderr[0]);
+        execl(db.c2c_cmd, "c2c", "-d", db.tmp_dir, "--test", nil);
+        fprintf(stderr, "execl() failed: %s\n", strerror(errno));
+        exit(127); /* only if execv fails */
+    } else { // parent
+        close(pipe_stdout[1]);
+        close(pipe_stderr[1]);
+
+        // collect output and check errors
+        string_buffer.Buf* buf = string_buffer.create(4096, false, 2);
+        for (;;) {
+            char[64*1024] buffer;
+            isize count = read(pipe_stderr[0], buffer, sizeof(buffer));
+            if (count == -1) {
+                if (errno == EINTR) continue;
+                perror("read");
+                exit(1);
+            }
+            if (count == 0) break;
+            buf.add2(buffer, (u32)count);
+        }
+        db.checkErrors(buf.data(), buf.size());
+        buf.free();
+
+        i32 status = 0;
+        waitpid(pid, &status, 0);
+
+        if (!doWIFEXITED(status)) {  // child exited abnormally
+            // TODO print pipe_stderr
+            color_print2(db.output, colError, "c2c crashed!");
+            db.hasErrors = true;
+            return;
+        }
+        // check return code
+        i32 retcode = getWEXITSTATUS(status);
+        if (retcode == 127) {
+            //color_print2(db.output, colError, "Error spawning compiler '%s'", db.c2c_cmd);
+            color_print(colError, "Error spawning compiler '%s'", db.c2c_cmd);
+            exit(EXIT_FAILURE);
+        }
+        if (retcode == 254) { // from TODO/FATAL_ERROR macros
+            color_print2(db.output, colError, "c2c returned error");
+            db.hasErrors = true;
+            return;
+        }
+
+        close(pipe_stdout[0]);
+        close(pipe_stderr[0]);
+        wait(nil);
+        db.checkExpectedFiles();
+        if (!db.errors.allFound() || !db.warnings.allFound()) db.hasErrors = true;
+    }
+}
+
+fn void Db.checkDiagnosticLine(Db* db, const char* line) {
+#if TesterDebug
+    color_print(color.White, "line: '%s'", line);
+#endif
+    // line syntax: '<filename>.c2:<linenr>:<offset>: error/warning/note: <msg>\n'
+    char[128] filename;
+    char[128] msg;
+    char[8] tag;
+    u32 error_line;
+    u32 col;
+
+    if (sscanf(line, "%127[^: \n]:%u:%u: %7[a-z]: %127[^\n]", filename, &error_line, &col, tag, msg) != 5)
+        return;
+
+    switch (tag) {
+    case "error":
+#if TesterDebug
+        color_print(color.Cyan, "%s %d:%d %s '%s'", filename, error_line, col, tag, msg);
+#endif
+        db.matchError(filename, error_line, msg);
+        break;
+    case "warning":
+#if TesterDebug
+        color_print(color.Cyan, "%s %d:%d %s '%s'", filename, error_line, col, tag, msg);
+#endif
+        db.matchWarning(filename, error_line, msg);
+        break;
+    case "note":
+#if TesterDebug
+        color_print(color.Cyan, "%s %d:%d %s '%s'", filename, error_line, col, tag, msg);
+#endif
+        db.matchNote(filename, error_line, msg);
+        break;
+    }
+}
+
+fn void Db.checkErrors(Db* db, const char* buffer, u32 size) {
+#if TesterDebug
+    color_print(color.Magenta, "stderr:\n%s", buffer);
+#endif
+    const char* cp = buffer;
+    const char* end = cp + size;
+    const char* line = cp;
+    bool haveColon = false;
+    while (cp != end) {
+        // cut up into lines
+        if (*cp == ':') haveColon = true;
+        if (*cp == '\n') {
+            if (haveColon) {
+                char[512] data;
+                u32 len = (u32)(cp - line);
+                assert(len < sizeof(data));
+                memcpy(data, line, len);
+                data[len] = 0;
+                db.checkDiagnosticLine(data);
+                haveColon = false;
+            }
+            cp++;
+            line = cp;
+        } else {
+            cp++;
+        }
+    }
+}
+
+fn void Db.checkExpectedFiles(Db* db) {
+    char[file_utils.Max_path] basedir;
+    file_utils.make_path(basedir, elemsof(basedir), db.tmp_dir, "output/test/");
+    for (u32 i=0; i<db.expectedCount; ++i) {
+        ExpectFile* e = db.expectedFiles[i];
+        if (!e.check(db.output, basedir)) db.hasErrors = true;
+    }
+}
+
+public fn bool Db.printIssues(const Db* db) {
+    bool res = false;
+    for (issues.Iter iter = db.errors.getIter(); iter.more(); iter.next()) {
+        if (iter.getFound()) continue;
+        color_print2(db.output, colError, "%s:%d: expected error '%s'",
+                     iter.getFilename(), iter.getLineNr(), iter.getMsg());
+        res = true;
+    }
+    for (issues.Iter iter = db.warnings.getIter(); iter.more(); iter.next()) {
+        if (iter.getFound()) continue;
+        color_print2(db.output, colError, "%s:%d: expected warning '%s'",
+                     iter.getFilename(), iter.getLineNr(), iter.getMsg());
+        res = true;
+    }
+    for (issues.Iter iter = db.notes.getIter(); iter.more(); iter.next()) {
+        if (iter.getFound()) continue;
+        color_print2(db.output, colError, "%s:%d: expected note '%s'",
+                     iter.getFilename(), iter.getLineNr(), iter.getMsg());
+        res = true;
+    }
+    return res;
+}
+

@@ -1,0 +1,28 @@
+// @warnings{no-unused}
+module test;
+
+type Types enum i8 {
+    Foo = 0,
+    Bar,
+    Faa = 4,
+}
+
+i32[] array = {
+    [Types.Faa] = 4,
+    [Types.Bar] = 1,
+    2,
+    3,
+    [Types.Foo] = 0,
+}
+
+type Point struct {
+    i32 x;
+    const u8* name;
+}
+
+Point[] array2 = {
+    [2] = { 2, "two" },
+    [3] = { 3, "three" },
+}
+
+static_assert(4, elemsof(array2));

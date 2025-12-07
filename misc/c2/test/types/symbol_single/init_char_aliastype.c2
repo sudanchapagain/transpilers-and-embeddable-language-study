@@ -1,0 +1,10 @@
+// @warnings{no-unused}
+module test;
+
+type Number i32;
+
+fn void test1(Number a) {
+    i8 c = a;     // @error{implicit conversion loses integer precision: '(alias)test.Number => i32' to 'i8'}
+}
+
+

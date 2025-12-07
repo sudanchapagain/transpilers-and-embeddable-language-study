@@ -1,0 +1,13 @@
+module test;
+
+fn void test1(i32 a) {
+    switch (a) {
+    case 1:     // @note{previous case is here}
+        break;
+    case 2:
+        break;
+    case 1:     // @error{duplicate case value 1}
+        break;
+    }
+}
+

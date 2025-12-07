@@ -1,0 +1,42 @@
+import co
+import runtime
+
+fn main() {
+    var make_atm = fn():fn(int):int {
+        var cash = 1000
+        return fn(int amount):int {
+            cash -= amount
+            return cash
+        }
+    }
+
+    var makes = fn() {
+        [fn(int):int] atms = []
+
+        int i = 0
+        for i < 1000 {
+            var atm_draw = make_atm()
+            atms.push(atm_draw)
+            i += 1
+        }
+
+        assert(runtime.malloc_bytes() > 100000 && runtime.malloc_bytes() < 200000) // 144xxx
+        assert(atms[10](10) == 990)
+        assert(atms[599](100) == 900)
+        assert(atms[999](200) == 800)
+
+        runtime.gc()
+        co.sleep(500) // wait gc finish
+        assert(runtime.malloc_bytes() > 100000 && runtime.malloc_bytes() < 200000)
+        assert(atms[10](10) == 980)
+        assert(atms[599](100) == 800)
+        assert(atms[999](200) == 600)
+    }
+
+    makes()
+
+    runtime.gc()
+    co.sleep(1000)
+    println(runtime.malloc_bytes())
+    assert(runtime.malloc_bytes() < 2500)
+}

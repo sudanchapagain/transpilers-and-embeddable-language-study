@@ -1,0 +1,178 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module printf_utils;
+
+import ast local;
+import ctype;
+import src_loc local;
+
+public fn const char* get_format(Expr* format, SrcLoc* format_loc) {
+    const char* format_text = nil;
+    switch (format.getKind()) {
+    case StringLiteral:
+        StringLiteral* s = (StringLiteral*)format;
+        format_text = s.getText();
+        // set location to first character of string literal
+        // this works for simple strings only: multi-strings, raw strings,
+        // strings with escape sequences may show an incorrect position for
+        // format specifier errors.
+        *format_loc = format.getLoc() + 1;
+        break;
+    case Identifier:
+        QualType qt = format.getType();
+        assert(qt.isArray());
+        ArrayType* at = qt.getArrayType();
+        qt = at.getElemType();
+        if (!qt.isConst()) return nil;
+
+        IdentifierExpr* id = (IdentifierExpr*)format;
+        Decl* decl = id.getDecl();
+        assert(decl.isVariable());
+        VarDecl* vd = (VarDecl*)decl;
+        Expr* initExpr = vd.getInit();
+        assert(initExpr);
+        return get_format(initExpr, format_loc);
+    case Member:
+        QualType qt = format.getType();
+        assert(qt.isArray());
+        ArrayType* at = qt.getArrayType();
+        qt = at.getElemType();
+        if (!qt.isConst()) return nil;
+
+        MemberExpr* m = (MemberExpr*)format;
+        Decl* decl = m.getFullDecl();
+        assert (decl.isVariable());
+        VarDecl* vd = (VarDecl*)decl;
+        Expr* initExpr = vd.getInit();
+        assert(initExpr);
+        return get_format(initExpr, format_loc);
+    default:
+        assert(0);
+        break;
+    }
+    return format_text;
+}
+
+public type Specifier enum u8 {
+    Other,          // %% or unknown
+    String,         // %s, %-s, %4s
+    Char,           // %c
+    Integer,        // %i, %-i, %-8i, %08i, %x, %o
+    FloatingPoint,  // %f
+    Pointer,        // %p
+    Invalid,        // other
+}
+
+// cp points after first %, len is # of characters between % and conversion specifier (so '%d' -> len 0)
+fn Specifier getSpecifier(const char* format, u32* len, i32 *pstars, char* c) {
+    const char* cp = format;
+    Specifier spec = Specifier.Invalid;
+    i32 stars = 0;
+
+    for (;;) {
+        /* skip optional flags */
+        switch (*cp) {
+        case ' ':
+        case '+':
+        case '-':
+        case '#':
+        case '\'':  // non-standard extension
+        case '0':
+            cp++;
+            continue;
+        }
+        break;
+    }
+    if (*cp == '*') {
+        stars++;
+        cp++;
+    } else {
+        while (ctype.isdigit(*cp)) {
+            cp++;
+        }
+    }
+    if (*cp == '.') {
+        cp++;
+        if (*cp == '*') {
+            stars++;
+            cp++;
+        } else {
+            while (ctype.isdigit(*cp)) {
+                cp++;
+            }
+        }
+    }
+    switch (*c = *cp) {
+    case '%':
+        // only if it is first char
+        if (cp == format)
+            spec = Specifier.Other;
+        break;
+    case 'c':
+        spec = Specifier.Char;
+        break;
+    case 'a':
+    case 'e':
+    case 'f':
+    case 'g':
+    case 'A':
+    case 'E':
+    case 'F':
+    case 'G':
+        spec = Specifier.FloatingPoint;
+        break;
+    case 'p':
+        spec = Specifier.Pointer;
+        break;
+    case 's':
+        spec = Specifier.String;
+        break;
+    case 'b':
+    case 'B':
+    case 'd':
+    case 'o':
+    case 'x':
+    case 'X':
+        spec = Specifier.Integer;
+        break;
+    }
+    *pstars = stars;
+    *len = (u32)(cp - format);
+    return spec;
+}
+
+// return whether parseFormat should continue.
+public type FormatHandler fn bool (void* arg, Specifier specifier, u32 offset, i32 stars, char letter);
+
+public fn bool parseFormat(const char* format, FormatHandler handler, void* arg) {
+    const char* cp = format;
+    while (*cp) {
+        if (*cp++ == '%') {
+            u32 len = 0;
+            i32 stars = 0;
+            char c = 0;
+            Specifier s = getSpecifier(cp, &len, &stars, &c);
+            cp += len;
+            if (s != Specifier.Other) {
+                if (!handler(arg, s, (u32)(cp - format), stars, c))
+                    return false;
+            }
+            if (*cp) cp++;
+        }
+    }
+    return true;
+}
+

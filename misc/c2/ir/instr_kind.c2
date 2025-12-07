@@ -1,0 +1,118 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ir;
+
+public type InstrKind enum u8 {
+    None,   // used when removing instructions
+
+    // Arithmetic and Bits
+    Add,
+    Sub,
+    Div,
+    Rem,
+    Mul,
+    IDiv,
+    And,
+    Or,
+    Xor,
+    Shr,
+    Shl,
+
+    // Comparisons
+    CmpNe,
+    CmpEq,
+    CmpLt,
+    CmpGt,
+    CmpLe,
+    CmpGe,
+    // Memory
+    Load1,
+    Load2,
+    Load4,
+    Load8,
+    Store1,
+    Store2,
+    Store4,
+    Store8,
+    // Stack Allocation
+    Alloc1,
+    Alloc2,
+    Alloc4,
+    Alloc8,
+    // Jump instructions
+    Jmp,
+    JmpIf,
+    Ret,
+    Halt,
+    Call,
+    Copy,
+    // Pseudo instructions (must be converted before converting to ASM)
+    Arch,   // arch dependent
+    Param,
+    Arg,
+    Switch,
+    Phi,
+    Comment, // KEEP THIS THE LAST OPERATION!
+}
+
+public fn const char* InstrKind.str(InstrKind k) @(unused) {
+    switch (k) {
+    case None:      return "none";
+    case Add:       return "add";
+    case Sub:       return "sub";
+    case Div:       return "div";
+    case Rem:       return "rem";
+    case Mul:       return "mul";
+    case IDiv:      return "idiv";
+    case And:       return "and";
+    case Or:        return "or";
+    case Xor:       return "xor";
+    case Shl:       return "shl";
+    case Shr:       return "shr";
+    case CmpNe:     return "icmp ne";
+    case CmpEq:     return "icmp eq";
+    case CmpLt:     return "icmp lt";
+    case CmpGt:     return "icmp gt";
+    case CmpLe:     return "icmp le";
+    case CmpGe:     return "icmp ge";
+    case Load1:     return "load1";
+    case Load2:     return "load2";
+    case Load4:     return "load4";
+    case Load8:     return "load8";
+    case Store1:    return "store1";
+    case Store2:    return "store2";
+    case Store4:    return "store4";
+    case Store8:    return "store8";
+    case Alloc1:    return "alloc1";
+    case Alloc2:    return "alloc2";
+    case Alloc4:    return "alloc4";
+    case Alloc8:    return "alloc8";
+    case Jmp:       return "jmp";
+    case JmpIf:     return "jmp_if";
+    case Ret:       return "ret";
+    case Halt:      return "halt";
+    case Call:      return "call";
+    case Copy:      return "copy";
+    case Arch:      return "(arch)";
+    case Param:     return "param";
+    case Arg:       return "arg";
+    case Switch:    return "switch";
+    case Phi:       return "phi";
+    case Comment:   return "comment";
+    }
+    return "";
+}
+

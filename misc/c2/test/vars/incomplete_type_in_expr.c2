@@ -1,0 +1,10 @@
+// @warnings{no-unused}
+module test;
+
+public fn i32 main() {
+    if (void* a = nil) {}
+
+    if (void a = nil) {}    // @error{variable has invalid type 'void'}
+    return 0;
+}
+

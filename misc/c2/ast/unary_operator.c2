@@ -1,0 +1,139 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import string_buffer;
+import src_loc local;
+
+public type UnaryOpcode enum u8 {
+    PostInc,        // a++
+    PostDec,        // a--
+    PreInc,         // ++a
+    PreDec,         // --a
+    AddrOf,         // &a
+    Deref,          // *a
+    Plus,           // +a
+    Minus,          // -a
+    Not,            // ~a
+    LNot,           // !a
+}
+
+const char*[] unaryOpcode_names = {
+    "++",
+    "--",
+    "++",
+    "--",
+    "&",
+    "*",
+    "+",
+    "-",
+    "~",
+    "!",
+}
+
+static_assert(elemsof(UnaryOpcode), elemsof(unaryOpcode_names));
+
+type UnaryOperatorBits struct {
+    u32 : NumExprBits;
+    u32 kind : 4;
+}
+
+public type UnaryOperator struct @(opaque) {
+    Expr base;
+    Expr* inner;
+}
+
+public fn UnaryOperator* UnaryOperator.create(ast_context.Context* c, SrcLoc loc, UnaryOpcode kind, Expr* inner) {
+    UnaryOperator* e = c.alloc(sizeof(UnaryOperator));
+    e.base.init(ExprKind.UnaryOperator, loc, 0, 0, kind <= UnaryOpcode.PreDec,
+                kind == UnaryOpcode.Deref ? ValType.LValue : ValType.RValue);
+    e.base.base.unaryOperatorBits.kind = kind;
+    e.inner = inner;
+#if AstStatistics
+    Stats.addExpr(ExprKind.UnaryOperator, sizeof(UnaryOperator));
+#endif
+    return e;
+}
+
+fn Expr* UnaryOperator.instantiate(UnaryOperator* e, Instantiator* inst) {
+    return (Expr*)UnaryOperator.create(inst.c, e.base.base.loc, e.getOpcode(), e.inner.instantiate(inst));
+}
+
+public fn UnaryOpcode UnaryOperator.getOpcode(const UnaryOperator* e) {
+    return (UnaryOpcode)e.base.base.unaryOperatorBits.kind;
+}
+
+public fn Expr* UnaryOperator.getInner(const UnaryOperator* e) { return e.inner; }
+public fn Expr** UnaryOperator.getInner2(UnaryOperator* e) { return &e.inner; }
+
+//public fn Expr* UnaryOperator.asExpr(UnaryOperator* e) { return &e.base; }
+
+public fn bool UnaryOperator.isBefore(const UnaryOperator* e) {
+    switch (e.getOpcode()) {
+    case PostInc:
+    case PostDec: return false;
+    case PreInc:
+    case PreDec:
+    case AddrOf:
+    case Deref:
+    case Plus:
+    case Minus:
+    case Not:
+    case LNot:    return true;
+    }
+    return true;
+}
+
+fn SrcLoc UnaryOperator.getStartLoc(const UnaryOperator* e) {
+    if (e.isBefore()) return e.base.getLoc();
+    return e.inner.getStartLoc();
+}
+
+fn SrcLoc UnaryOperator.getEndLoc(const UnaryOperator* e) {
+    if (e.isBefore()) return e.inner.getEndLoc();
+    return e.base.getLoc() + 2;  // postfix operators are ++ and --
+}
+
+public fn const char* UnaryOperator.getOpcodeStr(const UnaryOperator* e) {
+    return unaryOpcode_names[e.getOpcode()];
+}
+
+public fn bool UnaryOperator.isAddrOf(const UnaryOperator* e) {
+    return e.getOpcode() == UnaryOpcode.AddrOf;
+}
+
+fn void UnaryOperator.print(const UnaryOperator* e, string_buffer.Buf* out, u32 indent) {
+    e.base.printKind(out, indent);
+    e.base.printTypeBits(out);
+    out.space();
+    out.color(col_Value);
+    out.add(unaryOpcode_names[e.getOpcode()]);
+    out.newline();
+    e.inner.print(out, indent + 1);
+}
+
+fn void UnaryOperator.printLiteral(const UnaryOperator* e, string_buffer.Buf* out) {
+    const char* opcode = unaryOpcode_names[e.getOpcode()];
+    if (e.isBefore()) {
+        out.add(opcode);
+        e.inner.printLiteral(out);
+    } else {
+        e.inner.printLiteral(out);
+        out.add(opcode);
+    }
+}
+

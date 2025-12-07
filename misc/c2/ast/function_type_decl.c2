@@ -1,0 +1,58 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import string_buffer;
+
+public type FunctionTypeDecl struct @(opaque) {
+    Decl base;
+    FunctionDecl* func;
+}
+
+public fn FunctionTypeDecl* FunctionTypeDecl.create(ast_context.Context* c, FunctionDecl* func) {
+    FunctionTypeDecl* ftd = c.alloc(sizeof(FunctionTypeDecl));
+    Decl* d = func.asDecl();
+    ftd.base.init(DeclKind.FunctionType, d.getNameIdx(), d.getLoc(), d.isPublic(), d.getType(), d.getASTIdx());
+    ftd.func = func;
+#if AstStatistics
+    Stats.addDecl(DeclKind.FunctionType, sizeof(FunctionTypeDecl));
+#endif
+    return ftd;
+}
+
+public fn Decl* FunctionTypeDecl.asDecl(FunctionTypeDecl* t) {
+    return &t.base;
+}
+
+public fn FunctionDecl* FunctionTypeDecl.getDecl(const FunctionTypeDecl* d) {
+    return d.func;
+}
+
+fn void FunctionTypeDecl.print(const FunctionTypeDecl* d, string_buffer.Buf* out, u32 indent) {
+    out.indent(indent);
+    out.color(col_Decl);
+    out.add("FunctionTypeDecl");
+    //out.space();
+    //d.base.printKind(out, indent, "FunctionTypeDecl");
+    //d.base.printBits(out);
+    //d.base.printName(out);
+    d.base.printAttrs(out);
+    out.newline();
+
+    d.func.print(out, indent + 1);
+}
+

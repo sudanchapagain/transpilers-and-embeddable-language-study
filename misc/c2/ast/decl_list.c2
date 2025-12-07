@@ -1,0 +1,74 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import string local;
+import stdlib local;
+
+public type DeclList struct {
+    u32 count;
+    u32 capacity;
+    Decl** decls;
+    Decl*[4] stash;
+}
+
+public fn void DeclList.init(DeclList* l) {
+    l.count = 0;
+    l.capacity = elemsof(l.stash);
+    l.decls = l.stash;
+}
+
+public fn void DeclList.free(DeclList* l) {
+    if (l.capacity > elemsof(l.stash)) free(l.decls);
+    l.count = 0;
+    l.capacity = 0;
+}
+
+public fn void DeclList.add(DeclList* l, Decl* d) {
+    if (l.count >= l.capacity) {
+        if (l.capacity == 0) {
+            l.capacity = elemsof(l.stash);
+            l.decls = l.stash;
+        } else {
+            u32 capacity2 = l.capacity + l.capacity / 2 + 2;
+            void* decls2 = malloc(capacity2 * sizeof(Decl*));
+            memcpy(decls2, l.decls, l.count * sizeof(Decl*));
+            if (l.capacity > elemsof(l.stash)) free(l.decls);
+            l.capacity = capacity2;
+            l.decls = decls2;
+        }
+    }
+
+    l.decls[l.count] = d;
+    l.count++;
+}
+
+public fn void DeclList.clear(DeclList* l) {
+    l.count = 0;
+}
+
+public fn u32 DeclList.size(const DeclList* l) {
+    return l.count;
+}
+
+public fn Decl* DeclList.get(const DeclList* l, u32 idx) {
+    return l.decls[idx];
+}
+
+public fn Decl** DeclList.getDecls(const DeclList* l) {
+    return l.decls;
+}
+

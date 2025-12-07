@@ -1,0 +1,66 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import string local;
+import stdlib local;
+
+public type ExprList struct {
+    u32 count;
+    u32 capacity;
+    Expr** exprs;
+    Expr*[4] stash;
+}
+
+public fn void ExprList.init(ExprList* l) {
+    l.count = 0;
+    l.capacity = elemsof(l.stash);
+    l.exprs = l.stash;
+}
+
+public fn void ExprList.free(ExprList* l) {
+    if (l.capacity > elemsof(l.stash)) free(l.exprs);
+    l.count = 0;
+    l.capacity = 0;
+}
+
+public fn void ExprList.add(ExprList* l, Expr* d) {
+    if (l.count >= l.capacity) {
+        if (l.capacity == 0) {
+            l.capacity = elemsof(l.stash);
+            l.exprs = l.stash;
+        } else {
+            u32 capacity2 = l.capacity + l.capacity / 2 + 2;
+            void* exprs2 = malloc(capacity2 * sizeof(Expr*));
+            memcpy(exprs2, l.exprs, l.count * sizeof(Expr*));
+            if (l.capacity > elemsof(l.stash)) free(l.exprs);
+            l.capacity = capacity2;
+            l.exprs = exprs2;
+        }
+    }
+
+    l.exprs[l.count] = d;
+    l.count++;
+}
+
+public fn u32 ExprList.size(const ExprList* l) {
+    return l.count;
+}
+
+public fn Expr** ExprList.getExprs(const ExprList* l) {
+    return l.exprs;
+}
+

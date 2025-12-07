@@ -1,0 +1,323 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import attr;
+import color local;
+import ast_context local;
+import string_buffer;
+import string_pool;
+
+import stdio;
+import stdlib;
+import string;
+
+#if Arch32
+#else
+
+static_assert(24, sizeof(Decl));
+static_assert(32, sizeof(AliasTypeDecl));
+static_assert(48, sizeof(EnumTypeDecl));
+static_assert(32, sizeof(FunctionTypeDecl));
+static_assert(32, sizeof(VarDecl));
+static_assert(40, sizeof(EnumConstantDecl));
+static_assert(40, sizeof(ImportDecl));
+static_assert(48, sizeof(StructTypeDecl));
+static_assert(80, sizeof(FunctionDecl));
+
+static_assert(8, sizeof(Stmt));
+static_assert(12, sizeof(GotoStmt));
+static_assert(24, sizeof(LabelStmt));
+static_assert(16, sizeof(AssertStmt));
+static_assert(8, sizeof(DeclStmt));
+static_assert(16, sizeof(SwitchStmt));
+static_assert(24, sizeof(AsmStmt));
+static_assert(24, sizeof(IfStmt));
+static_assert(24, sizeof(WhileStmt));
+static_assert(40, sizeof(ForStmt));
+static_assert(8, sizeof(BreakStmt));
+static_assert(8, sizeof(CompoundStmt));
+static_assert(8, sizeof(ContinueStmt));
+static_assert(8, sizeof(FallthroughStmt));
+static_assert(8, sizeof(ReturnStmt));
+
+static_assert(16, sizeof(Expr));
+static_assert(16, sizeof(BooleanLiteral));
+static_assert(16, sizeof(CharLiteral));
+static_assert(16, sizeof(MemberExpr));
+static_assert(16, sizeof(NilExpr));
+static_assert(24, sizeof(IdentifierExpr));
+static_assert(24, sizeof(ImplicitCastExpr));
+static_assert(24, sizeof(InitListExpr));
+static_assert(24, sizeof(IntegerLiteral));
+static_assert(24, sizeof(ParenExpr));
+static_assert(24, sizeof(StringLiteral));
+static_assert(24, sizeof(TypeExpr));
+static_assert(24, sizeof(UnaryOperator));
+static_assert(32, sizeof(ArrayDesignatedInitExpr));
+static_assert(32, sizeof(ArraySubscriptExpr));
+static_assert(32, sizeof(BinaryOperator));
+static_assert(32, sizeof(BitOffsetExpr));
+static_assert(32, sizeof(CallExpr));
+static_assert(40, sizeof(ExplicitCastExpr));
+static_assert(40, sizeof(BuiltinExpr));
+static_assert(40, sizeof(FieldDesignatedInitExpr));
+static_assert(48, sizeof(ConditionalOperator));
+static_assert(32, sizeof(NamedArgument));
+
+static_assert(8, sizeof(QualType));
+static_assert(16, sizeof(Type));
+static_assert(16, sizeof(BuiltinType));
+static_assert(24, sizeof(EnumType));
+static_assert(24, sizeof(FunctionType));
+static_assert(24, sizeof(PointerType));
+static_assert(24, sizeof(StructType));
+static_assert(32, sizeof(ArrayType));
+
+static_assert(16, sizeof(ArrayValue));
+static_assert(8, sizeof(SwitchCase));
+static_assert(24, sizeof(StaticAssert));
+static_assert(8, sizeof(TypeRef));
+
+#endif
+
+public const QualType QualType_Invalid = { }
+
+public type Globals struct @(opaque) {
+    string_pool.Pool* names_pool;
+    PointerPool pointers;
+    StringTypePool string_types;
+    u32 wordsize;       // 4 or 8 (in bytes)
+    bool use_color;
+    // TODO just use AST vector (also in modules, but modules has ownership)
+    u32 ast_count;      // Note: first index used to indicate nil
+    u32 ast_capacity;
+    AST** ast_list;
+
+    u32[elemsof(BuiltinKind)] builtinType_sizes;
+    u32[elemsof(BuiltinKind)] builtinType_width;
+    BuiltinKind[elemsof(BuiltinKind)] builtinType_baseTypes;
+
+    u32[elemsof(attr.AttrKind)] attr_name_indexes;
+
+    string_buffer.Buf* dump_buf;
+#if AstStatistics
+    Stats stats;
+#endif
+}
+
+// The only globals for AST are here, since they must be set explicitly for plugins!!
+Globals* globals;
+public QualType* builtins;
+
+// for plugins
+public fn Globals* getGlobals() { return globals; }
+
+// only used by plugins
+public fn void setGlobals(Globals* g) @(unused){
+    globals = g;
+    attr.initialize(g.attr_name_indexes);
+}
+
+
+// wordsize in bytes, must NOT be called from Plugin!
+public fn void initialize(Context* c, string_pool.Pool* astPool, u32 wordsize, bool use_color) {
+    globals = stdlib.malloc(sizeof(Globals));
+    globals.pointers.init(c);
+    globals.string_types.init(c);
+    globals.wordsize = wordsize;
+    globals.use_color = use_color;
+    globals.names_pool = astPool;
+    globals.ast_count = 1;
+    globals.ast_capacity = 0;
+    globals.ast_list = nil;
+    globals.dump_buf = string_buffer.create(4096, use_color, 2);
+#if AstStatistics
+    globals.stats.reset();
+#endif
+
+    // create all Qualtypes for builtin-types, 1 extra for void-ptr
+    builtins = stdlib.malloc((elemsof(BuiltinKind) + 1) * sizeof(QualType));
+    for (u32 i=0; i<elemsof(BuiltinKind); i++) {
+        builtins[i].set((Type*)BuiltinType.create(c, (BuiltinKind)i));
+    }
+
+    // create void* Type so its easy to check if a type is a void*
+    Type* void_ptr = ast.getPointerType(builtins[BuiltinKind.Void]);
+    builtins[elemsof(BuiltinKind)].set(void_ptr);
+    void_ptr.setCanonicalType(builtins[elemsof(BuiltinKind)]);
+
+    string.memcpy(globals.builtinType_sizes, BuiltinType_default_sizes, sizeof(BuiltinType_default_sizes));
+    globals.builtinType_sizes[BuiltinKind.ISize] = wordsize;
+    globals.builtinType_sizes[BuiltinKind.USize] = wordsize;
+
+    string.memcpy(globals.builtinType_width, BuiltinType_default_widths, sizeof(BuiltinType_default_widths));
+    globals.builtinType_width[BuiltinKind.ISize] = wordsize * 8;
+    globals.builtinType_width[BuiltinKind.USize] = wordsize * 8;
+
+    for (u32 i=0; i<elemsof(BuiltinKind); i++) {
+        globals.builtinType_baseTypes[i] = (BuiltinKind)i;
+    }
+    if (wordsize == 4) {
+        globals.builtinType_baseTypes[BuiltinKind.ISize] = BuiltinKind.Int32;
+        globals.builtinType_baseTypes[BuiltinKind.USize] = BuiltinKind.UInt32;
+    } else {
+        globals.builtinType_baseTypes[BuiltinKind.ISize] = BuiltinKind.Int64;
+        globals.builtinType_baseTypes[BuiltinKind.USize] = BuiltinKind.UInt64;
+    }
+
+    attr.register(astPool, globals.attr_name_indexes);
+    attr.initialize(globals.attr_name_indexes);
+}
+
+public fn void deinit(bool print_stats) {
+#if AstStatistics
+    if (print_stats) globals.stats.dump();
+#endif
+    globals.names_pool = nil;
+    globals.ast_count = 0;
+    globals.ast_capacity = 0;
+    stdlib.free(globals.ast_list);
+    globals.ast_list = nil;
+    globals.pointers.clear();
+    globals.string_types.clear();
+    stdlib.free(globals);
+    stdlib.free(builtins);
+    globals.dump_buf.free();
+}
+
+public fn u32 getWordSize() {
+    return globals.wordsize;
+}
+
+public fn bool useColor() @(unused) {
+    return globals.use_color;
+}
+
+fn QualType getStringType(u32 len) {
+    return globals.string_types.get(len);
+}
+
+public fn const char* idx2name(u32 idx) {
+    if (idx) return globals.names_pool.idx2str(idx);
+    return nil;
+}
+
+fn QualType getVoidPtr() {
+    return builtins[elemsof(BuiltinKind)];
+}
+
+public fn Type* getPointerType(QualType inner) {
+    return globals.pointers.getPointer(inner);
+}
+
+fn u32 addAST(AST* ast_) {
+    if (globals.ast_count >= globals.ast_capacity) {
+        if (globals.ast_capacity == 0) globals.ast_capacity = 16;
+        else globals.ast_capacity *= 2;
+
+        void* buf = stdlib.malloc(globals.ast_capacity * sizeof(ast.AST*));
+        if (globals.ast_list) {
+            void* old = globals.ast_list;
+            string.memcpy(buf, old, globals.ast_count * sizeof(ast.AST*));
+            stdlib.free(old);
+        }
+        globals.ast_list = buf;
+    }
+
+    u32 idx = globals.ast_count;
+    globals.ast_list[idx] = ast_;
+    globals.ast_count++;
+    return idx;
+}
+
+/*
+public fn u32 ast2idx(const AST* ast_) {
+    if (ast_) return ast_.idx;
+    return 0;
+}
+*/
+
+fn AST* idx2ast(u32 idx) {
+    if (idx == 0) return nil;
+    return globals.ast_list[idx];
+}
+
+fn string_buffer.Buf* getDumpBuf() {
+    return globals.dump_buf;
+}
+
+fn void flushDumpBuf(string_buffer.Buf* out) {
+    out.color(col_Normal);
+    stdio.puts(out.data());
+    out.clear();
+}
+
+// Note: qt must be valid
+public fn void setTypePublicUsed(QualType qt) {
+    const Type* t = qt.getType();
+    Decl* d = nil;
+    switch (t.getKind()) {
+    case Builtin:
+        return;
+    case Pointer:
+        PointerType* pt = (PointerType*)t;
+        setTypePublicUsed(pt.inner);
+        return;
+    case Array:
+        ArrayType* at = (ArrayType*)t;
+        setTypePublicUsed(at.elem);
+        return;
+    case Struct:
+        StructType* st = (StructType*)t;
+        d = (Decl*)st.decl;
+        break;
+    case Enum:
+        EnumType* et = (EnumType*)t;
+        d = (Decl*)et.decl;
+        break;
+    case Function:
+        //FunctionType* ft = (FunctionType*)t);
+        // TODO how to get from FunctionType to FunctionTypeDecl?
+        return;
+    case Alias:
+        AliasType* at = (AliasType*)t;
+        d = (Decl*)at.decl;
+        break;
+    case Module:
+        return;
+    }
+    if (d) d.setUsedPublic();
+}
+
+public fn BuiltinKind getNativeKind() {
+    return globals.wordsize == 8 ? BuiltinKind.UInt64 : BuiltinKind.UInt32;
+}
+
+Color col_Stmt = Color.Bmagenta;
+Color col_Decl = Color.Bgreen;
+Color col_Expr = Color.Bmagenta;
+Color col_Attr = Color.Blue;
+Color col_Template = Color.Green;
+//Color col_Cast = Color.Red;
+Color col_Type = Color.Green;
+Color col_Value = Color.Bcyan;
+Color col_Error = Color.Red;
+Color col_Calc = Color.Yellow;    // all calculated value
+Color col_Normal = Color.Normal;
+
+public type AttrHandlerFn fn bool (void* arg, Decl* d, const attr.Attr* a);
+

@@ -1,0 +1,33 @@
+// @recipe lib static
+$warnings no-unused
+$backend c no-build
+$export aa bb
+
+// @file{file1}
+module aa;
+public const i32 AA = 10;
+
+// @file{file2}
+module bb;
+import aa;
+
+public type BB enum i8 {
+    BB1 = aa.AA,
+}
+
+// @expect{complete, bb.c2i}
+module bb;
+import aa;
+
+type BB enum i8 {
+    BB1 = aa.AA,
+}
+
+// @expect{atleast, bb.h}
+#include "aa.h"
+
+typedef int8_t bb_BB;
+enum bb_BB {
+    bb_BB_BB1 = aa_AA,
+};
+

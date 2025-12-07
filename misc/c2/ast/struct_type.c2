@@ -1,0 +1,56 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import string_buffer;
+
+public type StructType struct @(opaque) {
+    Type base;
+    StructTypeDecl* decl;
+}
+
+
+// Note: not public, since only called by StructTypeDecl
+fn StructType* StructType.create(ast_context.Context* c, StructTypeDecl* decl) {
+    StructType* t = c.alloc(sizeof(StructType));
+    t.base.init(TypeKind.Struct);
+    t.decl = decl;
+#if AstStatistics
+    Stats.addType(TypeKind.Struct, sizeof(StructType));
+#endif
+    return t;
+}
+
+public fn StructTypeDecl* StructType.getDecl(const StructType* t) { return t.decl; }
+
+fn Type* StructType.asType(StructType* t) { return &t.base; }
+
+fn void StructType.print(const StructType* t, string_buffer.Buf* out) {
+    if (t.decl.isGlobal()) {
+        out.add(t.decl.base.getModuleName());
+        out.add1('.');
+    }
+    const char* name = t.decl.base.getName();
+    if (name) out.add(name);
+    else out.add("<anonymous>");
+}
+
+fn void StructType.fullPrint(const StructType* t, string_buffer.Buf* out, u32 indent) {
+    out.indent(indent);
+    out.print("StructType [%p] %s\n", t, t.decl.asDecl().getName());
+}
+

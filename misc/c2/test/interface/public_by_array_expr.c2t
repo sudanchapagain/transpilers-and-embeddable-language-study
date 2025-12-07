@@ -1,0 +1,32 @@
+// @recipe lib static
+$warnings no-unused
+$backend c no-build
+$export aa bb
+
+// @file{file1}
+module aa;
+public const i32 AA = 10;
+
+// @file{file2}
+module bb;
+import aa;
+
+public i32[aa.AA] b;
+
+public const u32 Size = elemsof(b);
+
+// @expect{complete, bb.c2i}
+module bb;
+import aa;
+
+i32[10] b;
+
+const u32 Size = 10;
+
+// @expect{atleast, bb.h}
+#include "aa.h"
+
+extern int32_t bb_b[10];
+
+#define bb_Size 10
+

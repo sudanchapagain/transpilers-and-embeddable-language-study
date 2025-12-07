@@ -1,0 +1,218 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module plugin_main;
+
+import ast local;
+import attr;
+import console;
+import plugin_info;
+import string_buffer;
+import utils;
+
+import stdlib local;
+import string;
+
+public plugin_info.Plugin handle @(export) = {
+    .load = load,
+    .unload = unload,
+    .init = plugin_init,
+    .post_parse = generate_tests,
+    .post_analysis = nil,
+    .name = "UnitTest 1.0",
+}
+
+type Plugin struct {
+    plugin_info.Info* info;
+    u32 attr_name;
+    u32 setup_name;
+    u32 teardown_name;
+    DeclList decls;
+    u32 cur_prefix;
+
+    FunctionDeclList tests;
+    bool setup;
+    bool teardown;
+}
+
+fn void* load(const char* options, bool show_timing, bool show_debug) {
+    Plugin* p = calloc(1, sizeof(Plugin));
+    p.decls.init();
+    p.tests.init();
+
+    console.init();
+    console.setTiming(show_timing);
+    console.setDebug(show_debug);
+
+    return p;
+}
+
+fn void unload(void* arg) {
+    Plugin* p = arg;
+    p.decls.free();
+    p.tests.free();
+    free(arg);
+}
+
+fn void plugin_init(void* arg, plugin_info.Info* info) {
+    Plugin* p = arg;
+    p.info = info;
+    p.decls.clear();
+    ast.setGlobals(info.ast_globals);
+    ast.builtins = info.ast_builtins;
+
+    p.attr_name = info.astPool.addStr("unittest", true);
+    info.registerAttr(p.attr_name, handle_attr, p);
+
+    p.setup_name = info.astPool.addStr("setup", true);
+    p.teardown_name = info.astPool.addStr("teardown", true);
+
+    generate_types(p);
+}
+
+const char[] Content1 @(embed="plugins/unit_test1.c2");
+const char[] Content2 @(embed="plugins/unit_test2.c2");
+
+fn void generate_types(Plugin *p) {
+    string_buffer.Buf* out = string_buffer.create(4096, false, 2);
+
+    out.add(Content1);
+    p.info.addSource(p.info.fn_arg, "generated", out);
+}
+
+fn bool handle_attr(void* arg, Decl* d, const attr.Attr* a) {
+    Plugin* p = arg;
+    assert(a.name  == p.attr_name);
+
+    if (!d.isStructType()) {
+        p.info.diags.error(a.loc, "attribute 'unittest' can only be applied to structs");
+        return false;
+    }
+
+    p.decls.add(d);
+    return true;
+}
+
+fn void Plugin.handleTypeFunc(void* arg, FunctionDecl* fd) {
+    Plugin* p = arg;
+
+    Ref* prefix = fd.getPrefix();
+    assert(prefix);
+    Decl* d = (Decl*)fd;
+
+    if (prefix.name_idx != p.cur_prefix) return;
+
+    if (d.getNameIdx() == p.setup_name) {
+        p.setup = true;
+        return;
+    }
+
+    if (d.getNameIdx() == p.teardown_name) {
+        p.teardown = true;
+        return;
+    }
+
+    const char* name = d.getName();
+    if (string.strncmp("test", name, 4) != 0) return;
+
+    p.tests.add(fd);
+}
+
+fn void generate_tests(void* arg) {
+    Plugin* p = arg;
+    console.debug("unittest: generating tests");
+    u64 t1 = utils.now();
+
+    Decl** decls = p.decls.getDecls();
+    for (u32 i=0; i<p.decls.size(); i++) {
+        Decl* d = decls[i];
+        Module* m = d.getModule();
+        p.cur_prefix = d.getNameIdx();
+
+        p.tests.clear();
+        p.setup = false;
+        p.teardown = false;
+        // TODO multiple test-groups in single module
+        m.visitTypeFunctions(Plugin.handleTypeFunc, p);
+
+        string_buffer.Buf* out = string_buffer.create(512, false, 2);
+        out.print("module %s;\n\n", m.getName());
+        out.add("import c2test as ct;\n\n");
+
+        out.add("public const ct.C2Test[] Test_functions = {\n");
+        FunctionDecl** tests = p.tests.getDecls();
+        for (u32 j=0; j<p.tests.size(); j++) {
+            Decl* func = (Decl*)tests[j];
+            // TODO dont use fullName since we dont need the module prefix
+            out.print("   { \"%s\", (ct.TestFn)(%s) },\n", func.getName(), func.getFullName());
+        }
+        out.add("}\n\n");
+
+        out.add("public const ct.Group TestGroup = {\n");
+        out.print("  .name = \"%s\",\n", m.getName());
+        out.print("  .fixture_size = sizeof(%s),\n", d.getName());
+        out.add("  .setup = ");
+        if (p.setup) {
+            out.print("(ct.TestFn)(%s.setup),\n", d.getName());
+        } else {
+            out.add("nil,\n");
+        }
+
+        out.add("  .teardown = ");
+        if (p.teardown) {
+            out.print("(ct.TestFn)(%s.teardown),\n", d.getName());
+        } else {
+            out.add("nil,\n");
+        }
+        out.add("  .num_tests = elemsof(Test_functions),\n");
+        out.add("  .tests = Test_functions,\n");
+        out.add("}\n\n");
+
+        p.info.addSource(p.info.fn_arg, "generated", out);
+    }
+
+    p.generate_c2test_main();
+
+    u64 t2 = utils.now();
+    console.log_time("unit_test generation", t2 - t1);
+}
+
+fn void Plugin.generate_c2test_main(Plugin* p) {
+    Decl** decls = p.decls.getDecls();
+
+    string_buffer.Buf* out = string_buffer.create(1024, false, 2);
+
+    // Note: this would be so much easier if we used the load_file plugin. But that
+    // would make the build process a lot more complicated.
+    out.add("module c2test_main;\n\n");
+    out.add("import c2test local;\n\n");
+
+    for (u32 i=0; i<p.decls.size(); i++) {
+        Module* m = decls[i].getModule();
+        out.print("import %s;\n", m.getName());
+    }
+
+    out.add(Content2);
+
+    out.add("const Group*[] groups = {\n");
+    for (u32 i=0; i<p.decls.size(); i++) {
+        Module* m = decls[i].getModule();
+        out.print("  &%s.TestGroup,\n", m.getName());
+    }
+    out.add("}\n\n");
+
+    p.info.addSource(p.info.fn_arg, "generated c2test_main", out);
+}
+

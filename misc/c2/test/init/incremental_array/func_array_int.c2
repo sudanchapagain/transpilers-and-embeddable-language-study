@@ -1,0 +1,9 @@
+// @warnings{no-unused}
+module test;
+
+type Func fn void();
+
+Func[+] a;
+
+a += 10;    // @error{invalid type conversion from 'i32' to 'Func'}
+

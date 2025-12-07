@@ -1,0 +1,7 @@
+// @warnings{no-unused}
+module test;
+
+type State enum u8 { + }
+
+State += 10;        // @error{expected identifier}
+

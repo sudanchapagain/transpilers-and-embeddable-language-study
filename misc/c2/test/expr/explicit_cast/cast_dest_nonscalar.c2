@@ -1,0 +1,11 @@
+// @warnings{no-unused}
+module test;
+
+type Struct struct {
+    i32 x;
+}
+
+fn void test1a() {
+    i32 a1 = (Struct)(200);    // @error{used type 'test.Struct' where arithmetic or pointer type is required}
+}
+

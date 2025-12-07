@@ -1,0 +1,4 @@
+// @warnings{no-unused}
+module test;
+
+type Fn fn void() @(constructor); // @error{attribute 'constructor' is not applicable to Enum/Alias types}

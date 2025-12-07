@@ -1,0 +1,104 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import string_buffer;
+import src_loc local;
+
+type ImportDeclBits struct {
+    u32 : NumDeclBits;
+    u32 is_local : 1;
+//    u32 own_component : 1;
+}
+
+public type ImportDecl struct @(opaque) {
+    Decl base;
+    u32 alias_idx;
+    SrcLoc alias_loc;
+    Module* dest;
+}
+
+public fn ImportDecl* ImportDecl.create(ast_context.Context* c,
+                                          u32 name,
+                                          SrcLoc loc,
+                                          u32 alias_name,
+                                          SrcLoc alias_loc,
+                                          u32 ast_idx,
+                                          bool is_local)
+{
+    ImportDecl* d = c.alloc(sizeof(ImportDecl));
+    d.base.init(DeclKind.Import, name, loc, false, QualType_Invalid, ast_idx);
+    d.base.importDeclBits.is_local = is_local;
+    d.alias_idx = alias_name;
+    d.alias_loc = alias_loc;
+    d.dest = nil;
+#if AstStatistics
+    Stats.addDecl(DeclKind.Import, sizeof(ImportDecl));
+#endif
+    return d;
+}
+
+public fn Decl* ImportDecl.asDecl(ImportDecl* d) { return &d.base; }
+
+public fn const char* ImportDecl.getAliasName(const ImportDecl* d) { return idx2name(d.alias_idx); }
+
+fn u32 ImportDecl.getAliasNameIdx(const ImportDecl* d) { return d.alias_idx; }
+
+public fn u32 ImportDecl.getImportNameIdx(const ImportDecl* d) {
+    if (d.alias_idx) return d.alias_idx;
+    return d.base.name_idx;
+}
+
+public fn SrcLoc ImportDecl.getLoc(const ImportDecl* d) {
+    if (d.alias_idx) return d.alias_loc;
+    return d.base.getLoc();
+}
+
+//public func SrcLoc ImportDecl.getAliasLoc(const ImportDecl* d) { return d.alias_loc; }
+
+public fn void ImportDecl.setDest(ImportDecl* d, Module* mod) { d.dest = mod; }
+
+public fn Module* ImportDecl.getDest(const ImportDecl* d) { return d.dest; }
+
+public fn bool ImportDecl.isLocal(const ImportDecl* d) { return d.base.importDeclBits.is_local; }
+
+fn void ImportDecl.print(const ImportDecl* d, string_buffer.Buf* out, u32 indent) {
+    out.indent(indent);
+    out.color(col_Decl);
+    out.add("ImportDecl");
+
+    d.base.printUsed(out);
+    out.add(" module=");
+    if (d.dest) {
+        out.add(d.dest.getName());
+    } else {
+        out.add("<nil>");
+    }
+    if (d.base.importDeclBits.is_local) {
+        out.color(col_Attr);
+        out.add(" local");
+    }
+    d.base.printName(out);
+    if (d.alias_idx) {
+        out.color(col_Attr);
+        out.add(" as ");
+        out.color(col_Value);
+        out.add(idx2name(d.alias_idx));
+    }
+    out.newline();
+}
+

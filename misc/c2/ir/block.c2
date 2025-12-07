@@ -1,0 +1,116 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ir;
+
+import string;
+
+public type BlockKind enum u8 {
+    Unspecified,
+    FnStart,
+    WhileCond,
+    WhileBody,
+    WhileJoin,
+    ForCond,
+    ForBody,
+    ForCont,
+    ForJoin,
+    IfTrue,
+    IfFalse,
+    IfJoin,
+    AndTrue,
+    LogicJoin,
+    OrFalse,
+    CondTrue,
+    CondFalse,
+    CondJoin,
+    Label,
+    SwitchCond,
+    SwitchCase,
+    SwitchJoin,
+    SwitchDefault,
+    PhiSplit,
+}
+
+public fn const char* BlockKind.str(BlockKind k) @(unused) {
+    switch (k) {
+    case Unspecified: return "";
+    case FnStart:     return "start";
+    case WhileCond:   return "while_cond";
+    case WhileBody:   return "while_body";
+    case WhileJoin:   return "while_join";
+    case ForCond:     return "for_cond";
+    case ForBody:     return "for_body";
+    case ForCont:     return "for_cont";
+    case ForJoin:     return "for_join";
+    case IfTrue:      return "if_true";
+    case IfFalse:     return "if_false";
+    case IfJoin:      return "if_join";
+    case AndTrue:     return "and_true";
+    case LogicJoin:   return "logic_join";
+    case OrFalse:     return "or_false";
+    case CondTrue:    return "cond_true";
+    case CondFalse:   return "cond_false";
+    case CondJoin:    return "cond_join";
+    case Label:       return "label";
+    case SwitchCond:  return "switch_cond";
+    case SwitchCase:  return "switch_case";
+    case SwitchJoin:  return "switch_join";
+    case SwitchDefault:  return "switch_default";
+    case PhiSplit:     return "phi_split";
+    }
+    return "";
+}
+
+public type Block struct {
+    BlockId[2] dests;   // used if not 0
+    Index instr;        // index into FuncInfo.instructions
+    BlockKind kind : 8 ;   // BlockKind
+    u32 used : 1;
+    u32 checked : 1;    // can be used during various passes
+    u32 end_with_switch : 1;
+    u32 phi_source : 1;
+    u32 end_block : 1;  // ends with exit/ret, no successors
+}
+static_assert(20, sizeof(Block));
+
+fn void Block.init(Block* b, BlockKind kind) {
+    string.memset(b, 0, sizeof(Block));
+    b.kind = kind;
+}
+
+fn BlockKind Block.getKind(const Block* b) {
+    return b.kind;
+}
+
+public fn const char* Block.getKindName(const Block* b) {
+    BlockKind k = b.getKind();
+    return k.str();
+}
+
+public fn void Block.setInstructions(Block* b, u32 start, u32 count) {
+    b.instr.start = start;
+    b.instr.count = count;
+}
+
+public fn Index Block.getInstructions(const Block* b) {
+    return b.instr;
+}
+
+public fn void Block.setDest(Block* b, BlockId dest1, BlockId dest2) {
+    b.dests[0] = dest1;
+    b.dests[1] = dest2;
+}
+

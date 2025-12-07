@@ -1,0 +1,10 @@
+// @warnings{no-unused}
+module test;
+
+public type Foo struct @(opaque) {
+    i32 x;
+}
+
+public fn void a(Foo arg1) {   // @error{public declaration using opaque type 'test.Foo' by value}
+}
+

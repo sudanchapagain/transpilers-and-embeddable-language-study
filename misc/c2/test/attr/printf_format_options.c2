@@ -1,0 +1,36 @@
+// @warnings{no-unused}
+module test;
+
+fn void log(const char* format @(printf_format), ...) { }
+
+fn void test1(const char* format) {
+    log(format, 10, 20); // @error{format argument is not a constant string}
+}
+
+fn void test1a(const char* format) {
+    const char* str = "%p";
+    log(str, 10); // @error{format argument is not a constant string}
+}
+
+fn void test2a() {
+    char[] format2 = "local %p";
+    log(format2, 10);   // @error{format argument is not a constant string}
+}
+
+fn void test2b() {
+    const char[] format2 = "local %p";
+    log(format2, 10);   // @error{format '%p' expects a pointer argument}
+}
+
+const char[] Format3 = "global %p";
+
+fn void test3() {
+    log(test.Format3, 10);   // @error{format '%p' expects a pointer argument}
+}
+
+char[] format4 = "global %p";
+
+fn void test4() {
+    log(test.format4, 10);   // @error{format argument is not a constant string}
+}
+

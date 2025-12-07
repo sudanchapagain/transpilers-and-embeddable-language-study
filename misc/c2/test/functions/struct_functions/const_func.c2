@@ -1,0 +1,15 @@
+// @warnings{no-unused}
+module test;
+
+type Type struct {
+    i32 member;
+}
+
+fn void Type.init(Type* t) {
+}
+
+fn void myfunc() {
+    const Type t = { 1 }
+    t.init();           // @error{pointer conversion discards const qualifier}
+}
+

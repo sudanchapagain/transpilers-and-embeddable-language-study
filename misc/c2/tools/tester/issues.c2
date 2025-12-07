@@ -1,0 +1,175 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module issues;
+
+import file_utils;
+
+import stdlib local;
+import string local;
+import stdio local; // for dump()
+import unistd; // getcwd()
+
+type Issue struct {
+    u32 filename; // into Issues' string pool
+    u32 line_nr;
+    u32 msg;    // index into Issues' string pool
+    bool found;
+}
+
+public type Iter struct {
+    Issues* issues;
+    u32 idx;
+}
+
+public fn const char* relativeFilename(const char *name) {
+    char[file_utils.Max_path] buffer;
+    char* path = unistd.getcwd(buffer, sizeof(buffer));
+    if (path && *path && path[1]) {
+        usize len = strlen(path);
+        if (!strncmp(name, path, len) && name[len] == '/' && name[len + 1] != '\0')
+            return name + len + 1;
+    }
+    return name;
+}
+
+public fn bool Iter.find(Iter* iter, const char* filename, u32 line_nr) {
+    const Issues* i = iter.issues;
+    for (; iter.more(); iter.next()) {
+        const Issue* cur = &i.issues[iter.idx];
+        if (cur.line_nr == line_nr && !strcmp(&i.pool[cur.filename], filename))
+            return true;
+    }
+    return false;
+}
+
+public fn const char* Iter.getFilename(const Iter* iter) {
+    const Issue* cur = &iter.issues.issues[iter.idx];
+    return relativeFilename(&iter.issues.pool[cur.filename]);
+}
+
+public fn u32 Iter.getLineNr(const Iter* iter) {
+    const Issue* cur = &iter.issues.issues[iter.idx];
+    return cur.line_nr;
+}
+
+public fn const char* Iter.getMsg(const Iter* iter) {
+    const Issue* cur = &iter.issues.issues[iter.idx];
+    return &iter.issues.pool[cur.msg];
+}
+
+public fn bool Iter.getFound(const Iter* iter) {
+    const Issue* cur = &iter.issues.issues[iter.idx];
+    return cur.found;
+}
+
+public fn void Iter.setFound(const Iter* iter) {
+    Issue* cur = &iter.issues.issues[iter.idx];
+    if (!cur.found) {
+        cur.found = true;
+        iter.issues.found_count++;
+    }
+}
+
+public fn bool Iter.more(const Iter* iter) {
+    return iter.idx < iter.issues.count;
+}
+
+public fn void Iter.next(Iter* iter) {
+    iter.idx++;
+}
+
+public type Issues struct @(opaque) {
+    Issue* issues;
+    u32 count;
+    u32 capacity;
+
+    char* pool;
+    u32 pool_count;
+    u32 pool_capacity;
+
+    u32 found_count;
+}
+
+public fn Issues* create() {
+    Issues* i = calloc(1, sizeof(Issues));
+    i.resizeIssues(4);
+    i.resizePool(256);
+    return i;
+}
+
+public fn void Issues.destroy(Issues* i) {
+    free(i.issues);
+    free(i.pool);
+    free(i);
+}
+
+fn void Issues.resizePool(Issues* i, u32 capacity) {
+    i.pool_capacity = capacity;
+    char* pool2 = malloc(capacity);
+    if (i.pool_count) {
+        memcpy(pool2, i.pool, i.pool_count);
+        free(i.pool);
+    }
+    i.pool = pool2;
+}
+
+fn u32 Issues.addPool(Issues* i, const char* text) {
+    u32 size = (u32)strlen(text) + 1;      // includes 0-terminator
+    while (i.pool_count + size > i.pool_capacity) i.resizePool(i.pool_capacity * 2);
+
+    u32 idx = i.pool_count;
+    memcpy(i.pool + i.pool_count, text, size);
+    i.pool_count += size;
+    return idx;
+}
+
+fn void Issues.resizeIssues(Issues* i, u32 capacity) {
+    i.capacity = capacity;
+    Issue* issues2 = malloc(capacity * sizeof(Issue));
+    if (i.count) {
+        memcpy(issues2, i.issues, i.count * sizeof(Issue));
+        free(i.issues);
+    }
+    i.issues = issues2;
+}
+
+public fn void Issues.add(Issues* i, const char* filename, u32 line_nr, const char* msg) {
+    if (i.count == i.capacity) i.resizeIssues(i.capacity + 4);
+
+    Issue* cur = &i.issues[i.count];
+    cur.filename = i.addPool(filename);
+    cur.line_nr = line_nr;
+    cur.msg = i.addPool(msg);
+    cur.found = false;
+    i.count++;
+}
+
+public fn bool Issues.allFound(const Issues* i) {
+    return i.count == i.found_count;
+}
+
+public fn Iter Issues.getIter(Issues* i) {
+    Iter iter = { i, 0 }
+    return iter;
+}
+
+public fn void Issues.dump(const Issues* i) @(unused) {
+    printf("Issues (%d, %d)\n", i.count, i.pool_count);
+    for (u32 j=0; j<i.count; j++) {
+        const Issue* cur = &i.issues[j];
+        printf("  %s %d %s\n", &i.pool[cur.filename], cur.line_nr, &i.pool[cur.msg]);
+    }
+}

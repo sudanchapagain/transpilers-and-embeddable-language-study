@@ -1,0 +1,11 @@
+// @warnings{no-unused}
+module test;
+
+type Point struct {
+    i32 x;
+}
+
+fn void test2() {
+    const Point P = { 1 }  // @error{a variable name must start with a lower case character}
+}
+

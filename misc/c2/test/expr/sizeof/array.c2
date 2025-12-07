@@ -1,0 +1,7 @@
+// @warnings{no-unused}
+module test;
+
+type Handle struct { i32 x; }
+
+static_assert(sizeof(Handle[3]), 12);
+

@@ -1,0 +1,328 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module token;
+
+import number_radix local;
+import src_loc local;
+
+import string;
+
+public type Kind enum u8 {
+    None,
+    Identifier,         // abc
+    IntegerLiteral,     // 123
+    FloatLiteral,       // 3.1415
+    CharLiteral,        // 'c'
+    StringLiteral,      // "abc"
+    LParen,             // (
+    RParen,             // )
+    LSquare,            // [
+    RSquare,            // ]
+    LBrace,             // {
+    RBrace,             // }
+    Exclaim,            // !
+    ExclaimEqual,       // !=
+    Star,               // *
+    StarEqual,          // *=
+    Amp,                // &
+    AmpAmp,             // &&
+    AmpEqual,           // &=
+    Pipe,               // |
+    PipePipe,           // ||
+    PipeEqual,          // |=
+    Equal,              // =
+    EqualEqual,         // ==
+    Semicolon,          // ;
+    Colon,              // :
+    At,                 // @
+    Caret,              // ^
+    CaretEqual,         // ^=
+    Question,           // ?
+    Dot,                // .
+    Ellipsis,           // ...
+    Comma,              // ,
+    Plus,               // +
+    PlusPlus,           // ++
+    PlusEqual,          // +=
+    Minus,              // -
+    MinusMinus,         // --
+    MinusEqual,         // -=
+    Tilde,              // ~
+    Slash,              // /
+    SlashEqual,         // /=
+    Percent,            // %
+    PercentEqual,       // %=
+    Less,               // <
+    LessLess,           // <<
+    LessEqual,          // <=
+    LessLessEqual,      // <<=
+    Greater,            // >
+    GreaterGreater,     // >>
+    GreaterEqual,       // >=
+    GreaterGreaterEqual, // >>=
+    // builtin-types
+    KW_bool,    // keep as first BuiltinType, since we check range
+    KW_char,
+    KW_i8,
+    KW_i16,
+    KW_i32,
+    KW_i64,
+    KW_u8,
+    KW_u16,
+    KW_u32,
+    KW_u64,
+    KW_reg8,
+    KW_reg16,
+    KW_reg32,
+    KW_reg64,
+    KW_isize,
+    KW_usize,
+    KW_f32,
+    KW_f64,
+    KW_void,        // keep as last BuiltinType, since we check range
+    // other keywords
+    KW_as,
+    KW_asm,
+    KW_assert,
+    KW_break,
+    KW_case,
+    KW_cast,
+    KW_const,
+    KW_continue,
+    KW_default,
+    KW_elemsof,
+    KW_else,
+    KW_enum_max,
+    KW_enum_min,
+    KW_enum,
+    KW_fallthrough,
+    KW_false,
+    KW_fn,
+    KW_for,
+    KW_goto,
+    KW_if,
+    KW_import,
+    KW_local,
+    KW_module,
+    KW_nil,
+    KW_offsetof,
+    KW_public,
+    KW_return,
+    KW_sizeof,
+    KW_static_assert,
+    KW_struct,
+    KW_switch,
+    KW_template,
+    KW_to_container,
+    KW_true,
+    KW_type,
+    KW_union,
+    KW_volatile,
+    KW_while,
+    // only in raw mode
+    Feat_if,
+    Feat_ifdef,
+    Feat_ifndef,
+    Feat_elif,
+    Feat_else,
+    Feat_endif,
+    Feat_error,
+    Feat_warning,
+    Invalid,
+    LineComment,
+    BlockComment,
+    // Special Tokens
+    Eof,
+    Warning,
+    Error,
+}
+
+public fn bool Kind.isKeyword(Kind kind) {
+    return kind >= Kind.KW_bool && kind <= Kind.KW_while;
+}
+
+public fn bool Kind.isQualifier(Kind kind) {
+    return kind == Kind.KW_const || kind == Kind.KW_volatile;
+}
+
+public fn bool Kind.isBuiltinType(Kind kind) {
+    return kind >= Kind.KW_bool && kind <= Kind.KW_void;
+}
+
+// NOTE: keep in sync with TokenKind
+const char*[] token_names = {
+    [Kind.None]             = "none",
+    [Kind.Identifier]       = "identifier",
+    [Kind.IntegerLiteral]   = "integer",
+    [Kind.FloatLiteral]     = "float",
+    [Kind.CharLiteral]      = "character",
+    [Kind.StringLiteral]    = "string",
+    [Kind.LParen]           = "(",
+    [Kind.RParen]           = ")",
+    [Kind.LSquare]          = "[",
+    [Kind.RSquare]          = "]",
+    [Kind.LBrace]           = "{",
+    [Kind.RBrace]           = "}",
+    [Kind.Exclaim]          = "!",
+    [Kind.ExclaimEqual]     = "!=",
+    [Kind.Star]             = "*",
+    [Kind.StarEqual]        = "*=",
+    [Kind.Amp]              = "&",
+    [Kind.AmpAmp]           = "&&",
+    [Kind.AmpEqual]         = "&=",
+    [Kind.Pipe]             = "|",
+    [Kind.PipePipe]         = "||",
+    [Kind.PipeEqual]        = "|=",
+    [Kind.Equal]            = "=",
+    [Kind.EqualEqual]       = "==",
+    [Kind.Semicolon]        = ";",
+    [Kind.Colon]            = ":",
+    [Kind.At]               = "@",
+    [Kind.Caret]            = "^",
+    [Kind.CaretEqual]       = "^=",
+    [Kind.Question]         = "?",
+    [Kind.Dot]              = ".",
+    [Kind.Ellipsis]         = "...",
+    [Kind.Comma]            = ",",
+    [Kind.Plus]             = "+",
+    [Kind.PlusPlus]         = "++",
+    [Kind.PlusEqual]        = "+=",
+    [Kind.Minus]            = "-",
+    [Kind.MinusMinus]       = "--",
+    [Kind.MinusEqual]       = "-=",
+    [Kind.Tilde]            = "~",
+    [Kind.Slash]            = "/",
+    [Kind.SlashEqual]       = "/=",
+    [Kind.Percent]          = "%",
+    [Kind.PercentEqual]     = "%=",
+    [Kind.Less]             = "<",
+    [Kind.LessLess]         = "<<",
+    [Kind.LessEqual]        = "<=",
+    [Kind.LessLessEqual]    = "<<=",
+    [Kind.Greater]          = ">",
+    [Kind.GreaterGreater]   = ">>",
+    [Kind.GreaterEqual]     = ">=",
+    [Kind.GreaterGreaterEqual] = ">>=",
+    [Kind.KW_bool]          = "bool",
+    [Kind.KW_char]          = "char",
+    [Kind.KW_i8]            = "i8",
+    [Kind.KW_i16]           = "i16",
+    [Kind.KW_i32]           = "i32",
+    [Kind.KW_i64]           = "i64",
+    [Kind.KW_u8]            = "u8",
+    [Kind.KW_u16]           = "u16",
+    [Kind.KW_u32]           = "u32",
+    [Kind.KW_u64]           = "u64",
+    [Kind.KW_reg8]          = "reg8",
+    [Kind.KW_reg16]         = "reg16",
+    [Kind.KW_reg32]         = "reg32",
+    [Kind.KW_reg64]         = "reg64",
+    [Kind.KW_isize]         = "isize",
+    [Kind.KW_usize]         = "usize",
+    [Kind.KW_f32]           = "f32",
+    [Kind.KW_f64]           = "f64",
+    [Kind.KW_void]          = "void",
+    [Kind.KW_as]            = "as",
+    [Kind.KW_asm]           = "asm",
+    [Kind.KW_assert]        = "assert",
+    [Kind.KW_break]         = "break",
+    [Kind.KW_case]          = "case",
+    [Kind.KW_cast]          = "cast",
+    [Kind.KW_const]         = "const",
+    [Kind.KW_continue]      = "continue",
+    [Kind.KW_default]       = "default",
+    [Kind.KW_elemsof]       = "elemsof",
+    [Kind.KW_else]          = "else",
+    [Kind.KW_enum_max]      = "enum_max",
+    [Kind.KW_enum_min]      = "enum_min",
+    [Kind.KW_enum]          = "enum",
+    [Kind.KW_fallthrough]   = "fallthrough",
+    [Kind.KW_false]         = "false",
+    [Kind.KW_fn]            = "fn",
+    [Kind.KW_for]           = "for",
+    [Kind.KW_goto]          = "goto",
+    [Kind.KW_if]            = "if",
+    [Kind.KW_import]        = "import",
+    [Kind.KW_local]         = "local",
+    [Kind.KW_module]        = "module",
+    [Kind.KW_nil]           = "nil",
+    [Kind.KW_offsetof]      = "offsetof",
+    [Kind.KW_public]        = "public",
+    [Kind.KW_return]        = "return",
+    [Kind.KW_sizeof]        = "sizeof",
+    [Kind.KW_static_assert] = "static_assert",
+    [Kind.KW_struct]        = "struct",
+    [Kind.KW_switch]        = "switch",
+    [Kind.KW_template]      = "template",
+    [Kind.KW_to_container]  = "to_container",
+    [Kind.KW_true]          = "true",
+    [Kind.KW_type]          = "type",
+    [Kind.KW_union]         = "union",
+    [Kind.KW_volatile]      = "volatile",
+    [Kind.KW_while]         = "while",
+    [Kind.Feat_if]          = "#if",
+    [Kind.Feat_ifdef]       = "#ifdef",
+    [Kind.Feat_ifndef]      = "#ifndef",
+    [Kind.Feat_elif]        = "#elif",
+    [Kind.Feat_else]        = "#else",
+    [Kind.Feat_endif]       = "#endif",
+    [Kind.Feat_error]       = "#error",
+    [Kind.Feat_warning]     = "#warning",
+    [Kind.Invalid]          = "invalid",
+    [Kind.LineComment]      = "l-comment",
+    [Kind.BlockComment]     = "b-comment",
+    [Kind.Eof]              = "eof",
+    [Kind.Warning]          = "warning",
+    [Kind.Error]            = "error",
+}
+
+static_assert(elemsof(Kind), elemsof(token_names));
+
+public fn const char* Kind.str(Kind k) {
+    return token_names[k];
+}
+
+public type Token struct {
+    SrcLoc loc;
+    u16 len : 16;
+    Kind kind : 8;
+    bool done : 1;
+    u8 radix : 2;   // number_radix.Radix: for IntegerLiteral (2,8,10,16), FloatLiteral(10,16) and CharLiteral (8,16)
+    u8 raw : 1;     // for StringLiteral
+    bool reserved : 1;
+    bool suffix_F : 1;
+    union {
+        const char* error_msg;  // ERROR
+        struct {           // StringLiteral, LineComment, BlockComment
+            u32 text_idx;  // pool index of encoded string or comment
+            u32 text_len;  // length of converted string (without null terminator)
+        }
+        u32 name_idx;      // Identifier and all keywords
+        u64 int_value;     // IntegerLiteral
+        f64 float_value;   // FloatLiteral
+        u8 char_value;     // CharLiteral
+        char[8] invalid;   // Invalid
+    }
+}
+static_assert(16, sizeof(Token));
+
+public fn void Token.init(Token* tok) {
+    string.memset(tok, 0, sizeof(Token));
+}
+
+public fn Radix Token.getRadix(const Token* tok) {
+    return (Radix)tok.radix;
+}

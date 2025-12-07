@@ -1,0 +1,119 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import string_buffer;
+
+type ArrayTypeBits struct {
+    u32 : NumTypeBits;
+    u32 has_size : 1;       // if it has an sizeExpr
+    u32 is_incremental : 1;
+}
+
+public type ArrayType struct @(opaque) {
+    Type base;
+    QualType elem;
+    u32 size;       // set during analysis, number of elements
+    // Note: 4 bytes padding here on 64-bit systems
+}
+
+public fn ArrayType* ArrayType.create(ast_context.Context* c,
+                                        QualType elem,
+                                        bool has_size,
+                                        u32 size)
+{
+    ArrayType* t = c.alloc(sizeof(ArrayType));
+    t.base.init(TypeKind.Array);
+    t.base.arrayTypeBits.is_incremental = false;
+    t.base.arrayTypeBits.has_size = has_size;
+    t.elem = elem;
+    t.size = size;
+#if AstStatistics
+    Stats.addType(TypeKind.Array, sizeof(ArrayType));
+#endif
+    return t;
+}
+
+public fn ArrayType* ArrayType.createIncremental(ast_context.Context* c,
+                                                   QualType elem)
+{
+    ArrayType* t = c.alloc(sizeof(ArrayType));
+    t.base.init(TypeKind.Array);
+    t.base.arrayTypeBits.is_incremental = true;
+    t.base.arrayTypeBits.has_size = false;
+    t.elem = elem;
+    t.size = 0;
+#if AstStatistics
+    Stats.addType(TypeKind.Array, sizeof(ArrayType));
+#endif
+    return t;
+}
+
+//public fn Type* ArrayType.asType(ArrayType* t) { return &t.base; }
+
+public fn QualType ArrayType.getElemType(const ArrayType* t) { return t.elem; }
+
+/*
+public fn bool ArrayType.isIncremental(const ArrayType* t) {
+    return t.base.arrayTypeBits.is_incremental;
+}
+*/
+
+public fn u32 ArrayType.hasSize(const ArrayType* t) {
+    return t.base.arrayTypeBits.has_size;
+}
+
+public fn u32 ArrayType.getSize(const ArrayType* t) { return t.size; }
+
+public fn void ArrayType.setSize(ArrayType* t, u32 size) {
+    t.base.arrayTypeBits.has_size = true;
+    t.size = size;
+}
+
+fn void ArrayType.printPreName(const ArrayType* t, string_buffer.Buf* out) {
+    t.elem.print(out);
+}
+
+fn void ArrayType.printPostName(const ArrayType* t, string_buffer.Buf* out) {
+    out.add1('[');
+    if (t.base.arrayTypeBits.is_incremental) {
+        out.add1('+');
+    } else {
+        out.print("%d", t.size);
+    }
+    out.add1(']');
+}
+
+fn void ArrayType.print(const ArrayType* t, string_buffer.Buf* out) {
+    // TODO print preName, postName
+    ArrayType* at = t.elem.getArrayTypeOrNil();
+    if (at) at.printPreName(out);
+    else t.elem.printInner(out, false, true, true);
+
+    t.printPostName(out);
+
+    if (at) at.printPostName(out);
+}
+
+fn void ArrayType.fullPrint(const ArrayType* t, string_buffer.Buf* out, u32 indent) {
+    out.indent(indent);
+    out.print("ArrayType [%p]", t);
+    if (t.base.arrayTypeBits.has_size) out.print(" size=%d", t.size);
+    out.newline();
+    t.elem.fullPrint(out, indent + 1);
+}
+

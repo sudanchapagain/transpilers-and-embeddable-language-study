@@ -1,0 +1,238 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import src_loc local;
+import string_buffer;
+import string;
+
+type CallExprBits struct {
+    u32 : NumExprBits;
+    u32 calls_type_func : 1;
+    u32 calls_static_sf : 1;
+    u32 is_template_call : 1;
+    u32 printf_format : 4;  // 1-based, 0 means no printf-format
+    u32 change_format : 1;   // if c-generator needs to re-write format
+    u32 has_auto_args : 1;   // if c-generator needs to insert extra arguments (file, line)
+    u32 is_noreturn : 1;
+    u32 num_args : 8;
+}
+
+public type CallExpr struct @(opaque) {
+    Expr base;
+    SrcLoc endLoc;
+    u16 template_idx;   // instance number
+    u16 instance_ast_idx; // for template function calls
+    Expr* func;
+    Expr*[0] args; // tail-allocated
+    //TypeRef template_arg; // tail-allocated, variable size
+}
+
+public fn CallExpr* CallExpr.create(ast_context.Context* c,
+                                      SrcLoc loc,
+                                      SrcLoc endLoc,
+                                      Expr* func,
+                                      Expr** args,
+                                      u32 num_args)
+{
+    u32 size = sizeof(CallExpr) + num_args * sizeof(Expr*);
+    CallExpr* e = c.alloc(size);
+    e.base.init(ExprKind.Call, loc, 0, 0, 1, ValType.RValue);
+    e.base.base.callExprBits.num_args = (u8)num_args;
+    e.endLoc = endLoc;
+    e.template_idx = 0;
+    e.instance_ast_idx = 0;
+    e.func = func;
+    string.memcpy(e.args, args, num_args * sizeof(Expr*));
+#if AstStatistics
+    Stats.addExpr(ExprKind.Call, size);
+#endif
+    return e;
+}
+
+public fn CallExpr* CallExpr.createTemplate(ast_context.Context* c,
+                                              SrcLoc loc,
+                                              SrcLoc endLoc,
+                                              Expr* func,
+                                              Expr** args,
+                                              u32 num_args,
+                                              u32 ast_idx,
+                                              const TypeRefHolder* ref)
+{
+    u32 size = sizeof(CallExpr) + num_args * sizeof(Expr*);
+    size += sizeof(TypeRef) + ref.getExtraSize();
+    CallExpr* e = c.alloc(size);
+    e.base.init(ExprKind.Call, loc, 0, 0, 1, ValType.RValue);
+    e.base.base.callExprBits.is_template_call = 1;
+    e.base.base.callExprBits.num_args = (u8)num_args;
+    e.endLoc = endLoc;
+    e.template_idx = 0;
+    e.instance_ast_idx = (u16)ast_idx;
+    e.func = func;
+    string.memcpy(e.args, args, num_args * sizeof(Expr*));
+    TypeRef* destRef = (TypeRef*)&e.args[num_args];
+    destRef.init(ref);
+#if AstStatistics
+    Stats.addExpr(ExprKind.Call, size);
+#endif
+    return e;
+}
+
+fn Expr* CallExpr.instantiate(CallExpr* e, Instantiator* inst) {
+    assert(!e.isTemplateCall());
+    u32 num_args = e.base.base.callExprBits.num_args;
+    u32 size = sizeof(CallExpr) + num_args * sizeof(Expr*);
+    CallExpr* e2 = inst.c.alloc(size);
+    e2.base = e.base;
+    e2.endLoc = e.endLoc;
+    e2.template_idx = 0;
+    e2.instance_ast_idx = e.instance_ast_idx;
+    e2.func = e.func.instantiate(inst);
+    for (u32 i = 0; i < num_args; i++) {
+        e2.args[i] = e.args[i].instantiate(inst);
+    }
+#if AstStatistics
+    Stats.addExpr(ExprKind.Call, size);
+#endif
+    return (Expr*)e2;
+}
+
+public fn void CallExpr.setCallsTypeFunc(CallExpr* e) {
+    e.base.base.callExprBits.calls_type_func = 1;
+}
+
+public fn bool CallExpr.isTypeFunc(const CallExpr* e) {
+    return e.base.base.callExprBits.calls_type_func;
+}
+
+public fn void CallExpr.setCallsStaticTypeFunc(CallExpr* e) {
+    e.base.base.callExprBits.calls_static_sf = 1;
+}
+
+public fn bool CallExpr.isStaticTypeFunc(const CallExpr* e) {
+    return e.base.base.callExprBits.calls_static_sf;
+}
+
+public fn bool CallExpr.isTemplateCall(const CallExpr* e) {
+    return e.base.base.callExprBits.is_template_call;
+}
+
+public fn TypeRef* CallExpr.getTemplateArg(const CallExpr* e) {
+    if (e.isTemplateCall()) return (TypeRef*)&e.args[e.base.base.callExprBits.num_args];
+    return nil;
+}
+
+public fn void CallExpr.setTemplateIdx(CallExpr* e, u32 idx) {
+    e.template_idx = (u16)idx;
+}
+
+public fn u32 CallExpr.getTemplateIdx(const CallExpr* e) {
+    return e.template_idx;
+}
+
+public fn u16 CallExpr.getInstanceASTIdx(const CallExpr* e) {
+    return e.instance_ast_idx;
+}
+
+public fn void CallExpr.setNoreturn(CallExpr* e) {
+    e.base.base.callExprBits.is_noreturn = 1;
+}
+
+public fn bool CallExpr.isNoreturn(const CallExpr* e) {
+    return e.base.base.callExprBits.is_noreturn;
+}
+
+// note: both idx are 0-based
+public fn void CallExpr.setPrintfFormat(CallExpr* e, u32 format_idx, bool change_format) {
+    e.base.base.callExprBits.printf_format = format_idx + 1;
+    e.base.base.callExprBits.change_format = change_format;
+}
+
+fn bool CallExpr.isPrintfCall(const CallExpr* e) {
+    return e.base.base.callExprBits.printf_format != 0;
+}
+
+public fn u32 CallExpr.getPrintfFormat(const CallExpr* e) {
+    return e.base.base.callExprBits.printf_format - 1;
+}
+
+public fn bool CallExpr.needFormatChange(const CallExpr* e) {
+    return e.base.base.callExprBits.change_format;
+}
+
+public fn void CallExpr.setHasAutoArgs(CallExpr* e) {
+    e.base.base.callExprBits.has_auto_args = 1;
+}
+
+public fn bool CallExpr.hasAutoArgs(const CallExpr* e) {
+    return e.base.base.callExprBits.has_auto_args;
+}
+
+public fn SrcLoc CallExpr.getStartLoc(const CallExpr* e) {
+    return e.func.getStartLoc();
+}
+
+public fn SrcLoc CallExpr.getEndLoc(const CallExpr* e) { return e.endLoc; }
+
+public fn Expr* CallExpr.getFunc(const CallExpr* e) { return e.func; }
+
+public fn Expr** CallExpr.getFunc2(CallExpr* e) { return &e.func; }
+
+public fn u32 CallExpr.getNumArgs(const CallExpr* e) {
+    return e.base.base.callExprBits.num_args;
+}
+
+// TODO: should be Expr* const* CallExpr.getArgs(const CallExpr* e)
+public fn Expr** CallExpr.getArgs(CallExpr* e) {
+    return e.args;
+}
+
+fn void CallExpr.printLiteral(const CallExpr* e, string_buffer.Buf* out) {
+    e.func.printLiteral(out);
+    out.lparen();
+    for (u32 i = 0; i < e.getNumArgs(); i++) {
+        if (i) out.add(", ");
+        e.args[i].printLiteral(out);
+    }
+    out.rparen();
+}
+
+fn void CallExpr.print(const CallExpr* e, string_buffer.Buf* out, u32 indent) {
+    e.base.printKind(out, indent);
+    e.base.printTypeBits(out);
+    if (e.base.base.callExprBits.calls_type_func) out.add(" TF");
+    if (e.base.base.callExprBits.calls_static_sf) out.add(" STF");
+    if (e.base.base.callExprBits.is_noreturn) out.add(" noreturn");
+    if (e.isPrintfCall()) {
+        out.print(" printf=%d|%d", e.getPrintfFormat(), e.needFormatChange());
+    }
+    if (e.hasAutoArgs()) out.add(" auto-args");
+    out.newline();
+    if (e.base.base.callExprBits.is_template_call) {
+        out.indent(indent + 1);
+        out.color(col_Template);
+        out.add("template ");
+        TypeRef* ref = (TypeRef*)&e.args[e.base.base.callExprBits.num_args];
+        ref.print(out, true);
+        out.newline();
+    }
+    e.func.print(out, indent + 1);
+    for (u32 i=0; i<e.getNumArgs(); i++) {
+        e.args[i].print(out, indent + 1);
+    }
+}
+

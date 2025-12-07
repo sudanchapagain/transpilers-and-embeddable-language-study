@@ -1,0 +1,299 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module module_analyser;
+
+import ast local;
+import src_loc local;
+
+fn VarDecl* getVarDecl(const Expr* e) {
+    Decl* d;
+    if (e.isIdentifier()) {
+        IdentifierExpr* i = (IdentifierExpr*)e;
+        d = i.getDecl();
+    } else {
+        MemberExpr* m = (MemberExpr*)e;
+        d = m.getFullDecl();
+    }
+    if (d.isVariable()) return (VarDecl*)d;
+    return nil;
+}
+
+fn QualType Analyser.analyseUnaryOperator(Analyser* ma, Expr** e_ptr, u32 side) {
+    Expr* e = *e_ptr;
+    UnaryOperator* u = (UnaryOperator*)e;
+
+    bool need_rvalue = true;
+
+    // TODO need rvalue stuff
+    switch (u.getOpcode()) {
+    case PostInc:
+    case PostDec:
+    case PreInc:
+    case PreDec:
+        if (!ma.curFunction) {
+            ma.errorRange(e.getLoc(), e.getRange(), "initializer element is not a compile-time constant");
+            return QualType_Invalid;
+        }
+        need_rvalue = false;
+        side |= LHS;
+        break;
+    case AddrOf:
+        need_rvalue = false;
+        side |= LHS;
+        break;
+    case Deref:
+    case Plus:
+    case Minus:
+    case Not:
+    case LNot:
+        side |= RHS;
+        break;
+    }
+
+    QualType t = ma.analyseExpr(u.getInner2(), need_rvalue, side);
+    if (t.isInvalid()) return QualType_Invalid;
+
+    e = *e_ptr; // re-read in case of ImplicitCast insertions
+    Expr* inner = u.getInner();
+
+    if (t.isVoid()) goto invalid_type;
+    QualType canon = t.getCanonicalType();
+
+    switch (u.getOpcode()) {
+    case PostInc:
+    case PreInc:
+        if (!ma.checkIncrDecr(inner, t, true, e.getLoc())) return QualType_Invalid;
+        break;
+    case PostDec:
+    case PreDec:
+        if (!ma.checkIncrDecr(inner, t, false, e.getLoc())) return QualType_Invalid;
+        break;
+    case AddrOf:
+/*
+        // faster, but less verbose
+        if (!inner.isLValue()) {
+            ma.error(inner.getLoc(), "lvalue required as unary '&' operand");
+            return QualType_Invalid;
+        }
+*/
+        if (!ma.getIdentifierKind(inner)) return QualType_Invalid;
+        if (canon.isConst() && (inner.isIdentifier() || inner.isMember())) {
+            VarDecl* vd = getVarDecl(inner);
+            if (vd) vd.setAddrUsed();
+        }
+        t = ma.builder.actOnPointerType(canon);
+        e.copyCtcFlags(inner);
+        if (inner.getKind() == ExprKind.ArraySubscript) {
+            // Fix &a[b] as ctc if a is ctc and b is ctv
+            // a[b] should be ctc in this case, but C does not accept it because of separate compilation
+            // TODO: handle constant 2D and 3D arrays
+            ArraySubscriptExpr* e1 = (ArraySubscriptExpr*)inner;
+            if (e1.getBase().isCtc() && e1.getIndex().isCtv())
+                e.setCtc();
+        } else
+        if (inner.getKind() == ExprKind.UnaryOperator) {
+            // Fix &*a as ctc if a is ctc
+            // *a should be ctc in this case, but C does not accept it because of separate compilation
+            UnaryOperator* e1 = (UnaryOperator*)inner;
+            if (e1.getOpcode() == UnaryOpcode.Deref)
+                e.copyCtcFlags(e1.getInner());
+        }
+        if (inner.isBitfield()) {
+            ma.error(e.getLoc(), "cannot take address of bit-field");
+            return QualType_Invalid;
+        }
+        break;
+    case Deref:
+        if (t.isPointer()) {
+            e.setLValue();
+            t = t.getCanonicalType();
+            const PointerType* p = t.getPointerType();
+            // TODO copy flags from inner
+            return p.getInner();
+        } else {
+            ma.error(e.getLoc(), "indirection requires pointer operand ('%s' invalid)", t.diagName());
+            return QualType_Invalid;
+        }
+    case Minus:
+        QualType lhs = getMinusType(canon);
+        if (!lhs.isValid()) goto invalid_type;
+        e.copyConstantFlags(inner);
+        t = usualUnaryConversions(inner);
+        break;
+    case Plus:
+        if (!canon.isBuiltin()) goto invalid_type;
+        e.copyConstantFlags(inner);
+        t = usualUnaryConversions(inner);
+        break;
+    case Not:
+        if (!canon.isBuiltin() || canon.isFloat()) goto invalid_type;
+        e.copyConstantFlags(inner);
+        t = usualUnaryConversions(inner);
+        break;
+    case LNot:
+        e.copyConstantFlags(inner);
+        return builtins[BuiltinKind.Bool];
+    }
+    return t;
+
+invalid_type:
+    ma.error(e.getLoc(), "invalid argument type '%s' to unary expression", t.diagName());
+    return QualType_Invalid;
+}
+
+fn bool Analyser.checkIncrDecr(Analyser* ma, Expr* inner, QualType t, bool is_incr, SrcLoc loc) {
+    const char* operand = is_incr ? "increment operand" : "decrement operand";
+    if (!ma.checkAssignment(inner, t, operand, loc)) return false;
+
+    t = t.getCanonicalType();
+    if (!t.isBuiltin() && !t.isPointer() && !t.isEnum()) {
+        ma.error(loc, "cannot %s value of type '%s'", is_incr ? "increment" : "decrement", t.diagName());
+        return false;
+    }
+
+    return true;
+}
+
+fn bool Analyser.getIdentifierKind(Analyser* ma, const Expr* e) {
+    IdentifierKind kind = getInnerExprAddressOf(e);
+    const char* arg = "";
+    switch (kind) {
+    case Unresolved:
+        QualType qt = e.getType();
+        ma.error(e.getLoc(), "cannot take the address of an rvalue of type '%s'", qt.diagName());
+        return false;
+    case Module:
+        arg = "a module";
+        break;
+    case Function:
+        // NOTE: C2 does not allow address of function like C
+        arg = "a function";
+        break;
+    case Type:
+        arg = "a type";
+        break;
+    case Var:
+        return true;
+    case EnumConstant:
+        arg = "an enum constant";
+        break;
+    case StructMember:
+        return true;
+    case Label:
+        arg = "a label";
+        break;
+    }
+    ma.error(e.getLoc(), "cannot take the address of %s", arg);
+    return false;
+}
+
+fn IdentifierKind getInnerExprAddressOf(const Expr* e) {
+    // TODO change return type to IdentifierKind, use Unresolved for not-IdentifiersExpr/MemberExpr
+
+    switch (e.getKind()) {
+    case IntegerLiteral:
+    case FloatLiteral:
+    case BooleanLiteral:
+    case CharLiteral:
+    case StringLiteral:
+    case Nil:
+        break;
+    case Identifier:
+        IdentifierExpr* i = (IdentifierExpr*)e;
+        return i.getKind();
+    case Type:
+    case Call:
+    case InitList:
+    case FieldDesignatedInit:
+    case ArrayDesignatedInit:
+        break;
+    case BinaryOperator:
+        break;
+    case UnaryOperator:
+        UnaryOperator* e1 = (UnaryOperator*)e;
+        if (e1.getOpcode() == UnaryOpcode.Deref) {
+            // TODO check for 2D or 3D arrays
+            return IdentifierKind.Var;  // &*e is OK
+        }
+        break;
+    case ConditionalOperator:
+        break;
+    case Builtin:
+        break;
+    case ArraySubscript:
+        ArraySubscriptExpr* a = (ArraySubscriptExpr*)e;
+        // a[b] is an LValue if not an array itself and if b is not a BitOffset
+        // TODO: reject if a[b] is itself an array
+        Expr* index = a.getIndex();
+        if (index.getKind() != ExprKind.BitOffset)
+            return IdentifierKind.Var;
+        break;
+    case Member:
+        MemberExpr* m = (MemberExpr*)e;
+        return m.getKind();
+    case Paren:
+        ParenExpr* p = (ParenExpr*)e;
+        return getInnerExprAddressOf(p.getInner());
+    case BitOffset:
+        return IdentifierKind.Unresolved;
+    case ExplicitCast:
+        ExplicitCastExpr* c = (ExplicitCastExpr*)e;
+        // TODO: this seems incorrect, casts should not produce LValues
+        return getInnerExprAddressOf(c.getInner());
+    case ImplicitCast:
+        ImplicitCastExpr* c = (ImplicitCastExpr*)e;
+        // TODO: this seems incorrect, casts should not produce LValues
+        return getInnerExprAddressOf(c.getInner());
+    case Range:
+        break;
+    case NamedArgument:
+        NamedArgument* n = (NamedArgument*)e;
+        return getInnerExprAddressOf(n.getInner());
+    }
+
+    return IdentifierKind.Unresolved;
+}
+
+fn QualType getMinusType(QualType qt) {
+    if (!qt.isBuiltin()) return QualType_Invalid;
+    BuiltinType* bi = qt.getBuiltin();
+    switch (bi.getKind()) {
+    case Char:
+    case Int8:
+    case Int16:
+    case Bool:
+        return ast.builtins[BuiltinKind.Int32];
+    case Int32:
+    case Int64:
+        return qt;
+    case UInt8:
+    case UInt16:
+    case UInt32:
+        return ast.builtins[BuiltinKind.Int32];
+    case UInt64:
+        return ast.builtins[BuiltinKind.Int64];
+    case Float32:
+    case Float64:
+    case ISize:
+        return qt;
+    case USize:
+        return builtins[BuiltinKind.ISize];
+    case Void:
+        break;
+    }
+    return QualType_Invalid;
+}
+

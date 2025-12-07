@@ -1,0 +1,105 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import string_buffer;
+import src_loc local;
+
+public type FieldDesignatedInitExpr struct @(opaque) {
+    Expr base;
+    u32 field_name;
+    Expr* initValue;
+    const FieldInitField* fif; // set during analysis
+}
+
+public fn FieldDesignatedInitExpr* FieldDesignatedInitExpr.create(ast_context.Context* c,
+                                                                  SrcLoc loc,
+                                                                  u32 field,
+                                                                  Expr* initValue)
+{
+    FieldDesignatedInitExpr* e = c.alloc(sizeof(FieldDesignatedInitExpr));
+    e.base.init(ExprKind.FieldDesignatedInit, loc, 0, 0, 0, ValType.RValue);
+    e.field_name = field;
+    e.initValue = initValue;
+    e.fif = nil;
+#if AstStatistics
+    Stats.addExpr(ExprKind.FieldDesignatedInit, sizeof(FieldDesignatedInitExpr));
+#endif
+    return e;
+}
+
+fn Expr* FieldDesignatedInitExpr.instantiate(FieldDesignatedInitExpr* e, Instantiator* inst) {
+    return (Expr*)FieldDesignatedInitExpr.create(inst.c, e.base.base.loc, e.field_name, e.initValue.instantiate(inst));
+}
+
+public fn u32 FieldDesignatedInitExpr.getField(const FieldDesignatedInitExpr* e) {
+    return e.field_name;
+}
+
+public fn const char* FieldDesignatedInitExpr.getFieldName(const FieldDesignatedInitExpr* e) {
+    return idx2name(e.field_name);
+}
+
+public fn Expr* FieldDesignatedInitExpr.getInit(const FieldDesignatedInitExpr* e) {
+    return e.initValue;
+}
+
+public fn Expr** FieldDesignatedInitExpr.getInit2(FieldDesignatedInitExpr* e) {
+    return &e.initValue;
+}
+
+fn SrcLoc FieldDesignatedInitExpr.getEndLoc(const FieldDesignatedInitExpr* e) {
+    return e.initValue.getEndLoc();
+}
+
+public fn void FieldDesignatedInitExpr.setMemberInfo(FieldDesignatedInitExpr* e, const FieldInitField* fif) {
+    e.fif = fif;
+}
+
+public fn const FieldInitField* FieldDesignatedInitExpr.getMemberInfo(const FieldDesignatedInitExpr* e) {
+    return e.fif;
+}
+
+public fn Decl* FieldDesignatedInitExpr.getDecl(const FieldDesignatedInitExpr* e) {
+    if (e.fif) return e.fif.decl;
+    return nil;
+}
+
+fn void FieldDesignatedInitExpr.print(const FieldDesignatedInitExpr* e, string_buffer.Buf* out, u32 indent) {
+    e.base.printKind(out, indent);
+    e.base.printTypeBits(out);
+    out.color(col_Value);
+    out.print(" %s", e.getFieldName());
+
+    out.space();
+    if (e.fif) {
+        e.fif.print(out);
+    } else {
+        out.color(col_Error);
+        out.add("??");
+    }
+
+    out.newline();
+    e.initValue.print(out, indent + 1);
+}
+
+fn void FieldDesignatedInitExpr.printLiteral(const FieldDesignatedInitExpr* e, string_buffer.Buf* out) {
+    out.add1('.');
+    out.add(e.getFieldName());
+    out.add(" = ");
+    e.getInit().printLiteral(out);
+}

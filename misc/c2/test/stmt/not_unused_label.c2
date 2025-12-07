@@ -1,0 +1,8 @@
+module test;
+
+public fn i32 main() {
+    goto begin;
+begin:
+    return 0;
+}
+

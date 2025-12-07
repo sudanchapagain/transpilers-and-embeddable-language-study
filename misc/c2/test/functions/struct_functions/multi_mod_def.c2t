@@ -1,0 +1,29 @@
+// @recipe bin
+$warnings no-unused
+
+// @file{file1}
+module foo;
+
+public type Type struct {
+    i32 x;
+}
+
+fn void Type.internal(Type* t) {}
+
+// @file{file2}
+module foo;
+
+public fn void Type.init(Type* t) {
+    t.internal();
+}
+
+// @file{file3}
+module bar;
+
+import foo local;
+
+fn void test() {
+    Type t;
+    t.init();
+}
+

@@ -1,0 +1,5 @@
+// @warnings{no-unused}
+module test;
+
+u8 c = u8.min - 1; // @error{constant value -1 out-of-bounds for type 'u8', range [0, 255]}
+

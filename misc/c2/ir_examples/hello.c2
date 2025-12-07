@@ -1,0 +1,10 @@
+module test;
+
+import stdio local;
+
+public fn i32 main(i32 argc, const char** argv) {
+    printf("Hello C2!\n");
+    return 0;
+}
+
+

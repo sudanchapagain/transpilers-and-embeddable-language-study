@@ -1,0 +1,7 @@
+// @warnings{no-unused}
+module test;
+
+fn void init(i32 arg) @(constructor) { } // @error{functions marked with 'constructor' cannot have arguments}
+
+fn void fini(i32 arg) @(destructor) { } // @error{functions marked with 'destructor' cannot have arguments}
+

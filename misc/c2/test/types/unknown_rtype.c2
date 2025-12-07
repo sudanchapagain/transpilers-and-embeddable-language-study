@@ -1,0 +1,4 @@
+module test;
+
+fn Bar foo() {}        // @error{unknown type 'Bar'}
+

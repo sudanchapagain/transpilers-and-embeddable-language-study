@@ -1,0 +1,8 @@
+project1 (project1)
+|--module1 (project1/module1.nit)
+|--module3 (project1/module3.nit) (module4)
+`--subdir (project1/subdir)
+   |--module4 (project1/subdir/module4.nit) (module1)
+   `--subdir2 (project1/subdir/subdir2)
+      `--subdir3 (project1/subdir/subdir2/subdir3)
+         `--submodule (project1/subdir/subdir2/subdir3/submodule.nit)

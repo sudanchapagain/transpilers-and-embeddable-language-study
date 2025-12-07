@@ -1,0 +1,181 @@
+=== test_basic
+--- main.n
+fn main() {
+    vec<u8> l = [1, 2]
+    l.push(13)
+    println(l[0], l[1], l[2])
+
+    [u8] l2 = [3, 4]
+    l2.push(12)
+    println(l2[0], l2[1], l2[2])
+
+    var l3 = vec_new<u8>(0, 0)
+    l3.push(12)
+    println(l3.len())
+    println(l3.cap())
+
+    var l4 = vec_new<u16>(0, 1024)
+    l4.push(12)
+    println(l4.len())
+    println(l4.cap())
+
+    var l5 = vec_cap<u16>(2048)
+    u16 b5 = 11
+    l5.push(b5 + 1)
+    println(l5.len())
+    println(l5.cap())
+
+    [int] l6 = [1, 2]
+    l6[1] = 22
+    var b6 = l6[1] + 3
+    println(l6[0], l6[1], b6)
+
+    // --- slice and concat
+    var l7 = ['a', 'b', 'c', 'd', 'e']
+    var l8 = l7.slice(1, 4)
+    for v in l8 {
+        print(v)
+    }
+    println()
+
+    l7 = l7.concat(['f', 'g', 'h'])
+    for v in l7 {
+        print(v)
+    }
+}
+
+--- output.txt
+1 2 13
+3 4 12
+1
+8
+1025
+2048
+1
+2048
+1 22 25
+bcd
+abcdefgh\0
+
+=== test_slice
+--- main.n
+
+fn main():void! {
+    var a = [1, 2, 3, 4]
+    var b = a.slice(2, a.len())
+    b[0] *= 10
+    println(a[0], a[1], a[2], a[3])
+    println(b[0], b[1])
+}
+
+--- output.txt
+1 2 30 4
+30 4
+
+=== test_copy_failed
+--- main.n
+fn main():void! {
+    var a = [1, 2, 3, 4]
+    var b = vec_new<int>(0, 0)
+    b.copy(a)
+    println(b.len(), b[0])
+}
+
+--- output.txt
+coroutine 'main' panic: 'index out of range [0] with length 0' at nature-test/main.n:5:24
+
+=== test_copy
+--- main.n
+fn main():void! {
+    var a = [1, 2, 3, 4]
+    var b = vec_new<int>(0, 10)
+    b.copy(a)
+    println(b.len(), b[0], b[1], b[2], b[3], b[4], b[5])
+}
+
+--- output.txt
+10 1 2 3 4 0 0
+
+=== test_out_range
+--- main.n
+fn main():void! {
+    var list = [1, 2, 3, 4]
+    var a = list[-1]
+    println(a)
+}
+
+--- output.txt
+coroutine 'main' panic: 'index out of range [-1] with length 4' at nature-test/main.n:3:18
+
+
+
+=== test_out_range2
+--- main.n
+fn main():void! {
+    var list = [1, 2, 3, 4]
+    var a = list[100123111]
+    println(a)
+}
+
+--- output.txt
+coroutine 'main' panic: 'index out of range [100123111] with length 4' at nature-test/main.n:3:26
+
+
+=== test_in_range1
+--- main.n
+fn main():void! {
+    var list = [1, 2, 3, 4]
+    var a = list[0] + list[1] + list[2] + list[3]
+    println(a)
+}
+
+--- output.txt
+10
+
+=== test_in_range2
+--- main.n
+fn main():void! {
+    var list = [1, 2, 3, 4]
+    list[3] = list[0] + list[1] + list[2] + list[3]
+    println(list[3])
+}
+
+--- output.txt
+10
+
+=== test_in_range3
+--- main.n
+var list = [1, 2, 3, 4]
+
+fn main():void! {
+    list[3] = list[0] + list[1] + list[2] + list[3]
+    println(list[3])
+}
+
+--- output.txt
+10
+
+=== test_arr_in_range
+--- main.n
+[i16;8] arr1 = [1, 2, 3, 4]
+
+fn main():void! {
+    [i8;4] arr2 = [1, 2, 3, 4]
+    arr1[2] = arr2[3] as i16 * 2
+    println(arr1[2], arr2[3])
+}
+
+--- output.txt
+8 4
+
+=== test_arr_out_range
+--- main.n
+[i16;8] arr1 = [1, 2, 3, 4]
+
+fn main():void! {
+    [i8;4] arr2 = [1, 2, 3, 4]
+    arr1[-2] = arr2[-3] as i16 * 2
+}
+
+--- output.txt
+coroutine 'main' panic: 'index out of range [-2] with length 8' at nature-test/main.n:5:10

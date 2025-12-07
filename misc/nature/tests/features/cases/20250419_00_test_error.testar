@@ -1,0 +1,150 @@
+=== test_fmt_u32
+--- main.n
+import time
+import fmt
+
+u64 seed = 1744996865
+
+fn random_u32(rawptr<u64> state):u32 {
+    *state ^= *state >> 12
+    *state ^= *state << 25
+    *state ^= *state >> 27
+    return ((*state * 0x2545F4914F6CDD1D) >> 32) as u32
+}
+
+fn create_tempdir():string! {
+    // rand u32
+    var suffix = random_u32(&seed)
+    var tmpdir_path = fmt.sprintf('/tmp/playgrounds-%d', suffix)
+
+    return tmpdir_path
+}
+
+fn main():void! {
+    println(seed)
+    var result = create_tempdir()
+    println(result)
+    assert(result == '/tmp/playgrounds-3102678087')
+}
+
+
+=== test_global_arr
+--- main.n
+[u8;5] global_arr = [
+    1,
+    2,
+    3,
+    4,
+    5,
+]
+
+fn main() {
+    assert(global_arr[0] == 1 && global_arr[1] == 2)
+}
+
+=== test_amd64_struct_param
+--- main.n
+type type_t = struct{
+    int size
+    int hash
+    int v
+}
+
+fn type_t.to_string() {
+    println(self.size)
+}
+
+fn bar(type_t t) {
+    println(t.size)
+}
+
+fn foo(type_t foov) {
+    bar(foov)
+    foov.to_string()
+}
+
+fn main() {
+    var t = type_t{
+        size: 124,
+    }
+    foo(t)
+}
+
+--- output.txt
+124
+124
+
+=== test_env_vec
+--- main.n
+import co
+import runtime
+
+fn get_list_fn():fn():[int] {
+    var list = [1, 2, 3]
+
+    return fn():[int] {
+        // env assign
+        list[0] = 11
+        list[1] = 22
+        list[2] = 33
+
+        // list assign
+        list = [list[0] * 2, list[1] * 2, list[2] * 2]
+
+        return list
+    }
+}
+
+fn main() {
+    // start server
+    var list_fn = get_list_fn()
+    var list = list_fn()
+
+    // gc
+    runtime.gc()
+    co.sleep(1000)
+
+    println(list[0], list[1], list[2])
+}
+
+--- output.txt
+22 44 66
+
+=== test_nest_closure
+--- main.n
+import co
+import runtime
+
+fn main() {
+    int a = 12
+    var foo = fn():int {
+        var bar = fn():int {
+            a = a * 2
+            return a * 3
+        }
+
+        return bar()
+    }
+
+    var b = foo()
+
+    runtime.gc()
+    co.sleep(1000)
+
+    println(a, b)
+}
+
+--- output.txt
+24 72
+
+=== test_vec_slice_panic
+--- main.n
+fn main() {
+    var buf = vec_new<u8>(0, 3)
+    buf[0..6]
+    println('no no no!')
+}
+
+--- output.txt
+coroutine 'main' panic: 'slice [0:6] out of vec with length 3' at nature-test/main.n:3:12
+

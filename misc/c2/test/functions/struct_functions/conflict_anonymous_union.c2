@@ -1,0 +1,13 @@
+// @warnings{no-unused}
+module test;
+
+type Type struct {
+    union {
+        i32 x;
+        i32 y;    // @error{member 'y' conflicts with type-function 'test.Type.y'}
+    }
+}
+
+fn void Type.y(Type* t) {     // @note{previous declaration is here}
+}
+

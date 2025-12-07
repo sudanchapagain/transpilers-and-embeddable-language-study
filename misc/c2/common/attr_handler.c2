@@ -1,0 +1,80 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module attr_handler;
+
+import ast;
+import attr;
+import diagnostics;
+
+import stdlib;
+import string;
+
+type Entry struct {
+    u32 name;
+    ast.AttrHandlerFn func;
+    void* arg;
+}
+
+public type Handler struct @(opaque) {
+    diagnostics.Diags* diags;   // no ownership
+
+    Entry* entries;
+    u32 count;
+    u32 capacity;
+}
+
+public fn Handler* create(diagnostics.Diags* diags) {
+    Handler* h = stdlib.calloc(1, sizeof(Handler));
+    h.diags = diags;
+    return h;
+}
+
+public fn void Handler.free(Handler* h) {
+    if (h.entries) stdlib.free(h.entries);
+    stdlib.free(h);
+}
+
+public fn bool Handler.register(Handler* h, u32 name, ast.AttrHandlerFn func, void* arg) {
+    // TODO check for duplicates
+
+    if (h.count == h.capacity) {
+        h.capacity += 2;
+        Entry* entries2 = stdlib.malloc(h.capacity * sizeof(Entry));
+        if (h.count) {
+            string.memcpy(entries2, h.entries, h.count * sizeof(Entry));
+            stdlib.free(h.entries);
+        }
+        h.entries = entries2;
+    }
+
+    Entry* e = &h.entries[h.count];
+    e.name = name;
+    e.func = func;
+    e.arg = arg;
+    h.count++;
+    return true;
+}
+
+public fn bool Handler.handle(Handler* h, ast.Decl* d, const attr.Attr* a) {
+    for (u32 i=0; i<h.count; i++) {
+        Entry* e = &h.entries[i];
+        if (e.name == a.name) return e.func(e.arg, d, a);
+    }
+    // TODO give unknown attr error here
+    h.diags.error(a.loc, "unknown attribute '%s'", ast.idx2name(a.name));
+    return false;
+}
+

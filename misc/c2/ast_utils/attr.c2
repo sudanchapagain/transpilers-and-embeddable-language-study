@@ -1,0 +1,198 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module attr;
+
+import src_loc local;
+import string_pool;
+
+// note: keep Attr prefix because Kind already exists a lot
+public type AttrKind enum u8 {
+    Unknown,
+    Export,         // Type | Func | Var
+    Packed,         // Struct
+    Unused,         // Type | Func | Var
+    UnusedParams,   // Type | Func
+    Section,        //        Func | Var, needs string arg
+    NoReturn,       //        Func
+    Inline,         //        Func
+    PrintfFormat,   //             | Var, function param only
+    Aligned,        // Type | Func | Var, needs number arg
+    Weak,           //        Func | Var
+    Opaque,         // Struct
+    CName,          // Type | Func | Var, only in interface, needs string arg
+    CDef,           // Type | Func | Var, only in interface, needs string arg
+    NoTypeDef,      // Type, only interface files
+    Constructor,    //        Func
+    Destructor,     //        Func
+    Pure,           //        Func
+    AutoFile,       //               Var, function param only
+    AutoLine,       //               Var, function param only
+    AutoFunc,       //               Var, function param only
+    Embed,          //               Var, globals only
+}
+
+const char*[] attrKind_names = {
+    "?",
+    "export",
+    "packed",
+    "unused",
+    "unused_params",
+    "section",
+    "noreturn",
+    "inline",
+    "printf_format",
+    "aligned",
+    "weak",
+    "opaque",
+    "cname",
+    "cdef",
+    "no_typedef",
+    "constructor",
+    "destructor",
+    "pure",
+    "auto_file",
+    "auto_line",
+    "auto_func",
+    "embed",
+}
+
+static_assert(elemsof(AttrKind), elemsof(attrKind_names));
+
+public type ValueKind enum u8 {
+    None,
+    Number,
+    String,
+}
+
+// Note: Value itself does not need to know the kind
+public type Value struct {
+    SrcLoc loc;
+    union {
+        u32 text;
+        u32 number;
+    }
+}
+
+public type Attr struct {
+    u32 name;  // needed for unknown attributes
+    AttrKind kind;
+    ValueKind value_kind;
+    SrcLoc loc;
+    Value value;
+}
+
+// Note: only meant for printing (since not allocated in StringPool)
+public fn const char* kind2name(AttrKind k) {
+    return attrKind_names[k];
+}
+
+public fn void register(string_pool.Pool* pool, u32* indexes) {
+    // skip unknown attribute
+    indexes[0] = 0;
+    for (u32 i=1; i<elemsof(attrKind_names); i++) {
+        indexes[i] = pool.addStr(attrKind_names[i], true);
+    }
+}
+
+// Note: this is different per plugin!
+const u32* name_indexes;
+
+public fn void initialize(const u32* indexes) {
+    name_indexes = indexes;
+}
+
+public fn AttrKind find(u32 name_idx) {
+    // skip unused
+    for (u32 i=1; i<elemsof(AttrKind); i++) {
+        if (name_idx == name_indexes[i]) return (AttrKind)i;
+    }
+
+    return AttrKind.Unknown;
+}
+
+const AttrReq[] Required_arg = {
+    [AttrKind.Unknown]      = AttrReq.NoArg,
+    [AttrKind.Export]       = AttrReq.NoArg,
+    [AttrKind.Packed]       = AttrReq.NoArg,
+    [AttrKind.Unused]       = AttrReq.NoArg,
+    [AttrKind.UnusedParams] = AttrReq.NoArg,
+    [AttrKind.Section]      = AttrReq.String,
+    [AttrKind.NoReturn]     = AttrReq.NoArg,
+    [AttrKind.Inline]       = AttrReq.NoArg,
+    [AttrKind.PrintfFormat] = AttrReq.NoArg,
+    [AttrKind.Aligned]      = AttrReq.Number,
+    [AttrKind.Weak]         = AttrReq.NoArg,
+    [AttrKind.Opaque]       = AttrReq.NoArg,
+    [AttrKind.CName]        = AttrReq.String,
+    [AttrKind.CDef]         = AttrReq.String,
+    [AttrKind.NoTypeDef]    = AttrReq.NoArg,
+    [AttrKind.Constructor]  = AttrReq.NoArg,
+    [AttrKind.Destructor]   = AttrReq.NoArg,
+    [AttrKind.Pure]         = AttrReq.NoArg,
+    [AttrKind.AutoFile]     = AttrReq.NoArg,
+    [AttrKind.AutoLine]     = AttrReq.NoArg,
+    [AttrKind.AutoFunc]     = AttrReq.NoArg,
+    [AttrKind.Embed]        = AttrReq.String,
+}
+static_assert(elemsof(AttrKind), elemsof(Required_arg));
+
+public type AttrReq enum u8 {
+    NoArg = 0,
+    Arg,
+    Number,
+    String,
+    Power2,
+    Ok,
+}
+
+fn bool isPowerOf2(u32 val) {
+    return val && !(val & (val - 1));
+}
+
+public fn AttrReq check(const Attr* a) {
+    switch (Required_arg[a.kind]) {
+    case NoArg:
+        if (a.value_kind != ValueKind.None) return AttrReq.NoArg;
+        break;
+    case Number:
+        switch (a.value_kind) {
+        case None:
+            return AttrReq.Arg;
+        case Number:
+            if (a.kind == AttrKind.Aligned) {
+                if (!isPowerOf2(a.value.number)) return AttrReq.Power2;
+            }
+            break;
+        case String:
+            return AttrReq.Number;
+        }
+        break;
+    case String:
+        switch (a.value_kind) {
+        case None:
+            return AttrReq.Arg;
+        case Number:
+            return AttrReq.String;
+        case String:
+            break;
+        }
+        break;
+    default:
+        break;
+    }
+    return AttrReq.Ok;
+}
+

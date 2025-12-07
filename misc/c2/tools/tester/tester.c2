@@ -1,0 +1,404 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module tester_main;
+
+import stdio local;
+import stdlib local;
+import string local;
+import sys_stat local;
+import sys_time;
+import libc_dirent local;
+import c_errno local;
+import unistd;
+import pthread;
+
+import color;
+import test_utils local;
+import test_db local;
+import string_buffer;
+import string_utils local;
+import file_utils;
+
+/*
+    Syntax:
+    .c2:
+        (optional) // @warnings{..}
+        (optional) // @skip
+        (optional) // @target{target-triplet}
+    .c2t:  test generation of specified files
+        (required) // @recipe bin/lib dynamic/static
+        (optional) // @skip
+        (required) // @file{filename}
+        (optional) // @expect{atleast/complete, filename}
+    .c2a: test AST of parsed file (no unused)
+        (optional) // @skip
+        (required) // @file{filename}   allowed ONCE
+        (required) // @expect{atleast/complete}  allowed ONCE
+*/
+
+const u32 MAX_THREADS = 32;
+
+const char* c2c_cmd = "output/c2c/c2c";
+bool runSkipped;
+i32 verboseLevel = 1;
+
+// TODO move test + queue to own file
+type Test struct {
+    char* filename;
+    TestKind kind;
+    bool failed;
+    Test* next;
+}
+
+fn Test* Test.create(const char* filename, TestKind kind) {
+    Test* t = calloc(1, sizeof(Test));
+    t.filename = strdup(filename);
+    t.kind = kind;
+    return t;
+}
+
+fn void Test.destroy(Test* t) {
+    free(t.filename);
+    free(t);
+}
+
+type TestQueue struct {
+    pthread.Mutex lock;
+    Test* head;
+    Test* tail;
+    Test* cur;
+    u32 count;
+}
+
+fn TestQueue* TestQueue.create() {
+    TestQueue* q = calloc(1, sizeof(TestQueue));
+    q.lock.init(nil);
+    return q;
+}
+
+fn void TestQueue.destroy(TestQueue* q) {
+    Test* cur = q.head;
+    while (cur) {
+        Test* next = cur.next;
+        cur.destroy();
+        cur = next;
+    }
+    free(q);
+}
+
+fn void TestQueue.add(TestQueue* q, const char* filename, TestKind kind) {
+    Test* t = Test.create(filename, kind);
+    q.lock.lock();
+    if (q.tail) {
+        q.tail.next = t;
+    } else {
+        q.head = t;
+        q.cur = t;
+    }
+    q.tail = t;
+    q.count++;
+    q.lock.unlock();
+}
+
+fn Test* TestQueue.get(TestQueue* q) {
+    Test* t = nil;
+    q.lock.lock();
+    if (q.cur) {
+        t = q.cur;
+        q.cur = q.cur.next;
+    }
+    q.lock.unlock();
+    return t;
+}
+
+fn void TestQueue.summarizeFailed(const TestQueue* q) {
+    printf("\nFailed test summary:\n");
+    const Test* t = q.head;
+    while (t) {
+        if (t.failed) color_print(colError, "%s", t.filename);
+        t = t.next;
+    }
+}
+
+fn u32 online_cpus() {
+    i64 ncpus = unistd.sysconf(unistd._SC_NPROCESSORS_ONLN);
+    if (ncpus > 8) return 8;    // Hack around Ryzen virtual cores. Using only physical is faster
+    if (ncpus > 0) return (u32)ncpus;
+    return 1;
+}
+
+fn void handle_file(TestQueue* queue, const char* filename) {
+    TestKind kind;
+    if (endsWith(filename, ".c2")) {
+        kind = TestKind.C2;
+    } else if (endsWith(filename, ".c2t")) {
+        kind = TestKind.C2T;
+    } else if (endsWith(filename, ".c2a")) {
+        kind = TestKind.C2A;
+    } else {
+        return;
+    }
+
+    queue.add(filename, kind);
+}
+
+fn void handle_dir(TestQueue* queue, const char* path) {
+    DIR* dir = opendir(path);
+    if (dir == nil) {
+        color_print(colError, "cannot open dir '%s': %s", path, strerror(errno));
+        return;
+    }
+
+    while (Dirent* entry = readdir(dir)) {
+        char[file_utils.Max_path] temp;
+        if (file_utils.make_path(temp, elemsof(temp), path, entry.d_name)) {
+            switch (entry.d_type) {
+            case DT_REG:
+                handle_file(queue, temp);
+                break;
+            case DT_DIR:
+                if (strcmp(entry.d_name, ".") != 0 && strcmp(entry.d_name, "..") != 0) {
+                    handle_dir(queue, temp);
+                }
+                break;
+            default:
+                break;
+            }
+        }
+    }
+    closedir(dir);
+}
+
+
+type Tester struct {
+    u32 numtests;
+    u32 numerrors;
+    u32 numskipped;
+
+    u32 index;
+    TestQueue* queue;
+    pthread.Pthread thread;
+    char[32] tmp_dir;
+    const char* cwd;    // no ownership
+}
+
+fn void* tester_thread_main(void* arg) {
+    Tester* t = arg;
+    t.run();
+    return nil;
+}
+
+fn Tester* Tester.create(u32 idx, TestQueue* q, const char* cwd, bool sync) {
+    Tester* t = calloc(1, sizeof(Tester));
+    t.index = idx;
+    t.queue = q;
+    t.cwd = cwd;
+    t.thread = 0;
+    snprintf(t.tmp_dir, sizeof(t.tmp_dir), "/tmp/tester%d", idx);
+    if (sync)
+        tester_thread_main(t);
+    else
+        pthread.create(&t.thread, nil, tester_thread_main, t);
+    return t;
+}
+
+fn void Tester.destroy(Tester* t) {
+    free(t);
+}
+
+fn void Tester.join(Tester* t) {
+    if (t.thread)
+        pthread.join(t.thread, nil);
+}
+
+fn void Tester.run(Tester* t) {
+    while (1) {
+        Test* test = t.queue.get();
+        if (!test) break;
+        t.run_test(test);
+    }
+}
+
+fn void Tester.run_test(Tester* t, Test* test) {
+    // setup dir
+    // temp, just delete this way
+    char[64] cmd;
+    snprintf(cmd, sizeof(cmd), "rm -rf %s", t.tmp_dir);
+    i32 err = system(cmd);
+    if (err != 0 && errno != ECHILD) {
+        i32 saved = errno;
+        print_error("error running '%s': %s, %d", cmd, strerror(saved), saved);
+        exit(EXIT_FAILURE);
+    }
+    // create test dir
+    err = mkdir(t.tmp_dir, 0777);
+    if (err) {
+        print_error("error creating %s: %s", t.tmp_dir, strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+
+    t.numtests++;
+
+    string_buffer.Buf* buf = string_buffer.create(4096, color_output, 2);
+    buf.print("%s\n", test.filename);
+
+    file_utils.File file.init("", test.filename);
+    if (!file.load()) {
+        print_error("error opening %s: %s", test.filename, file.getError());
+        exit(EXIT_FAILURE);
+    }
+
+    test_db.Db db.init(buf, file.data(), test.filename, test.kind, t.tmp_dir, c2c_cmd, t.cwd, runSkipped);
+    bool skip = db.parse();
+    if (skip) {
+        t.numskipped++;
+        color_print2(buf, colSkip, "%s SKIPPED", test.filename);
+    } else {
+        bool print = verboseLevel > 1;
+        if (!db.haveErrors()) {
+            db.testFile();
+            if (db.printIssues()) print = true;
+        }
+        if (db.haveErrors()) {
+            print = true;
+            test.failed = true;
+            t.numerrors++;
+        }
+        if (print) fputs(buf.data(), stdout);
+    }
+    db.destroy();
+    file.close();
+    buf.free();
+}
+
+fn void usage(const char* name) {
+    printf("Usage: %s <options> target ...\n", name);
+    printf("    -j[#] use multi-threading (optional # of threads)\n");
+    printf("    -n    no multi-threading\n");
+    printf("    -s    only run skipped tests\n");
+    printf("    -t    terse output, only errors shown\n");
+    printf("    -v    verbose output\n");
+    printf("    targets can be single files or full directories\n");
+    exit(EXIT_FAILURE);
+}
+
+fn u64 now() {
+    sys_time.Timeval tv;
+    sys_time.gettimeofday(&tv, nil);
+    u64 now64 = (u64)tv.tv_sec;
+    now64 *= 1000000;
+    now64 += tv.tv_usec;
+    return now64;
+}
+
+public fn i32 main(i32 argc, char** argv) {
+    u32 num_threads = 0;
+    TestQueue* queue = TestQueue.create();
+    char *target = nil;
+
+    u64 t1 = now();
+
+    set_color_output(argv[0], color.useColor());
+
+    for (i32 i = 1; i < argc; i++) {
+        char *arg = argv[i];
+        if (arg[0] == '-') {
+            switch (arg) {
+            case "-s":
+                runSkipped = true;
+                break;
+            case "-t":
+                verboseLevel -= 1;
+                break;
+            case "-v":
+                verboseLevel += 1;
+                break;
+            case "-n":
+                num_threads = 1;
+                break;
+            case "-j":
+                num_threads = (u32)atoi(arg + 2);
+                break;
+            default:
+                usage(argv[0]);
+                break;
+            }
+            continue;
+        }
+        target = arg;
+
+        if (file_utils.is_file(target)) {
+            handle_file(queue, target);
+        } else
+        if (file_utils.is_dir(target)) {
+            handle_dir(queue, target);
+        } else {
+            print_error("argument must be a regular file a directory: %s", target);
+            return EXIT_FAILURE;
+        }
+    }
+
+    if (!queue.count) {
+        print_error("no test files found");
+        exit(EXIT_FAILURE);
+    }
+    if (queue.count == 1) num_threads = 1;
+    if (num_threads == 0) num_threads = online_cpus();
+    if (num_threads > MAX_THREADS) num_threads = MAX_THREADS;
+    if (num_threads > queue.count) num_threads = queue.count;
+
+    char* cwd = unistd.getcwd(nil, 0);
+    if (cwd == nil) {
+        print_error("cannot get current directory: %s", strerror(errno));
+        exit(EXIT_FAILURE);
+    }
+
+    bool sync = (num_threads == 1);
+    Tester*[MAX_THREADS] testers = { nil }
+    for (u32 i=0; i<num_threads; i++) {
+        testers[i] = Tester.create(i, queue, cwd, sync);
+    }
+
+    // TODO handle Ctrl-C
+
+    u32 numtests = 0;
+    u32 numerrors = 0;
+    u32 numskipped = 0;
+
+    for (u32 i=0; i<num_threads; i++) {
+        Tester* t = testers[i];
+        t.join();
+        numtests += t.numtests;
+        numerrors += t.numerrors;
+        numskipped += t.numskipped;
+        t.destroy();
+    }
+
+    u64 t2 = now();
+
+    color_print(numerrors ? colError : colOk,
+                "RESULTS: %d test%s, %d threads (%d ok, %d failed, %d skipped) ran in %d ms",
+                numtests, numtests == 1 ? "" : "s",
+                num_threads, numtests - (numerrors + numskipped), numerrors, numskipped,
+                (t2 - t1) / 1000);
+    if (numerrors) queue.summarizeFailed();
+
+    queue.destroy();
+    free(cwd);
+
+    return 0;
+}
+

@@ -1,0 +1,300 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module module_analyser;
+
+import ast local;
+import src_loc local;
+
+import ctype;
+
+const char[] DiagStaticThoughVar = "cannot access static type-function through variable";
+
+fn QualType Analyser.analyseMemberExpr(Analyser* ma, Expr** e_ptr, u32 side) {
+    Expr* e = *e_ptr;
+    MemberExpr* m =(MemberExpr*)e;
+
+    SrcLoc baseLoc = 0;
+    ValType valtype = ValType.NValue;
+    QualType baseType = QualType_Invalid;
+
+    CallKind ck = CallKind.Invalid;
+
+    if (m.hasExpr()) {
+        Expr* exprBase = m.getExprBase();
+        // note: no ImplicitCast can be added
+        baseType = ma.analyseExpr(&exprBase, false, side);
+        if (baseType.isInvalid()) return QualType_Invalid;
+
+        valtype = exprBase.getValType();
+
+        //stdio.printf("EXPR BASE\n");
+        //baseType.dump();
+    }
+
+    Decl* d = nil;
+    u32 refcount = m.getNumRefs();
+    for (u32 i=0; i<refcount; i++) {
+        u32 name_idx = m.getNameIdx(i);
+        SrcLoc loc = m.getLoc(i);
+
+        //stdio.printf("  [%d/%d] %s\n", i, refcount, m.getName(i));
+
+        if (baseType.isInvalid()) {
+            d = ma.scope.find(name_idx, loc, ma.usedPublic);
+            if (!d) {
+                ma.has_error = true;
+                return QualType_Invalid;
+            }
+            // Note: this can happen in arraysizeExpr: var[test.number] a; (as global/struct-member)
+            if (!d.isChecked()) {
+                if (!ma.analyseGlobalDecl(d)) return QualType_Invalid;
+            }
+            baseType = d.getType();
+            valtype = decl2valtype(d);
+        } else {
+            QualType canon = baseType.getCanonicalType();
+            TypeKind kind = ma.analyseBaseType(canon);
+
+            bool is_ptr = canon.isPointer();
+            bool inner_const = false;
+
+            // Deref pointer here for casting to real types
+            const Type* t = canon.getTypeOrNil();
+            if (is_ptr) {
+                PointerType* pt = (PointerType*)t;
+                QualType inner = pt.getInner();
+                inner_const = inner.isConst();
+                t = inner.getTypeOrNil();
+            }
+
+            switch (kind) {
+            // TODO put others in default / fallthrough
+            case Struct:
+                //stdio.printf("STRUCT BASE (ptr %d, const %d, inner const %d)\n", is_ptr, baseType.isConst(), inner_const);
+                // TODO use valType (if ValType.NValue then Foo.x)
+                StructType* st = (StructType*)t;
+                StructTypeDecl* std = st.getDecl();
+                d = ma.analyseStructMemberAccess(std, name_idx, loc, valtype, side, &ck);
+                if (!d) return QualType_Invalid;
+
+                // simulate 'dereference' pointers and adding LValueToRValue (possibly strips const)
+                bool is_const = baseType.isConst();
+                baseType = d.getType();
+                if (is_ptr) is_const = inner_const;
+                // NOTE: for struct function calls, the base does not get an LValueToRValue cast,
+                // so dont set base-const here
+                if (is_ptr && ck != CallKind.Invalid) is_const = false;
+                m.setConstBase(is_const);
+                if (is_const && ck == CallKind.Invalid) baseType.setConst();
+                // TODO set ck same was as Enum below
+
+                // no need to update valtype
+                break;
+            case Enum:
+                //stdio.printf("ENUM BASE  (type: %d)\n", valtype == ValType.NValue);
+                EnumType* et = (EnumType*)t;
+                EnumTypeDecl* etd = et.getDecl();
+
+                // check if constant/enum-function (by first casing)
+                const char* last = m.getLastMemberName();
+                if (ctype.isupper(last[0]) || name_idx == ma.min_idx || name_idx == ma.max_idx) {   // search for constants
+                    if (valtype != ValType.NValue) {    // variable of Enum type (eg Enum a; a.x)
+                        // TODO reset msg to normal invalid base
+                        // TODO use range
+                        //ma.errorRange(baseLoc, m.getRange(i), "invalid member reference base (enum constant/variable)");
+                        ma.error(baseLoc, "invalid member reference base (enum constant/variable)");
+                        return QualType_Invalid;
+                    }
+                    EnumConstantDecl* ecd;
+                    if (name_idx == ma.min_idx) {
+                        EnumConstantDecl** constants = etd.getConstants();
+                        ecd = constants[0];
+                    } else
+                    if (name_idx == ma.max_idx) {
+                        EnumConstantDecl** constants = etd.getConstants();
+                        ecd = constants[etd.getNumConstants() - 1];
+                    } else {
+                        ecd = etd.findConstant(name_idx);
+                        if (!ecd) {
+                            ma.error(loc, "enum '%s' has no constant '%s'", d.getFullName(), m.getLastMemberName());
+                            return QualType_Invalid;
+                        }
+                    }
+                    d = (Decl*)ecd;
+                    if (!d.isChecked()) {
+                        ma.error(loc, "circular definition using enum constant '%s'", d.getName());
+                        return QualType_Invalid;
+                    }
+                    // no need to update baseType
+                } else {    // search for enum-function
+                    d = (Decl*)etd;
+                    Decl* ef = etd.findFunction(name_idx);
+                    if (!ef) {
+                        ma.error(loc, "enum '%s' has no function '%s'", d.getFullName(), m.getLastMemberName());
+                        return QualType_Invalid;
+                    }
+                    //FunctionDecl* fd = (FunctionDecl*)ef);
+                    // Note: not always CallExpr here, but use CallKind enum since same meaning
+                    ck = valtype == ValType.NValue ? CallKind.StaticTypeFunc : CallKind.TypeFunc;
+                    d = ef;
+                    baseType = ef.getType();
+                    if (!ma.scope.checkAccess(d, loc)) return QualType_Invalid;
+                }
+                valtype = ValType.RValue;
+                break;
+            case Alias:
+                assert(0);
+                break;
+            case Module:
+                //stdio.printf("MODULE BASE\n");
+                ModuleType* mt = (ModuleType*)t;
+                d = ma.scope.findSymbolInModule(mt.getModule(), name_idx, loc);
+                if (!d) {
+                    ma.has_error = true;
+                    return QualType_Invalid;
+                }
+
+                if (!d.isChecked()) {
+                    if (!ma.analyseGlobalDecl(d)) return QualType_Invalid;
+                }
+                baseType = d.getType();
+                valtype = decl2valtype(d);
+                break;
+            default:
+                ma.errorRange(loc, m.getRange(i), "invalid member reference base");
+                return QualType_Invalid;
+            }
+        }
+
+        baseLoc = loc;
+
+        // Note: a.b.c  = 1; -> b is always used, c only if in RHS
+        if (i == refcount -1) {
+            if (side & RHS) d.setUsed();
+        } else {
+            d.setUsed();
+        }
+        m.setDecl(d, i);
+
+        //baseType.dump();
+    }
+
+    IdentifierKind kind = ma.setExprFlags(e_ptr, d);
+    m.setKind(kind);
+    e.setType(baseType);
+
+    if (d.isBitfield()) {
+        m.setBitfield();
+        if (side == RHS) e.setRValue();
+    } else {
+
+        if (ck == CallKind.Invalid && d.isFunction()) ck = CallKind.Normal;
+        // NOTE: set SF/SSF based on member: Foo.next will be SSF, f.next SF
+        if (ck == CallKind.TypeFunc) m.setIsTypeFunc();
+        if (ck == CallKind.StaticTypeFunc) m.setIsStaticTypeFunc();
+        // Note: dont call setValType here, done in setExprFlags
+
+        if (e.isCtv()) e.setRValue(); // TODO still needed after setExprFlags?
+    }
+
+    return baseType;
+}
+
+fn Decl* Analyser.analyseStructMemberAccess(Analyser* ma, StructTypeDecl* std, u32 name_idx, SrcLoc loc, ValType valtype, u32 side, CallKind* ck) {
+    *ck = CallKind.Invalid; // TODO convert to bool isSFCall
+    Decl* d = ma.findStructMember(std, name_idx, loc);
+    if (!d) return nil;
+
+    if (!d.isChecked()) {
+        if (!ma.analyseGlobalDecl(d)) return nil;
+    }
+
+    if (d.isFunction()) {
+        FunctionDecl* fd = (FunctionDecl*)d;
+        CallKind callkind = fd.getCallKind();
+        assert(callkind != CallKind.Normal);
+        switch (valtype) {
+        case NValue:
+            if (callkind != CallKind.StaticTypeFunc) {
+                // sometimes handy to be able to (see Type.fullPrint())
+                //ma.error(loc, "non-static struct functions need an instantiation of type");
+                //return QualType_Invalid;
+            }
+            *ck = CallKind.StaticTypeFunc;
+            break;
+        case RValue:
+            // TODO fallthrough?
+            if (callkind == CallKind.StaticTypeFunc) {
+                ma.error(loc, DiagStaticThoughVar);
+                return nil;
+            }
+            assert(callkind == CallKind.TypeFunc);
+            *ck = CallKind.TypeFunc;
+            break;
+        case LValue:
+            if (callkind == CallKind.StaticTypeFunc) {
+                ma.error(loc, DiagStaticThoughVar);
+                return nil;
+            }
+            assert(callkind == CallKind.TypeFunc);
+            *ck = CallKind.TypeFunc;
+            break;
+        }
+        if (!ma.scope.checkAccess(d, loc)) return nil;
+    } else {
+        if (!ma.checkOpaque(std, loc)) return nil;
+        // StructTypeDecl for substruct or VarDecl for normal members
+        // TODO FIX THIS (do in outer?)
+#if 1
+        if (side && valtype == ValType.NValue) {
+            QualType t = std.asDecl().getType();
+            ma.error(loc, "member access needs an instantiation of type '%s'", t.diagName());
+            return nil;
+        }
+#endif
+    }
+    return d;
+}
+
+fn TypeKind Analyser.analyseBaseType(Analyser* ma, QualType baseType) {
+    const Type* t = baseType.getTypeOrNil();
+    // 'deref' pointer once
+    if (t.isPointerType()) {
+        PointerType* pt = (PointerType*)t;
+        baseType = pt.getInner();
+        t = baseType.getTypeOrNil();
+    }
+    return t.getKind();
+}
+
+
+fn ValType decl2valtype(const Decl* d) {
+    switch (d.getKind()) {
+    case Function:
+        return ValType.RValue;
+    case Import:
+    case StructType:
+    case EnumType:
+    case EnumConstant:
+    case FunctionType:
+    case AliasType:
+        break;
+    case Variable:
+        return ValType.LValue;
+    }
+    return ValType.NValue;
+}
+

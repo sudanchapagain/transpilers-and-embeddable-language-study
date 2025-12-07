@@ -1,0 +1,41 @@
+Grammar json;
+
+Lexer
+
+number = int frac? exp?;
+int = '-'? d+;
+d = '0'..'9';
+frac = '.' d+;
+exp = e d+;
+e = ('e'|'E') ('+'|'-')?;
+
+hexdig = '0'..'9' | 'a'..'z' | 'A'..'Z';
+string = '"' (Any - '\\' - '"' | '\\' (
+		'\\' |
+		'"' |
+		'/' |
+		'b' |
+		'f' |
+		'n' |
+		'r' |
+		't' |
+		'u' hexdig hexdig hexdig hexdig
+	))* '"';
+
+blank = (' '|'\n'|'\t')+;
+
+Parser
+Ignored blank;
+
+value =
+	{object:} '{' members? '}' |
+	{array:} '[' elements? ']' |
+	{number:} number |
+	{string:} string |
+	{true:} 'true' |
+	{false:} 'false' |
+	{null:} 'null' ;
+
+members = {tail:} members ',' pair | {head:} pair ;
+pair = string ':' value ;
+elements = {tail:} elements ',' value | {head:} value ;

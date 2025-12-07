@@ -1,0 +1,13 @@
+module test;
+
+i32 a;
+
+fn void test1(a arg1) {}  // @error{'a' is not a type}
+
+fn void test2(test arg1) {} // @error{'test' is not a type}
+
+fn void function() {}
+
+fn void test3(function arg1) {} // @error{'function' is not a type}
+
+

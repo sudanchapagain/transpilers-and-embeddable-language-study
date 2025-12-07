@@ -1,0 +1,72 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import string_buffer;
+import src_loc local;
+
+type ReturnStmtBits struct {
+    u32 : NumStmtBits;
+    u32 has_value : 1;
+}
+
+public type ReturnStmt struct @(opaque) {
+    Stmt base;
+    Expr*[0] value; // tail-allocated, dependent on returnStmtBits.has_value
+}
+
+public fn ReturnStmt* ReturnStmt.create(ast_context.Context* c, SrcLoc loc, Expr* value) {
+    u32 size = sizeof(ReturnStmt);
+    if (value) size += sizeof(Expr*);
+
+    ReturnStmt* s = c.alloc(size);
+    s.base.init(StmtKind.Return, loc);
+
+    if (value) {
+        s.base.returnStmtBits.has_value = 1;
+        s.value[0] = value;
+    }
+#if AstStatistics
+    Stats.addStmt(StmtKind.Return, size);
+#endif
+    return s;
+}
+
+fn Stmt* ReturnStmt.instantiate(ReturnStmt* s, Instantiator* inst) {
+    if (!s.base.returnStmtBits.has_value) return (Stmt*)s;
+
+    return (Stmt*)ReturnStmt.create(inst.c, s.base.loc, s.value[0].instantiate(inst));
+}
+
+public fn Expr* ReturnStmt.getValue(const ReturnStmt* s) {
+    if (s.base.returnStmtBits.has_value) return s.value[0];
+    return nil;
+}
+
+public fn Expr** ReturnStmt.getValue2(ReturnStmt* s) {
+    if (s.base.returnStmtBits.has_value) return &s.value[0];
+    return nil;
+}
+
+fn void ReturnStmt.print(const ReturnStmt* s, string_buffer.Buf* out, u32 indent) {
+    s.base.printKind(out, indent);
+    out.newline();
+    if (s.base.returnStmtBits.has_value) {
+        s.value[0].print(out, indent + 1);
+    }
+}
+

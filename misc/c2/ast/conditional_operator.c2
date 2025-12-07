@@ -1,0 +1,106 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import string_buffer;
+import src_loc local;
+
+public type ConditionalOperator struct @(opaque) {
+    Expr base;
+    SrcLoc colonLoc;
+    Expr* cond;
+    Expr* lhs;
+    Expr* rhs;
+}
+
+public fn ConditionalOperator* ConditionalOperator.create(ast_context.Context* c,
+                                                            SrcLoc questionLoc,
+                                                            SrcLoc colonLoc,
+                                                            Expr* cond,
+                                                            Expr* lhs,
+                                                            Expr* rhs)
+{
+    ConditionalOperator* e = c.alloc(sizeof(ConditionalOperator));
+    e.base.init(ExprKind.ConditionalOperator, questionLoc, 0, 1, 1, ValType.RValue);
+    e.colonLoc = colonLoc;
+    e.cond = cond;
+    e.lhs = lhs;
+    e.rhs = rhs;
+#if AstStatistics
+    Stats.addExpr(ExprKind.ConditionalOperator, sizeof(ConditionalOperator));
+#endif
+    return e;
+}
+
+fn Expr* ConditionalOperator.instantiate(ConditionalOperator* e, Instantiator* inst) {
+    return (Expr*)ConditionalOperator.create(inst.c,
+                                             e.base.base.loc,
+                                             e.colonLoc,
+                                             e.cond.instantiate(inst),
+                                             e.lhs.instantiate(inst),
+                                             e.rhs.instantiate(inst));
+}
+
+public fn Expr* ConditionalOperator.getCond(const ConditionalOperator* e) {
+    return e.cond;
+}
+
+public fn Expr** ConditionalOperator.getCond2(ConditionalOperator* e) {
+    return &e.cond;
+}
+
+public fn Expr* ConditionalOperator.getLHS(const ConditionalOperator* e) {
+    return e.lhs;
+}
+
+public fn Expr** ConditionalOperator.getLHS2(ConditionalOperator* e) {
+    return &e.lhs;
+}
+
+public fn Expr* ConditionalOperator.getRHS(const ConditionalOperator* e) {
+    return e.rhs;
+}
+
+public fn Expr** ConditionalOperator.getRHS2(ConditionalOperator* e) {
+    return &e.rhs;
+}
+
+fn SrcLoc ConditionalOperator.getStartLoc(const ConditionalOperator* e) {
+    return e.getCond().getStartLoc();
+}
+
+fn SrcLoc ConditionalOperator.getEndLoc(const ConditionalOperator* e) {
+    return e.getRHS().getEndLoc();
+}
+
+fn void ConditionalOperator.printLiteral(const ConditionalOperator* e, string_buffer.Buf* out) {
+    e.cond.printLiteral(out);
+    out.add(" ? ");
+    e.lhs.printLiteral(out);
+    out.add(" : ");
+    e.rhs.printLiteral(out);
+}
+
+fn void ConditionalOperator.print(const ConditionalOperator* e, string_buffer.Buf* out, u32 indent) {
+    e.base.printKind(out, indent);
+    e.base.printTypeBits(out);
+    out.newline();
+    e.cond.print(out, indent + 1);
+    e.lhs.print(out, indent + 1);
+    e.rhs.print(out, indent + 1);
+}
+

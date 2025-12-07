@@ -1,0 +1,5 @@
+﻿   // BOM accepted at start of file
+// @warnings{no-unused}
+module test;
+
+i32 x = 1;

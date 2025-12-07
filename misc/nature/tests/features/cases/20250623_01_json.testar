@@ -1,0 +1,48 @@
+=== test_serialize_vec_int
+--- main.n
+import json
+
+fn main() {
+    var list = [1, 2, 3, 4, 4, 3, 2, 1, -1, -2, -3, -4]
+    var str = json.serialize(list)
+    println(str)
+}
+
+--- output.txt
+[1,2,3,4,4,3,2,1,-1,-2,-3,-4]
+
+=== test_serialize_vec_string
+--- main.n
+import json
+
+fn main() {
+    var list = ['hello', 'world']
+    var str = json.serialize(list)
+    println(str)
+}
+
+--- output.txt
+["hello","world"]
+
+=== test_serialize_vec_any
+--- main.n
+import json
+
+fn main() {
+    [any] list = ['hello', 1, true]
+    var str = json.serialize(list)
+    println(str)
+}
+
+--- output.txt
+["hello",1,true]
+
+=== test_serialize_vec_any2
+--- main.n
+import json
+
+fn main() {
+    [[any]] list = [['hello', 1, true], ['world', 2, false]]
+    var str = json.serialize(list)
+    println(str)
+}

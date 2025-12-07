@@ -1,0 +1,389 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module module_analyser;
+
+import ast local;
+import ctv_analyser;
+import init_checker;
+import src_loc local;
+import scope;
+import string_buffer;
+import string;
+
+fn FlowBits Analyser.analyseSwitchStmt(Analyser* ma, Stmt* s) {
+    FlowBits flow = 0;
+    SwitchStmt* sw = (SwitchStmt*)s;
+
+    ma.scope.enter(scope.Decl);
+
+    bool is_string = false;
+
+    EnumTypeDecl* etd = nil;
+    // TODO switch is not a condition, not a bool!
+    QualType ct = ma.analyseExpr(sw.getCond2(), true, RHS);
+    if (ct.isInvalid()) {
+        ma.scope.exit(ma.has_error);
+        return FlowNext | FlowError;
+    }
+
+    bool isCharPtr = ct.isCharPointer();
+
+    // TODO check type (must be number-ish)
+
+    if (isCharPtr) {
+        is_string = true;
+        sw.setString();
+    } else {
+        EnumType* et = ct.getEnumTypeOrNil();
+        if (et) etd = et.getDecl();
+    }
+
+    const u32 numCases = sw.getNumCases();
+    SwitchCase** cases = sw.getCases();
+
+    if (numCases == 0) {
+        ma.error(s.getLoc(), "switch without cases or default");
+        ma.scope.exit(ma.has_error);
+        return FlowNext | FlowError;
+    }
+
+    SwitchCase* defaultCase = nil;
+
+    init_checker.Checker* checker = ma.getInitChecker();
+
+    for (u32 i = 0; i < numCases; i++) {
+        SwitchCase* c = cases[i];
+        bool is_last = (i+1 == numCases);
+
+        if (c.isDefault()) {
+            if (defaultCase) {
+                ma.error(c.getLoc(), "multiple default labels");
+                flow |= FlowError;
+            } else
+            if (!is_last) {
+                ma.error(c.getLoc(), "default case must be last in switch");
+                flow |= FlowError;
+            }
+            defaultCase = c;
+        }
+
+        ma.scope.enter(scope.Decl | scope.Break);
+        FlowBits flow2 = ma.analyseCase(c, checker, etd, is_string, is_last);
+        ma.scope.exit(ma.has_error);
+        flow |= flow2 & (FlowReturn | FlowContinue | FlowGoto | FlowNoReturn | FlowError);
+        if (flow2 & FlowBreak) flow |= FlowNext;
+    }
+
+    ma.scope.exit(ma.has_error);
+
+    if (!(flow & FlowError) && etd) {
+        const u32 numConstants = etd.getNumConstants();
+
+        if (defaultCase) {
+            // check for default with all cases covered
+            if (checker.getCount() >= numConstants) {
+                ma.error(defaultCase.getLoc(), "default label in switch which covers all enumeration values");
+                flow |= FlowError;
+            }
+        } else {
+            // check for uncovered cases
+            if (checker.getCount() < numConstants) {
+                string_buffer.Buf* out = string_buffer.create(128, false, 0);
+                u32 missing = 0;
+                EnumConstantDecl** ecd = etd.getConstants();
+                for (u32 i = 0; i < numConstants; i++) {
+                    Value v = ecd[i].getValue();
+                    if (!checker.find(v.as_u32())) {
+                        if (missing != 0) out.add(", ");
+                        if (missing >= 3) {
+                            out.add("...");
+                            break;
+                        }
+                        missing++;
+                        out.add(ecd[i].asDecl().getName());
+                    }
+                }
+
+                if (missing) {
+                    ma.error(s.getLoc(), "unhandled enumeration value%s: %s", missing > 1 ? "s" : "", out.data());
+                    flow |= FlowError;
+                }
+                out.free();
+            }
+        }
+    }
+    // TODO: handle complete coverage
+    if (!defaultCase) flow |= FlowNext;
+
+    ma.putInitChecker(checker);
+    return flow;
+}
+
+fn FlowBits Analyser.analyseCase(Analyser* ma,
+                                 SwitchCase* c,
+                                 init_checker.Checker* checker,
+                                 EnumTypeDecl* etd,
+                                 bool is_string,
+                                 bool is_last)
+{
+    FlowBits flow = 0;
+    bool is_default = c.isDefault();
+    if (!is_default) {
+        if (!ma.analyseCaseCondition(c, checker, etd, is_string)) return FlowError;
+    }
+
+    const u32 count = c.getNumStmts();
+    if (count == 0) {
+        c.setHasFallthrough();
+        return FlowNext;
+    }
+    bool has_decls = false;
+    FlowBits flow2 = FlowNext;
+    for (u32 i = 0; i < count; i++) {
+        Stmt* st = c.getStmt(i);
+        if (st.isFallthrough() && !is_last) {
+            c.setHasFallthrough();
+            if (i + 1 != count) {
+                ma.error(st.getLoc(), "'fallthrough' statement must be last statement in case");
+                return FlowError;
+            }
+            continue;
+        }
+        flow2 = ma.analyseStmt(st, true);
+        flow |= flow2 & (FlowReturn | FlowBreak | FlowContinue | FlowGoto | FlowNoReturn | FlowError);
+        if (ma.has_error) return FlowError;
+        if (st.isDecl()) has_decls = true;
+    }
+    flow |= flow2;
+    if (has_decls) c.setHasDecls();
+
+    if (!(flow & FlowNext) || c.hasFallthrough()) return flow;
+
+    Stmt* last = c.getStmt(count-1);
+    SrcLoc loc = last.getLoc();
+    if (!loc) loc = c.getLoc();
+    // TODO: use simpler error message
+    if (is_default) {
+        ma.error(loc, "no terminating statement (break|return|continue|goto|noreturn-func) at end of default case");
+    } else {
+        ma.error(loc, "no terminating statement (break|fallthrough|goto|return|continue|noreturn-func) at end of case");
+    }
+    return FlowError;
+}
+
+fn bool Analyser.analyseCaseCondition(Analyser* ma,
+                                      SwitchCase* c,
+                                      init_checker.Checker* checker,
+                                      EnumTypeDecl* etd,
+                                      bool is_string) {
+    u32 num_conds = c.getNumConds();
+    bool res = true;
+    for (u32 i = 0; i < num_conds; i++) {
+        Expr* e = c.getCond(i);
+        SrcLoc loc = e.getLoc();
+        if (e.isRange()) {
+            if (is_string) {
+                ma.error(loc, "case ranges are not allowed for strings");
+                res = false;
+                continue;
+            }
+            RangeExpr* re = (RangeExpr*)e;
+            Expr* lhs = re.getLHS();
+            Expr* rhs = re.getRHS();
+            u32 lhs_index = 0;  // numerical case value (or string index)
+            u32 rhs_index;      // numerical case value (or string index)
+            u32 lhs_name_idx = 0;   // name index of enum constant
+            u32 rhs_name_idx = 0;   // name index of enum constant
+            res &= ma.analyseCaseExpr(c, checker, etd, is_string, 0, lhs, &lhs_index, &lhs_name_idx);
+            res &= ma.analyseCaseExpr(c, checker, etd, is_string, 0, rhs, &rhs_index, &rhs_name_idx);
+            if (res) {
+                if (etd) {
+                    if (lhs_index > rhs_index) {
+                        ma.error(loc, "enum constant '%s' does not come after '%s'",
+                                 idx2name(rhs_name_idx), idx2name(lhs_name_idx));
+                        res = false;
+                        continue;
+                    }
+                    u32 num_constants = etd.getNumConstants();
+                    for (u32 idx = 0; idx < num_constants; idx++) {
+                        EnumConstantDecl* ecd = etd.getConstant(idx);
+                        Value v = ecd.getValue();
+                        u32 index = v.as_u32();
+                        if (index >= lhs_index && index <= rhs_index) {
+                            SrcLoc duplicate = checker.find(index);
+                            if (duplicate && res) {
+                                Decl* d = (Decl*)ecd;
+                                ma.error(loc, "duplicate case value '%s'", d.getName());
+                                ma.note(duplicate, "previous case is here");
+                                res = false;
+                            }
+                            checker.add(index, loc);
+                        }
+                    }
+                } else {
+                    if (lhs_index > rhs_index) {
+                        ma.error(loc, "case range bounds %d and %d are out of order", lhs_index, rhs_index);
+                        res = false;
+                        continue;
+                    }
+                    SrcLoc duplicate = checker.find2(lhs_index, rhs_index);
+                    if (duplicate) {
+                        ma.error(loc, "duplicate case value in range");
+                        ma.note(duplicate, "previous case is here");
+                        res = false;
+                    }
+                    checker.add2(lhs_index, rhs_index, loc);
+                }
+            }
+        } else {
+            u32 index;      // numerical case value (or string index)
+            u32 name_idx;   // name index of enum constant
+            res &= ma.analyseCaseExpr(c, checker, etd, is_string, loc, e, &index, &name_idx);
+        }
+    }
+    return res;
+}
+
+fn bool Analyser.analyseCaseExpr(Analyser* ma,
+                                 SwitchCase* c,
+                                 init_checker.Checker* checker,
+                                 EnumTypeDecl* etd,
+                                 bool is_string,
+                                 SrcLoc loc,
+                                 Expr* cond, u32 *indexp, u32 *name_idxp) {
+    u32 index = 0;
+    if (etd) {
+        if (!cond.isIdentifier()) {
+            if (cond.isMember()) {
+                // TODO: should accept enum full name
+                ma.error(cond.getLoc(), "enum constant may not be prefixed in case statement");
+            } else {
+                ma.error(cond.getLoc(), "condition is not a constant of enum type '%s'",
+                         etd.asDecl().getFullName());
+            }
+            return false;
+        }
+        IdentifierExpr* id = (IdentifierExpr*)cond;
+        if (!ma.checkEnumConstantCase(id, checker, etd, loc, &index, name_idxp)) return false;
+    } else {
+        Expr* orig = cond;
+        QualType qt = ma.analyseExpr(&cond, true, RHS);
+
+        if (qt.isInvalid()) return false;
+        cond.setType(qt);
+
+        if (is_string) {
+            if (orig.isNil()) {
+                index = 0;
+                *name_idxp = 0;
+                if (loc) {
+                    SrcLoc duplicate = checker.find(index);
+                    if (duplicate) {
+                        ma.errorRange(cond.getLoc(), cond.getRange(), "duplicate case value nil");
+                        ma.note(duplicate, "previous case is here");
+                        return false;
+                    }
+                    checker.add(index, loc);
+                }
+            } else
+            if (orig.isStringLiteral()) {
+                StringLiteral* lit = (StringLiteral*)orig;
+                u32 len = lit.getSize() - 1;
+                if (len > 255) {
+                    ma.error(cond.getLoc(), "string switch case string is loo long (max 255 bytes)");
+                    return false;
+                }
+                if (string.memchr(lit.getText(), 0, len)) {
+                    ma.error(cond.getLoc(), "case string value has embedded null byte");
+                    return false;
+                }
+                index = lit.getTextIndex();
+                *name_idxp = 0;
+                if (loc) {
+                    SrcLoc duplicate = checker.find(index);
+                    if (duplicate) {
+                        ma.errorRange(cond.getLoc(), cond.getRange(), "duplicate case string");
+                        ma.note(duplicate, "previous case is here");
+                        return false;
+                    }
+                    checker.add(index, loc);
+                }
+            } else {
+                ma.error(cond.getLoc(), "string switch case can only have a string literal or nil as condition");
+                return false;
+            }
+        } else {
+            if (!cond.isCtv()) {
+                ma.error(cond.getLoc(), "case condition is not compile-time constant");
+                return false;
+            }
+            Value v = ctv_analyser.get_value(cond);
+            index = v.as_u32();
+            *name_idxp = 0;
+            if (loc) {
+                SrcLoc duplicate = checker.find(index);
+                if (duplicate) {
+                    ma.errorRange(cond.getLoc(), cond.getRange(), "duplicate case value %d", index);
+                    ma.note(duplicate, "previous case is here");
+                    return false;
+                }
+                checker.add(index, loc);
+            }
+        }
+    }
+    *indexp = index;
+    return true;
+}
+
+fn bool Analyser.checkEnumConstantCase(Analyser* ma,
+                                       IdentifierExpr* id,
+                                       init_checker.Checker* checker,
+                                       EnumTypeDecl* etd,
+                                       SrcLoc loc,
+                                       u32* ip,
+                                       u32* name_idxp) {
+    Expr* e = (Expr*)id;
+    *name_idxp = id.getNameIdx();
+    EnumConstantDecl* ecd = etd.findConstant(*name_idxp);
+    if (!ecd) {
+        ma.error(e.getLoc(), "enum '%s' has no constant '%s'", etd.asDecl().getFullName(), id.getName());
+        return false;
+    }
+    Decl* d = (Decl*)ecd;
+    d.setUsed();
+    QualType qt = d.getType();
+    e.setType(qt);
+    e.setCtc();
+    e.setCtv();
+    e.setRValue();
+    id.setDecl(d);
+    id.setKind(IdentifierKind.EnumConstant);
+
+    // check for duplicate value
+    Value v = ecd.getValue();
+    u32 index = v.as_u32();
+    *ip = index;
+    if (loc) {
+        SrcLoc duplicate = checker.find(index);
+        if (duplicate) {
+            ma.error(e.getLoc(), "duplicate case value '%s'", id.getName());
+            ma.note(duplicate, "previous case is here");
+            return false;
+        }
+        checker.add(index, loc);
+    }
+    return true;
+}

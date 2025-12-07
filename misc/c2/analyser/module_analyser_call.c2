@@ -1,0 +1,514 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module module_analyser;
+
+import ast local;
+import printf_utils;
+import scope;
+import src_loc local;
+
+import stdio;
+
+const char[] DiagTooManyArgs = "too many arguments to %sfunction call, expected %d, have %d";
+const char[] DiagTooFewArgs = "too few arguments to %sfunction call, expected %d, have %d";
+const char[] NoteDeclaredHere = "'%s' is defined here";
+
+fn QualType Analyser.analyseCallExpr(Analyser* ma, Expr** e_ptr) {
+    Expr* e = *e_ptr;
+    CallExpr* call = (CallExpr*)e;
+    Expr** func = call.getFunc2();
+    Expr* origFn = call.getFunc();  // store here to avoid the likely inserted FunctionPointerDecay cast
+    QualType qt = ma.analyseExpr(func, true, RHS);
+    if (qt.isInvalid()) return QualType_Invalid;
+
+    if (origFn.isNValue()) {
+        ma.errorRange(origFn.getLoc(), origFn.getRange(), "called object is not a function or function pointer");
+        return QualType_Invalid;
+    }
+
+    FunctionType* ft = qt.getFunctionTypeOrNil();
+    if (!ft) {
+        Expr* fn2 = call.getFunc();
+        ma.errorRange(fn2.getLoc(), fn2.getRange(), "called object type %s is not a function or function pointer", qt.diagName());
+
+        return QualType_Invalid;
+    }
+
+    /* two ways of calling a type function:
+        1. Type.test(s);
+        2. Type s; s.test();    where Type is an enum/struct/union type
+    */
+
+    FunctionDecl* fd = ft.getDecl();
+    fd.asDecl().setUsed();
+    if (fd.hasAttrNoReturn()) call.setNoreturn();
+
+    if (fd.isTemplate()) {
+        if (!call.getTemplateArg()) {
+            ma.errorRange(e.getLoc(), e.getRange(), "function %s requires a template argument", fd.asDecl().getFullName());
+            return QualType_Invalid;
+        }
+        fd = ma.instantiateTemplateFunction(call, fd);
+        if (!fd) return QualType_Invalid;
+    } else {
+        if (call.getTemplateArg()) {
+            ma.errorRange(e.getLoc(), e.getRange(), "function %s is not a template function", fd.asDecl().getFullName());
+            return QualType_Invalid;
+        }
+    }
+
+    u32 func_num_args = fd.getNumParams();
+    u32 call_num_args = call.getNumArgs();
+
+    bool isTypeFuncCall = false;  // Not for static type-functions!
+    // TODO: why use this location instead of that of the origFn?
+    SrcLoc loc = e.getLoc();      // call location is the opening '('
+
+    QualType baseType;
+    MemberExpr* m = nil;
+    if (origFn.isMember()) {
+        // TODO check that call matches function (static or not)
+        // Note: use origFn to avoid the added FunctionPointerDecay cast
+        m = (MemberExpr*)origFn;
+        // if MemberExpr is SSF (Foo.next), but dest fn is SF or vice versa, give error
+        Decl* fdd = (Decl*)fd;
+        switch (fd.getCallKind()) {
+        case Invalid:
+            assert(0);  // cannot come here?
+            break;
+        case Normal:
+            break;
+        case TypeFunc:
+            if (!m.isStaticTypeFunc()) {
+                isTypeFuncCall = true;
+                call.setCallsTypeFunc();
+                baseType = m.getBaseType();
+                // loc points to the last member of the function name
+                loc = m.getLastLoc();
+            }
+            break;
+        case StaticTypeFunc:
+            if (!m.isStaticTypeFunc()) {
+                ma.errorRange(e.getLoc(), e.getRange(), "'%s' is a static type-function; use '%s()'", fdd.getFullName(), fdd.getFullName());
+                ma.note(fdd.getLoc(), "'%s' is defined here", fdd.getFullName());
+                return QualType_Invalid;
+            }
+            call.setCallsStaticTypeFunc();
+            break;
+        }
+    }
+
+    u32 num_auto_args = fd.getNumAutoArgs();
+    if (num_auto_args) call.setHasAutoArgs();
+
+    VarDecl** func_args = fd.getParams();
+    Expr** call_args = call.getArgs();
+
+    u32 func_arg_index = 0;
+    u32 call_arg_index = 0;
+
+    if (isTypeFuncCall) {
+        assert(fd.getNumParams() >= 1);
+        assert(m);
+        // check for pointer conversion (const -> non-const)
+        VarDecl* arg0 = func_args[0];
+        QualType expectedType = arg0.asDecl().getType();
+        // Options: (for non-static TypeFunctions)
+        //                             Foo     Foo*    const Foo   const Foo*  other(Foo**)
+        // Foo.func(Foo*);             auto    ok      error       error       error
+        // Foo.func(const Foo*);       auto    ok      auto        ok          error
+        // Foo.func(Foo);              ok      auto    ok          auto        error
+        // Foo.func(const Foo);        ok      auto    ok          auto        error
+        // where 'auto' means convert Foo -> Foo* or vice versa
+        if (expectedType.isPointer()) { // NOTE: will always be single pointer (i.e. not Foo**)
+            // auto convert Foo -> Foo*
+            if (!baseType.isPointer()) {
+                // TODO: Check if structure is lvalue. If not, we should add a local object to
+                // store the rvalue and use that as the lvalue
+                Expr* base = m.getExprBase();
+                if (base && !base.isLValue()) {
+                    ma.errorRange(m.getLoc(0), base.getRange(), "type function needs lvalue");
+                    return QualType_Invalid;
+                }
+                baseType = ma.builder.actOnPointerType(baseType);
+                m.setConversion(MemberConversion.Addr);
+            }
+        } else {
+            // auto convert Foo* -> Foo
+            if (baseType.isPointer()) {
+                baseType = baseType.getPointerBaseType();
+                m.setConversion(MemberConversion.Deref);
+            }
+        }
+
+        // TODO FIX loc, will always be memberExpr, so loc should be last one in member
+        bool ok = ma.checker.check(expectedType, baseType, e_ptr, loc);
+        if (!ok) return QualType_Invalid;
+
+        func_arg_index++;
+    }
+
+    //stdio.printf("CALL (%d | %d)\n", func_num_args, call_num_args);
+    bool has_printf_format = false;
+    u32 printf_call_idx = 0;
+    while (1) {
+        //stdio.printf("ARG [%d | %d]\n", func_arg_index, call_arg_index);
+        if (func_arg_index >= func_num_args) break;
+
+        VarDecl* vd = func_args[func_arg_index];
+        Decl* d = vd.asDecl();
+        if (vd.hasAutoAttr()) {
+            func_arg_index++;
+            continue;
+        }
+
+        if (call_arg_index >= call_num_args) break;
+
+        Expr* arg = call_args[call_arg_index];
+        if (arg.isNamedArgument()) {
+            NamedArgument* n = (NamedArgument*)arg;
+            u32 arg_name_idx = n.getNameIdx();
+            u32 param_name_idx;
+            bool found = false;
+            while (func_arg_index < func_num_args) {
+                vd = func_args[func_arg_index];
+                d = vd.asDecl();
+                param_name_idx = d.getNameIdx();
+                found = (param_name_idx == arg_name_idx);
+                if (found)
+                    break;
+                if (!vd.hasInit())
+                    break;
+                func_arg_index++;
+            }
+            if (!found) {
+                ma.error(arg.getLoc(), "unexpected named argument '%s'", ma.astPool.idx2str(arg_name_idx));
+                if (func_arg_index < func_num_args) {
+                    if (param_name_idx) {
+                        ma.note(d.getLoc(), "expected argument '%s' instead", ma.astPool.idx2str(param_name_idx));
+                    } else {
+                        ma.note(d.getLoc(), "expected unnamed argument");
+                    }
+                }
+                return QualType_Invalid;
+            }
+        }
+
+        if (!ma.analyseInitExpr(&call_args[call_arg_index], d.getType(), arg.getLoc(), false, false))
+            return QualType_Invalid;
+
+        if (vd.hasPrintfFormat()) {
+            has_printf_format = true;
+            printf_call_idx = call_arg_index;
+        }
+
+        func_arg_index++;
+        call_arg_index++;
+    }
+
+    u32 expected_args = func_num_args - num_auto_args - isTypeFuncCall;
+    if (func_arg_index < func_num_args) {
+        u32 missing_args = 0;
+        for (u32 i = func_arg_index; i < func_num_args; i++) {
+            if (!func_args[i].hasInit()) missing_args++;
+        }
+        if (missing_args) {
+            // error loc is closing parenthesis
+            ma.error(call.getEndLoc() - 1, DiagTooFewArgs, fd.getDiagKind(), expected_args, call_num_args);
+            ma.note(fd.asDecl().getLoc(), NoteDeclaredHere, fd.asDecl().getFullName());
+            return QualType_Invalid;
+        }
+    }
+
+    if (call_arg_index != call_num_args || fd.isVariadic()) {
+        if (!fd.isVariadic()) {
+            Expr* call_arg = call_args[call_arg_index];
+            ma.error(call_arg.getLoc(), DiagTooManyArgs, fd.getDiagKind(), expected_args, call_num_args);
+            ma.note(fd.asDecl().getLoc(), NoteDeclaredHere, fd.asDecl().getFullName());
+            return QualType_Invalid;
+        }
+
+        while (call_arg_index != call_num_args) {
+            QualType callType = ma.analyseExpr(&call_args[call_arg_index], true, RHS);
+            if (callType.isInvalid()) return QualType_Invalid;
+            if (callType.isVoid()) {
+                Expr* call_arg = call_args[call_arg_index];
+                ma.error(call_arg.getLoc(), "passing 'void' as variadic argument is invalid");
+                return QualType_Invalid;
+            }
+            call_arg_index++;
+        }
+
+        if (has_printf_format) {
+            u32 num_args = call_num_args - printf_call_idx - 1;
+            bool change_format = false;
+            ma.checkPrintArgs(call_args[printf_call_idx], num_args, &call_args[printf_call_idx+1], &change_format);
+            call.setPrintfFormat(printf_call_idx, change_format);
+        }
+    }
+    return fd.getRType();
+}
+
+type FormatAnalyser struct {
+    Analyser* ma;
+    const char* format;
+    u32 num_args;
+    u32 idx;
+    SrcLoc loc;
+    bool change_format;
+    Expr** args;
+}
+
+fn bool on_format_specifier(void* context, printf_utils.Specifier specifier, u32 offset, i32 stars, char c) {
+    FormatAnalyser* fa = context;
+    Analyser* ma = fa.ma;
+    Expr** args = fa.args;
+
+    if (c == '\0') {
+        ma.error(fa.loc + offset, "missing conversion specifier at end of format string");
+        return false;
+    }
+    if (fa.idx + stars >= fa.num_args) {
+        ma.error(fa.loc + offset, "too many format specifiers or not enough arguments");
+        return false;
+    }
+    for (i32 i = 0; i < stars; i++) {
+        Expr* arg = args[fa.idx];
+        QualType qt = arg.getType();
+        qt = qt.getCanonicalType();
+        if (!qt.promotesToInt32()) {
+            // TODO: add cast if other integer type?
+            ma.error(arg.getLoc(), "argument for '*' width/precision specifier must be an i32");
+        }
+        fa.idx++;
+    }
+    Expr* arg = args[fa.idx];
+    QualType qt = arg.getType();
+    qt = qt.getCanonicalType();
+
+    switch (specifier) {
+    case Other:
+        break;
+    case String:
+        if (!qt.isCharPointer()) {
+            ma.error(arg.getStartLoc(), "format '%%s' expects a string argument");
+        }
+        break;
+    case Char:
+        // TODO check can be more efficient
+        if (!qt.isChar() && !qt.isInt8() && !qt.isUInt8()) {
+            ma.error(arg.getStartLoc(), "format '%%c' expects a character argument");
+        }
+        break;
+    case Integer:
+        fa.change_format = true;
+        if (qt.isEnum()) {
+            EnumType* et = qt.getEnumType();
+            qt = et.getImplType();
+        }
+        BuiltinType* bi = qt.getBuiltinTypeOrNil();
+        if (!bi || !bi.isIntegerOrBool()) {
+            ma.error(arg.getStartLoc(), "format '%%%c' expects an integer argument", c);
+        }
+        break;
+    case FloatingPoint:
+        fa.change_format = true;
+        BuiltinType* bi = qt.getBuiltinTypeOrNil();
+        if (!bi || !bi.isFloatingPoint()) {
+            ma.error(arg.getStartLoc(), "format '%%%c' expects a floating-point argument", c);
+        }
+        break;
+    case Pointer:
+        if (!qt.isPointer() && !qt.isFunction()) {
+            ma.error(arg.getStartLoc(), "format '%%p' expects a pointer argument");
+        }
+        break;
+    case Invalid:
+        switch (c) {
+        case 'h':
+        case 'j':
+        case 'l':
+        case 't':
+        case 'w':
+        case 'z':
+        case 'L':
+            ma.error(fa.loc + offset, "format length modifier '%c' should be omitted", c);
+            break;
+        case 'i':
+        case 'u':
+            ma.error(fa.loc + offset, "invalid format specifier '%%%c', should use '%%d'", c);
+            break;
+        default:
+            ma.error(fa.loc + offset, "invalid format specifier '%%%c'", c);
+            break;
+        }
+        return false;
+    }
+
+    fa.idx++;
+    return true;
+}
+
+fn void Analyser.checkPrintArgs(Analyser* ma, Expr* format, u32 num_args, Expr** args, bool* change_format) {
+    // if format is StringLiteral or vardecl of type char[], it will wrapped in ArrayToPointerDecay
+    // otherwise it's a VarDecl of type (const) char* we cannot check and report this as an error
+    if (!format.isImplicitCast()) goto not_constant;
+    ImplicitCastExpr* ic = (ImplicitCastExpr*)format;
+    if (!ic.isArrayToPointerDecay()) goto not_constant;
+    format = ic.getInner();
+
+    SrcLoc format_loc;
+    const char* format_text = printf_utils.get_format(format, &format_loc);
+    if (!format_text) goto not_constant;
+
+    FormatAnalyser fa = { ma, format_text, num_args, 0, format_loc, false, args }
+    if (!printf_utils.parseFormat(format_text, on_format_specifier, &fa)) {
+        // error already reported
+        return;
+    }
+    *change_format = fa.change_format;
+
+    if (fa.idx < num_args) {
+        ma.error(args[fa.idx].getLoc(), "too many arguments for format");
+        return;
+    }
+    return;
+
+not_constant:
+    ma.error(format.getLoc(), "format argument is not a constant string");
+    return;
+}
+
+fn void create_template_name(char* name, const char* orig, u16 idx) {
+    stdio.sprintf(name, "%s_%d_", orig, idx);
+}
+
+fn void Analyser.opaque_callback(void* arg, SrcLoc loc, Decl* d) {
+    Analyser* ma = arg;
+    QualType qt = d.getType(); // lazy way to get from decl -> fullname
+    ma.error(loc," using opaque type '%s'", qt.diagName());
+}
+
+fn FunctionDecl* Analyser.instantiateTemplateFunction(Analyser* ma, CallExpr* call, FunctionDecl* fd) {
+    TypeRef* template_arg = call.getTemplateArg();
+    QualType templateType = ma.analyseTypeRef(template_arg);
+    if (templateType.isInvalid()) return nil;
+
+    FunctionDecl* instance = ma.mod.findInstance(fd, templateType);
+    if (!instance) {
+        // note: template_arg decl is set here
+        bool used_opaque = false;
+        StructType* st = templateType.getStructTypeOrNil();
+        if (st) {
+            StructTypeDecl* std = st.getDecl();
+            Decl* d = (Decl*)std;
+            used_opaque = (std.isOpaque() && d.getModule() != ma.mod);
+        }
+        Instantiator inst = {
+            .c = ma.context,
+            .ref = template_arg,
+            .template_name = fd.getTemplateNameIdx(),
+            .instance_ast_idx = call.getInstanceASTIdx(),
+            .used_opaque = used_opaque,
+            .arg = ma,
+            .on_error = Analyser.opaque_callback,
+        }
+        instance = fd.instantiate(&inst);
+        Decl* d = (Decl*)instance;
+        ma.analyseFunction(instance);
+        if (ma.has_error) return nil;
+        d.setChecked();
+
+        // Note: we need a separate scope for the body
+        Module* template_mod = fd.asDecl().getModule();
+        Analyser* analyser = create(ma.diags, ma.context, ma.astPool, ma.builder, ma.allmodules, ma.warnings);
+        analyser.setMod(template_mod);
+        scope.Scope* tmpScope = scope.create(ma.allmodules,
+                                             ma.diags,
+                                             d.getAST().getImports(),
+                                             template_mod,
+                                             template_mod.getSymbols(),
+                                             !ma.warnings.no_unused_variable);
+        analyser.analyseFunctionBody(instance, tmpScope);
+        tmpScope.free();
+        analyser.free();
+
+        if (ma.has_error) return nil;
+
+        u16 instance_idx = ma.mod.addInstance(fd, templateType, instance);
+        instance.setTemplateInstanceIdx(instance_idx);
+        char[64] name;
+        create_template_name(name, d.getName(), instance_idx);
+        instance.setInstanceName(ma.astPool.addStr(name, true));
+    }
+    call.setTemplateIdx(instance.getTemplateInstanceIdx());
+
+    return instance;
+}
+
+fn QualType Analyser.analysePureCallExpr(Analyser* ma, Expr* e) {
+    CallExpr* call = (CallExpr*)e;
+    Expr** func = call.getFunc2();
+    Expr* origFn = call.getFunc();  // store here to avoid the likely inserted FunctionPointerDecay cast
+    QualType qt = ma.analyseExpr(func, true, RHS);
+    if (qt.isInvalid()) return QualType_Invalid;
+
+    if (origFn.isNValue()) {
+        ma.errorRange(origFn.getLoc(), origFn.getRange(), "called object is not a function or function pointer");
+        return QualType_Invalid;
+    }
+
+    FunctionType* ft = qt.getFunctionTypeOrNil();
+    if (!ft) {
+        Expr* fn2 = call.getFunc();
+        ma.errorRange(fn2.getLoc(), fn2.getRange(), "called object type %s is not a function or function pointer", qt.diagName());
+
+        return QualType_Invalid;
+    }
+
+    FunctionDecl* fd = ft.getDecl();
+    fd.asDecl().setUsed();
+
+    if (!fd.hasAttrPure()) {
+        ma.error(e.getLoc(), "only pure functions can be called in global initializers");
+        ma.note(fd.asDecl().getLoc(), NoteDeclaredHere, fd.asDecl().getFullName());
+        return QualType_Invalid;
+    }
+
+    // TODO: handle default and named arguments
+    u32 func_num_args = fd.getNumParams();
+    u32 call_num_args = call.getNumArgs();
+    //VarDecl** func_args = fd.getParams();
+    Expr** call_args = call.getArgs();
+
+    if (func_num_args != call_num_args) {
+        if (call_num_args > func_num_args) {
+            // error loc is the comma after last valid argument or closing parenthesis of no arguments
+            SrcLoc loc = func_num_args ? call_args[func_num_args - 1].getEndLoc() : call.getEndLoc() - 1;
+            ma.error(loc, DiagTooManyArgs, fd.getDiagKind(), func_num_args, call_num_args);
+            ma.note(fd.asDecl().getLoc(), NoteDeclaredHere, fd.asDecl().getFullName());
+        } else {
+            // error loc is closing parenthesis
+            ma.error(call.getEndLoc() - 1, DiagTooFewArgs, fd.getDiagKind(), func_num_args, call_num_args);
+            ma.note(fd.asDecl().getLoc(), NoteDeclaredHere, fd.asDecl().getFullName());
+        }
+        return QualType_Invalid;
+    }
+
+    // TODO
+    return QualType_Invalid;
+}
+

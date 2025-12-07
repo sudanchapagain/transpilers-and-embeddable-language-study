@@ -1,0 +1,21 @@
+// @warnings{no-unused}
+module test;
+
+const i32 A = 0;
+fn void test1() {
+    A = 1;          // @error{cannot assign to read-only variable 'test.A'}
+}
+
+fn void test2() {
+    A++;            // @error{cannot assign to read-only variable 'test.A'}
+}
+
+fn void test3() {
+    A += 3;         // @error{cannot assign to read-only variable 'test.A'}
+}
+
+fn void test4() {
+    const i32[10] array = { }
+    array[0] = 1;   // @error{cannot assign to variable with const-qualified type 'const i32'}
+}
+

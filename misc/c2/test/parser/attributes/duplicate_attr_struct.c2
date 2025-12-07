@@ -1,0 +1,8 @@
+// @warnings{no-unused}
+module test;
+
+type Struct struct @(unused, unused) // @error{duplicate attribute}
+{
+    i32 a;
+}
+

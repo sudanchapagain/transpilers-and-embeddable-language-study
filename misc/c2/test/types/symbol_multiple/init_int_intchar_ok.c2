@@ -1,0 +1,9 @@
+// @warnings{no-unused}
+module test;
+
+fn void test1() {
+    i8 a = 1;
+    i32 b = 2;
+    i32 c = a + b;
+}
+

@@ -1,0 +1,65 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import string_buffer;
+import src_loc local;
+
+public type StaticAssert struct @(opaque) {
+    u32 ast_idx;    // into globals.ast_list, 0 means nil
+    u32 loc;
+    Expr* lhs;
+    Expr* rhs;
+}
+
+public fn StaticAssert* StaticAssert.create(ast_context.Context* c,
+                                                      u32 ast_idx,
+                                                      SrcLoc loc,
+                                                      Expr* lhs,
+                                                      Expr* rhs)
+{
+    StaticAssert* d = c.alloc(sizeof(StaticAssert));
+    d.ast_idx = ast_idx;
+    d.loc = loc;
+    d.lhs = lhs;
+    d.rhs = rhs;
+#if AstStatistics
+    Stats.addStaticAssert(sizeof(StaticAssert));
+#endif
+    return d;
+}
+
+public fn AST* StaticAssert.getAST(const StaticAssert* d) {
+    return idx2ast(d.ast_idx);
+}
+
+public fn Expr* StaticAssert.getLhs(const StaticAssert* d) {
+    return d.lhs;
+}
+
+public fn Expr* StaticAssert.getRhs(const StaticAssert* d) {
+    return d.rhs;
+}
+
+fn void StaticAssert.print(const StaticAssert* d, string_buffer.Buf* out, u32 indent) {
+    out.indent(indent);
+    out.color(col_Decl);
+    out.add("StaticAssert\n");
+    d.lhs.print(out, indent + 1);
+    d.rhs.print(out, indent + 1);
+}
+

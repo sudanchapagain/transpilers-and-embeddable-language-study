@@ -1,0 +1,14 @@
+// @warnings{no-unused}
+module test;
+
+type Type struct {
+    i32 member;
+}
+
+fn void Type.create(Type* t) {    // @note{'test.Type.create' is defined here}
+}
+
+fn void myfunc() {
+    Type.create();      // @error{too few arguments to type-function call, expected 1, have 0}
+}
+

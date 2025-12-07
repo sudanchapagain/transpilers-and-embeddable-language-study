@@ -1,0 +1,89 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module label_vector;
+
+import ast;
+import src_loc local;
+
+import stdlib;
+import string;
+
+public type Label struct {
+    u32 name_idx;
+    SrcLoc loc;
+    bool used;
+    bool is_label; // otherwise goto
+    ast.LabelStmt* stmt;
+}
+
+public type LabelVector struct {
+    Label* data;
+    u32 count;
+    u32 capacity;
+}
+
+public fn void LabelVector.init(LabelVector* v, u32 capacity) @(unused) {
+    v.data = nil;
+    v.count = 0;
+    v.capacity = capacity;
+    if (capacity) v.data = stdlib.malloc(capacity * sizeof(Label));
+}
+
+public fn void LabelVector.free(LabelVector* v) {
+    if (v.data) stdlib.free(v.data);
+    v.count = 0;
+    v.capacity = 0;
+    v.data = nil;
+}
+
+public fn void LabelVector.reset(LabelVector* v) {
+    v.count = 0;
+}
+
+fn void LabelVector.resize(LabelVector* v) {
+    v.capacity = v.capacity == 0 ? 4 : v.capacity * 2;
+    void* data2 = stdlib.malloc(v.capacity * sizeof(Label));
+    if (v.data) {
+        string.memcpy(data2, v.data, v.count * sizeof(Label));
+        stdlib.free(v.data);
+    }
+    v.data = data2;
+}
+
+public fn u32 LabelVector.add(LabelVector* v, Label label) {
+    if (v.count == v.capacity) v.resize();
+
+    u32 index = v.count;
+    v.data[index] = label;
+    v.count++;
+    return index;
+}
+
+public fn u32 LabelVector.getCount(const LabelVector* v) {
+    return v.count;
+}
+
+public fn const Label* LabelVector.getLabels(const LabelVector* v) {
+    return v.data;
+}
+
+public fn Label* LabelVector.find(LabelVector* v, u32 name_idx) {
+    for (u32 i=0; i<v.count; i++) {
+        if (v.data[i].name_idx == name_idx) return &v.data[i];
+    }
+    return nil;
+}
+

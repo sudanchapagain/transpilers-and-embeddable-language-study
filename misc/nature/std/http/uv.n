@@ -1,0 +1,46 @@
+import http
+
+type header_t = struct{
+    anyptr name_at
+    anyptr value_at
+    int name_len
+    int value_len
+}
+
+type conn_t = struct{
+    ptr<http.server_t> server
+    anyptr read_buf
+    anyptr url_at
+    anyptr path_at
+    anyptr query_at
+    anyptr body_at
+    anyptr host_at
+    [header_t;100] headers
+
+    int read_buf_cap
+    int read_buf_len
+    int body_len
+    int url_len
+    int path_len
+    int query_len
+    int host_len
+    int headers_len
+
+    u8 method
+    // ... other field not use
+}
+
+#linkid rt_uv_http_listen
+fn http_listen(anyptr server):void!
+
+#linkid rt_uv_read
+fn read(anyptr client):string!
+
+#linkid rt_uv_write
+fn write(anyptr client, string data):void!
+
+#linkid rt_uv_conn_resp
+fn conn_resp(rawptr<conn_t> ctx, string data)
+
+#linkid rt_uv_http_close
+fn http_close(anyptr server)

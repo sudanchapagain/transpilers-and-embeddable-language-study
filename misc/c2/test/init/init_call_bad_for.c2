@@ -1,0 +1,14 @@
+// @warnings{no-unused}
+module test;
+
+type Foo struct {
+    i32 v;
+}
+
+fn void Foo.init(Foo* f, i32 v) { f.v = v; }
+
+fn void test4() {
+    // Init call accepted in init part of for statement (not a condition)
+    for (Foo foo.init(1); false;)
+        return;
+}

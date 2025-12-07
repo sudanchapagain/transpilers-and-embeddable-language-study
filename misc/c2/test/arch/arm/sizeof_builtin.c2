@@ -1,0 +1,9 @@
+// @warnings{no-unused}
+// @target{arm-unknown-linux-gnueabi}
+
+module test;
+
+static_assert(4, sizeof(isize));
+static_assert(4, sizeof(usize));
+static_assert(4, sizeof(void*));
+

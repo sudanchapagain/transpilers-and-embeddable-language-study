@@ -1,0 +1,11 @@
+// @warnings{no-unused}
+module test;
+
+type Fn fn void();
+
+fn void test1(void* ptr) {
+    Fn f1 = ptr;
+    f1 = ptr;
+}
+
+

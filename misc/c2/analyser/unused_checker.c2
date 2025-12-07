@@ -1,0 +1,119 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module unused_checker;
+
+import warning_flags;
+import ast local;
+import diagnostics;
+
+public fn void check(diagnostics.Diags* diags,
+                       const warning_flags.Flags* warnings,
+                       Module* mod)
+{
+    Checker c = {
+        .diags = diags,
+        .warnings = warnings,
+    }
+
+    if (mod.isUsed()) {
+        mod.visitDecls(Checker.check, &c);
+    } else {
+        mod.visitASTs(Checker.unused_module, &c);
+    }
+}
+
+type Checker struct {
+    diagnostics.Diags* diags;
+    const warning_flags.Flags* warnings;
+}
+
+fn void Checker.unused_module(void* arg, AST* a) {
+    Checker* c = arg;
+    c.diags.warn(a.getLoc(), "unused module '%s'", a.getName());
+}
+
+fn void Checker.check(void* arg, Decl* d) {
+    Checker* c = arg;
+    bool used = d.isUsed();
+    if (used && d.isPublic() && !d.isUsedPublic() && !c.warnings.no_unused_public && !d.hasAttrUnused()) {
+        c.diags.warn(d.getLoc(), "%s '%s' is not used public", d.getKindName(), d.getFullName());
+    }
+
+    switch (d.getKind()) {
+    case Function:
+        if (c.warnings.no_unused_function) return;
+        if (d.hasAttrUnused()) return;
+        break;
+    case Import:
+        if (c.warnings.no_unused_import) return;
+        break;
+    case StructType:
+        if (used) {
+            c.checkStructMembers(d);
+        }
+        if (c.warnings.no_unused_type) return;
+        break;
+    case EnumType:
+        if (used && !c.warnings.no_unused_enum_constant) {
+            c.checkEnum((EnumTypeDecl*)d);
+        }
+        break;
+    case EnumConstant:
+        break;
+    case FunctionType:
+        if (c.warnings.no_unused_type) return;
+        break;
+    case AliasType:
+        if (c.warnings.no_unused_type) return;
+        break;
+    case Variable:
+        if (c.warnings.no_unused_variable) return;
+        break;
+    }
+    if (!used && !d.hasAttrUnused() && !d.isExported()) {
+        c.diags.warn(d.getLoc(), "unused %s '%s'", d.getKindName(), d.getFullName());
+        return;
+    }
+}
+
+fn void Checker.checkEnum(Checker* c, EnumTypeDecl* d) {
+    u32 num_consts = d.getNumConstants();
+    EnumConstantDecl** constants = d.getConstants();
+    for (u32 i=0; i<num_consts; i++) {
+        EnumConstantDecl* ecd = constants[i];
+        Decl* dd = (Decl*)ecd;
+        if (!dd.isUsed()) {
+            c.diags.warn(dd.getLoc(), "unused %s '%s'", dd.getKindName(), dd.getName());
+        }
+    }
+}
+
+fn void Checker.checkStructMembers(Checker* c, Decl* d) {
+    StructTypeDecl* std = (StructTypeDecl*)d;
+    u32 num_members = std.getNumMembers();
+    Decl** members = std.getMembers();
+    for (u32 i=0; i<num_members; i++) {
+        Decl* member = members[i];
+        if (member.isStructType()) {
+            c.checkStructMembers(member);
+        } else {
+            if (!member.isUsed() && !c.warnings.no_unused_variable) {
+                c.diags.warn(member.getLoc(), "unused %s member '%s'", std.isStruct() ? "struct" : "union", member.getName());
+            }
+        }
+    }
+}
+

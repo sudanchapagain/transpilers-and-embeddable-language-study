@@ -1,0 +1,17 @@
+// @warnings{no-unused}
+module test;
+
+type Foo struct {
+    i32 x;
+}
+
+public type Foo2 struct @(opaque) {
+    Foo f2;
+}
+
+public type Foo3 struct @(opaque) {
+    struct sub {
+        Foo f3;
+    }
+}
+

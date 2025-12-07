@@ -1,0 +1,9 @@
+// @warnings{no-unused}
+module test;
+
+fn void test1() { }
+fn i32 test2() { return 0; }
+
+void* p1 = test1;
+void* p2 = test2;
+

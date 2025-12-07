@@ -1,0 +1,16 @@
+// @warnings{no-unused}
+module test;
+
+type Enum enum i8 {
+    A = -2,
+    B = 0,
+    C = 10,
+    D,
+}
+
+Enum ee;
+i32 ok1 = enum_min(ee);
+i32 ok2 = enum_min(Enum);
+i32 ok3 = Enum.min;
+i32 ok4 = Enum.max;
+

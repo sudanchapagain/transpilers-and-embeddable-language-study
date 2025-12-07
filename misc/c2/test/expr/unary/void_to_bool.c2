@@ -1,0 +1,17 @@
+// @warnings{no-unused}
+module test;
+
+fn void test1() {}
+
+fn void test2() {
+    if (!test1()) {} // @error{invalid argument type 'void' to unary expression}
+}
+
+fn void test3() {
+    if (-test1()) {} // @error{invalid argument type 'void' to unary expression}
+}
+
+fn void test4() {
+    if (++test1()) {} // @error{invalid argument type 'void' to unary expression}
+}
+

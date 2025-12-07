@@ -1,0 +1,27 @@
+// @recipe bin
+    $warnings no-unused
+    $backend c no-build
+
+// @file{file1}
+module test;
+
+const char* a = " ";
+const char* b = "a\rb";
+const char* c = "a\tb";
+const char* d = "a\nb";
+const char* e = "a\0b";
+const char* f = "a'b";
+const char* g = "a\"b";
+const char* h = "a\\b";
+
+// @expect{atleast, cgen/build.c}
+
+static const char* test_a = " ";
+static const char* test_b = "a\rb";
+static const char* test_c = "a\tb";
+static const char* test_d = "a\nb";
+static const char* test_e = "a\0b";
+static const char* test_f = "a'b";
+static const char* test_g = "a\"b";
+static const char* test_h = "a\\b";
+

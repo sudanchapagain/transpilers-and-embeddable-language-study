@@ -1,0 +1,330 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module c2_parser;
+
+//import ast_builder local;
+import ast local;
+import token local;
+import src_loc local;
+
+import ctype local;
+
+fn void Parser.parseTypeDecl(Parser* p, bool is_public) {
+    p.consumeToken();
+    p.expectIdentifier();
+    u32 type_name = p.tok.name_idx;
+    SrcLoc type_loc = p.tok.loc;
+    const char* name = p.pool.idx2str(type_name);
+    if (!isupper(name[0]) && !p.is_interface) p.error("a type name must start with an upper case character");
+
+    p.consumeToken();
+
+    switch (p.tok.kind) {
+    case KW_fn:
+        p.parseFunctionType(type_name, type_loc, is_public);
+        break;
+    case KW_struct:
+        p.parseStructType(true, type_name, type_loc, is_public);
+        break;
+    case KW_union:
+        p.parseStructType(false, type_name, type_loc, is_public);
+        break;
+    case KW_enum:
+        p.parseEnumType(type_name, type_loc, is_public);
+        break;
+    default:
+        p.parseAliasType(type_name, type_loc, is_public);
+        break;
+    }
+}
+
+fn void Parser.parseFunctionType(Parser* p, u32 name, SrcLoc loc, bool is_public) {
+    p.consumeToken(); // fn
+
+    TypeRefHolder rtype.init();
+    p.parseSingleTypeSpecifier(&rtype);
+
+    DeclList params.init();
+
+    bool is_variadic = p.parseFunctionParams(&params, is_public, false);
+    Decl* ftd = p.builder.actOnFunctionTypeDecl(name,
+                                                loc,
+                                                is_public,
+                                                &rtype,
+                                                (VarDecl**)params.getDecls(),
+                                                params.size(),
+                                                is_variadic);
+    p.parseOptionalAttributes();
+    params.free();
+
+    p.expectAndConsume(Kind.Semicolon);
+    p.builder.applyAttributes(ftd);
+}
+
+fn void Parser.parseStructType(Parser* p, bool is_struct, u32 name, SrcLoc loc, bool is_public) {
+    p.consumeToken();
+
+    p.parseOptionalAttributes();
+
+    DeclList members.init();
+
+    if (p.tok.kind == Kind.LBrace) {
+        p.parseStructBlock(&members, is_public);
+    } else if (p.tok.kind == Kind.Semicolon) {
+        if (!p.is_interface) p.error("undefined structs are only allowed in interface files");
+        if (!p.builder.hasOpaqueAttr()) p.error("undefined structs must have the opaque attribute");
+        p.consumeToken();
+    }
+    StructTypeDecl* d = p.builder.actOnStructType(name,
+                                                  loc,
+                                                  is_public,
+                                                  is_struct,
+                                                  true,
+                                                  members.getDecls(),
+                                                  members.size());
+    members.free();
+
+    p.builder.applyAttributes((Decl*)d);
+
+}
+
+fn void Parser.checkMemberName(Parser* p) {
+    u32 name = p.tok.name_idx;
+    if (!p.checkName(name, p.is_interface)) {
+        p.error("a struct/union member name must start with a lower case character");
+    }
+    if (p.tok.reserved) {
+        p.diags.error(p.tok.loc, "reserved word '%s' cannot be used as struct/union member name",
+                      p.pool.idx2str(name));
+    }
+}
+
+fn void Parser.parseStructBlock(Parser* p, DeclList* members, bool is_public) {
+    p.expectAndConsume(Kind.LBrace);
+
+    while (1) {
+        //Syntax:
+        // struct_member ::= type_qualifier type_specifier.
+        // struct_member ::= STRUCT <IDENTIFIER> LBRACE struct_block RBRACE.
+        // struct_member ::= UNION <IDENTIFIER> LBRACE struct_block RBRACE.
+
+        if (p.tok.kind == Kind.RBrace) break;
+
+        if (p.tok.kind == Kind.KW_union || p.tok.kind == Kind.KW_struct) {
+            bool is_struct = p.tok.kind == Kind.KW_struct;
+            p.consumeToken();
+            // name is optional
+            u32 name = 0;
+            SrcLoc loc = 0;
+            if (p.tok.kind == Kind.Identifier) {
+                name = p.tok.name_idx;
+                loc = p.tok.loc;
+
+                p.checkMemberName();
+                p.consumeToken();
+            }
+
+            DeclList sub_members.init();
+
+            p.parseStructBlock(&sub_members, is_public);
+            StructTypeDecl* member = p.builder.actOnStructType(name,
+                                                               loc,
+                                                               is_public,
+                                                               is_struct,
+                                                               false,
+                                                               sub_members.getDecls(),
+                                                               sub_members.size());
+            sub_members.free();
+            members.add(member.asDecl());
+            continue;
+        }
+
+        if (p.tok.kind == Kind.KW_fn) {
+            p.consumeToken(); // fn
+
+            TypeRefHolder rtype.init();
+            p.parseSingleTypeSpecifier(&rtype);
+
+            DeclList params.init();
+
+            bool is_variadic = p.parseFunctionParams(&params, is_public, false);
+
+            Decl* fd = p.builder.actOnStructMemberType(&rtype,
+                                                       (VarDecl**)params.getDecls(),
+                                                       params.size(),
+                                                       is_variadic);
+            // TODO attributes?
+            //p.parseOptionalAttributes();
+            params.free();
+
+            p.expectIdentifier();
+            u32 name = p.tok.name_idx;
+            SrcLoc loc = p.tok.loc;
+
+            p.checkMemberName();
+            p.consumeToken();
+
+            TypeRefHolder ref.init();
+            ref.setStructMemberType(fd);
+            VarDecl* member = p.builder.actOnStructMember(name, loc, is_public, &ref, nil);
+            members.add(member.asDecl());
+
+            goto semi_colon;
+        }
+        TypeRefHolder ref.init();
+        p.parseTypeSpecifier(&ref);
+
+        for (;;) {
+            u32 name = 0;
+            SrcLoc loc;
+            if (p.tok.kind == Kind.Colon) { // anonymous bit-field
+                loc = p.tok.loc;
+            } else {
+                p.expectIdentifier();
+                name = p.tok.name_idx;
+                loc = p.tok.loc;
+
+                p.checkMemberName();
+                p.consumeToken();
+            }
+
+            Expr* bitfield = nil;
+            if (p.tok.kind == Kind.Colon) {
+                p.consumeToken();
+                bitfield = p.parseExpr();
+            }
+            VarDecl* member = p.builder.actOnStructMember(name, loc, is_public, &ref, bitfield);
+            members.add(member.asDecl());
+            if (p.tok.kind != Kind.Comma)
+                break;
+            p.consumeToken();
+            if (ref.isPointer() || ref.isArray())
+                p.error("pointer and array members must be defined separately");
+        }
+semi_colon:
+        p.expectAndConsume(Kind.Semicolon);
+    }
+
+    p.expectAndConsume(Kind.RBrace);
+}
+
+fn void Parser.parseEnumType(Parser* p, u32 name, SrcLoc loc, bool is_public) {
+    p.consumeToken();
+
+    switch (p.tok.kind) {
+    case KW_char:
+    case KW_f32:
+    case KW_f64:
+        p.error("enum type must be an integer");
+        break;
+    case KW_i8:
+    case KW_i16:
+    case KW_i32:
+    case KW_i64:
+    case KW_isize:
+        break;
+    case KW_reg8:
+    case KW_reg16:
+    case KW_reg32:
+    case KW_reg64:
+        p.error("enum type must be an integer");
+        break;
+    case KW_u8:
+    case KW_u16:
+    case KW_u32:
+    case KW_u64:
+    case KW_usize:
+        break;
+    case KW_void:
+        p.error("enum type must be an integer");
+        break;
+    default:
+        p.error("expected enum type specifier");
+        break;
+    }
+    QualType implType = p.builder.actOnBuiltinType(tokKindToBuiltinKind(p.tok.kind));
+    p.consumeToken();
+
+    p.parseOptionalAttributes();
+
+    p.expectAndConsume(Kind.LBrace);
+
+    bool is_incr = false;
+
+    DeclList constants.init();
+
+    if (p.tok.kind == Kind.Plus) {
+        is_incr = true;
+        p.consumeToken();
+    } else {
+        while (p.tok.kind == Kind.Identifier) {
+            u32 const_name = p.tok.name_idx;
+
+            const char* name_str = p.pool.idx2str(const_name);
+            // TODO interface?
+
+            if (ctype.islower(name_str[0])) {
+                p.error("an enum constant name must start with an upper case character");
+            }
+            SrcLoc const_loc = p.tok.loc;
+            p.consumeToken();
+
+            Expr* init_expr = nil;
+            if (p.tok.kind == Kind.Equal) {
+                p.consumeToken();
+                init_expr = p.parseExpr(); // p.parseConstantExpr()
+            }
+
+            EnumConstantDecl* constant = p.builder.actOnEnumConstant(const_name,
+                                                                     const_loc,
+                                                                     is_public,
+                                                                     init_expr);
+            constants.add(constant.asDecl());
+
+            if (p.tok.kind != Kind.Comma) break;
+            p.consumeToken();
+        }
+
+        if (constants.size() == 0) {
+            p.error("enum without constants");
+        }
+    }
+
+    p.expectAndConsume(Kind.RBrace);
+
+    Decl* d = p.builder.actOnEnumType(name,
+                                      loc,
+                                      is_public,
+                                      is_incr,
+                                      implType,
+                                      (EnumConstantDecl**)constants.getDecls(),
+                                      constants.size());
+
+    constants.free();
+
+    p.builder.applyAttributes(d);
+}
+
+fn void Parser.parseAliasType(Parser* p, u32 name, SrcLoc loc, bool is_public) {
+    TypeRefHolder ref.init();
+    p.parseTypeSpecifier(&ref);
+
+    Decl* d = p.builder.actOnAliasType(name, loc, is_public, &ref);
+    p.parseOptionalAttributes();
+    p.expectAndConsume(Kind.Semicolon);
+    p.builder.applyAttributes(d);
+}
+

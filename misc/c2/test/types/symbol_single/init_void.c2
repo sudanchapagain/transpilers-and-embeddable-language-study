@@ -1,0 +1,33 @@
+// @warnings{no-unused}
+module test;
+
+fn void foo() {}
+
+fn void test1() {
+    i8  a = foo();     // @error{invalid type conversion from 'void' to 'i8'}
+}
+fn void test2() {
+    i16 b = foo();     // @error{invalid type conversion from 'void' to 'i16'}
+}
+fn void test3() {
+    i32 c = foo();     // @error{invalid type conversion from 'void' to 'i32'}
+}
+fn void test4() {
+    i64 d = foo();     // @error{invalid type conversion from 'void' to 'i64'}
+}
+fn void test5() {
+    u8  e = foo();    // @error{invalid type conversion from 'void' to 'u8'}
+}
+fn void test6() {
+    u16 f = foo();    // @error{invalid type conversion from 'void' to 'u16'}
+}
+fn void test7() {
+    u32 g = foo();    // @error{invalid type conversion from 'void' to 'u32'}
+}
+fn void test8() {
+    u64 h = foo();    // @error{invalid type conversion from 'void' to 'u64'}
+}
+fn void test9() {
+    bool   i = foo();    // @error{invalid type conversion from 'void' to 'bool'}
+}
+

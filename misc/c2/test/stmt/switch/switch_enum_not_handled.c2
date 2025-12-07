@@ -1,0 +1,76 @@
+// @warnings{no-unused}
+module test;
+
+type Foo enum i8 {
+    A,
+    B,
+    C,
+    D,
+    E,
+}
+
+fn void test1(Foo f) {
+    switch (f) {    // @error{unhandled enumeration values: B, C, D, ...}
+    case A:
+        break;
+    }
+}
+
+fn void test2(Foo f) {
+    switch (f) { // @error{unhandled enumeration values: B, D, E}
+    case A:
+        break;
+    case C:
+        break;
+    }
+}
+
+fn void test3(Foo f) {
+    switch (f) { // @error{unhandled enumeration values: B, E}
+    case A:
+        break;
+    case C:
+        break;
+    case D:
+        break;
+    }
+}
+
+fn void test4(Foo f) {
+    switch (f) { // @error{unhandled enumeration value: E}
+
+    case A:
+        break;
+    case B:
+        break;
+    case C:
+        break;
+    case D:
+        break;
+    }
+}
+
+fn void test5(Foo f) {
+    switch (f) {
+    case A:
+        break;
+    case B:
+        break;
+    case C:
+        break;
+    case D:
+        break;
+    case E:
+        break;
+    default:    // @error{default label in switch which covers all enumeration values}
+        break;
+    }
+}
+
+fn void test6(Foo f) {
+    switch (f) {
+    default:
+        break;
+    }
+}
+

@@ -1,0 +1,103 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ir;
+
+import string local;
+import stdlib;
+
+public type BlockList struct {
+    u32 count;
+    u32 capacity;
+    Block* blocks;  // global list, index = nr
+}
+
+public fn void BlockList.init(BlockList* l, u32 initial_size) {
+    l.count = 0;
+    l.blocks = nil;
+    l.resize(initial_size);
+}
+
+public fn void BlockList.free(BlockList* l) {
+    if (l.blocks) stdlib.free(l.blocks);
+}
+
+fn void BlockList.resize(BlockList* l, u32 cap) {
+    l.capacity = cap;
+    Block* blocks2 = stdlib.calloc(l.capacity, sizeof(Block));
+    if (l.count > 1) {
+        memcpy(blocks2, l.blocks, l.count * sizeof(Block));
+        stdlib.free(l.blocks);
+    }
+    l.blocks = blocks2;
+}
+
+public fn BlockId BlockList.add(BlockList* l, BlockKind kind) {
+    if (l.count == l.capacity) l.resize(l.capacity * 2);
+
+    BlockId idx = l.count;
+    Block* b = &l.blocks[idx];
+    b.init(kind);
+    l.count++;
+    return idx;
+}
+
+public fn BlockId BlockList.copy(BlockList* l, const Block* b2) {
+    if (l.count == l.capacity) l.resize(l.capacity * 2);
+
+    BlockId idx = l.count;
+    Block* b = &l.blocks[idx];
+    memcpy(b, b2, sizeof(Block));
+    l.count++;
+    return idx;
+}
+
+public fn void BlockList.clear(BlockList* l) {
+    l.count = 0;
+}
+
+public fn void BlockList.merge(BlockList* l1, const BlockList* l2) {
+    if (l2.count == 0) return;
+
+    u32 total = l1.count + l2.count;
+    if (total > l1.capacity) l1.resize(total);
+
+    memcpy(&l1.blocks[l1.count], l2.blocks, l2.count * sizeof(Block));
+    l1.count = total;
+}
+
+public fn void BlockList.swap(BlockList* l1, BlockList* l2) {
+    BlockList tmp = *l1;
+    *l1 = *l2;
+    *l2 = tmp;
+}
+
+public fn u32 BlockList.getCount(const BlockList* l) {
+    return l.count;
+}
+
+public fn Block* BlockList.get(const BlockList* l, BlockId idx) {
+    return &l.blocks[idx];
+}
+
+public fn Block* BlockList.getLast(const BlockList* l) {
+    assert(l.count);
+    return &l.blocks[l.count-1];
+}
+
+public fn void BlockList.removeLastBlock(BlockList* l) {
+    l.count--;
+}
+

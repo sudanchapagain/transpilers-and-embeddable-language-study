@@ -1,0 +1,8 @@
+A 
+A2x 
+B1 A B2 
+A B3 
+A B4y 
+C1 C2 
+C1 C2 A2z C3z 
+D1 B1 C1 C2 A B2 D2 B1 C1 C2 A B2 D3 

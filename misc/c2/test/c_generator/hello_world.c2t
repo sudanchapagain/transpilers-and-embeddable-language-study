@@ -1,0 +1,21 @@
+// @recipe bin
+    $warnings no-unused
+    $backend c
+
+// @file{file1}
+module test;
+
+import stdio;
+
+public fn i32 main(i32 argc, const char** argv) {
+    stdio.printf("Hello World!\n");
+    return 0;
+}
+
+// @expect{atleast, cgen/build.c}
+int32_t main(int32_t argc, const char** argv)
+{
+    printf("Hello World!\n");
+    return 0;
+}
+

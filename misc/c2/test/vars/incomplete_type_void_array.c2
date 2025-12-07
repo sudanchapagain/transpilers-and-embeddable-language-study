@@ -1,0 +1,5 @@
+// @warnings{no-unused}
+module test;
+
+void[4] va;         // @error{array element has invalid type 'void'}
+

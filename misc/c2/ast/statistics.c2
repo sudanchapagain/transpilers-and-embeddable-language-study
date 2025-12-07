@@ -1,0 +1,148 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+#if AstStatistics
+import string;
+import stdio local;
+
+type Stat struct {
+    u32 count;
+    u32 size;
+}
+
+type Stats struct {
+    Stat[elemsof(TypeKind)] types;
+    Stat[elemsof(ExprKind)] exprs;
+    Stat[elemsof(StmtKind)] stmts;
+    Stat[elemsof(DeclKind)] decls;
+    Stat[3] others; // 0=ArrayValue, 1=StaticAssert, 2=SwitchCase
+    //Stat arrayValues;
+    //Stat staticAsserts;
+}
+
+fn void Stats.reset(Stats* s) {
+    string.memset(s, 0, sizeof(Stats));
+}
+
+fn void Stats.addType(TypeKind kind, u32 size) {
+    globals.stats.types[kind].count++;
+    globals.stats.types[kind].size += size;
+}
+
+fn void Stats.addExpr(ExprKind kind, u32 size) {
+    globals.stats.exprs[kind].count++;
+    globals.stats.exprs[kind].size += size;
+}
+
+fn void Stats.addStmt(StmtKind kind, u32 size) {
+    globals.stats.stmts[kind].count++;
+    globals.stats.stmts[kind].size += size;
+}
+
+fn void Stats.addDecl(DeclKind kind, u32 size) {
+    globals.stats.decls[kind].count++;
+    globals.stats.decls[kind].size += size;
+}
+
+const char*[] other_names = { "ArrayValue", "StaticAssert", "SwitchCase" }
+
+fn void Stats.addArrayValue(u32 size) {
+    globals.stats.others[0].count++;
+    globals.stats.others[0].size += size;
+}
+
+fn void Stats.addStaticAssert(u32 size) {
+    globals.stats.others[1].count++;
+    globals.stats.others[1].size += size;
+}
+
+fn void Stats.addSwitchCase(u32 size) {
+    globals.stats.others[2].count++;
+    globals.stats.others[2].size += size;
+}
+
+fn void Stats.dump(const Stats* s) {
+    printf("---------------------------------------\n");
+
+    printf("--- Types ---\n");
+    u32 typesTotal = 0;
+    u32 typesCount = 0;
+    //for (u32 i = TypeKind.min; i <= TypeKind.max; i++) {
+    for (u32 i=enum_min(TypeKind); i<=enum_max(TypeKind); i++) {
+        const Stat* ss = &s.types[i];
+        printf("  %20s  %6d  %7d\n", typeKind_names[i], ss.count, ss.size);
+        typesCount += ss.count;
+        typesTotal += ss.size;
+    }
+    printf("  %20s  %6d  %7d\n", "total", typesCount, typesTotal);
+
+    printf("--- Expressions ---\n");
+    u32 exprTotal = 0;
+    u32 exprCount = 0;
+    //for (u32 i = ExprKind.min; i <= ExprKind.max; i++) {
+    for (u32 i=enum_min(ExprKind); i<=enum_max(ExprKind); i++) {
+        const Stat* ss = &s.exprs[i];
+        printf("  %20s  %6d  %7d\n", exprKind_names[i], ss.count, ss.size);
+        exprCount += ss.count;
+        exprTotal += ss.size;
+    }
+    printf("  %20s  %6d  %7d\n", "total", exprCount, exprTotal);
+
+    printf("--- Statements ---\n");
+    u32 stmtTotal = 0;
+    u32 stmtCount = 0;
+    //for (u32 i = StmtKind.min; i <= StmtKind.max; i++) {
+    for (u32 i=enum_min(StmtKind); i<=enum_max(StmtKind); i++) {
+        const Stat* ss = &s.stmts[i];
+        printf("  %20s  %6d  %7d\n", stmtKind_names[i], ss.count, ss.size);
+        stmtCount += ss.count;
+        stmtTotal += ss.size;
+    }
+    printf("  %20s  %6d  %7d\n", "total", stmtCount, stmtTotal);
+
+    printf("--- Decls ---\n");
+    u32 declTotal = 0;
+    u32 declCount = 0;
+    //for (u32 i = DeclKind.min; i <= DeclKind.max; i++) {
+    for (u32 i=enum_min(DeclKind); i<=enum_max(DeclKind); i++) {
+        const Stat* ss = &s.decls[i];
+        printf("  %20s  %6d  %7d\n", declKind_names[i], ss.count, ss.size);
+        declCount += ss.count;
+        declTotal += ss.size;
+    }
+    printf("  %20s  %6d  %7d\n", "total", declCount, declTotal);
+
+    printf("--- Other ---\n");
+    u32 otherTotal = 0;
+    u32 otherCount = 0;
+    for (u32 i=0; i<3; i++) {
+        const Stat* ss = &s.others[i];
+        printf("  %20s  %6d  %7d\n", other_names[i], ss.count, ss.size);
+        otherCount += ss.count;
+        otherTotal += ss.size;
+    }
+    printf("  %20s  %6d  %7d\n", "total", otherCount, otherTotal);
+
+    printf("--- Total ---\n");
+    u32 totalCount = typesCount + exprCount + stmtCount + declCount + otherCount;
+    u32 totalSize = typesTotal + exprTotal + stmtTotal + declTotal + otherTotal;
+    printf("  %20s  %6d  %7d\n", "objects", totalCount, totalSize);
+
+    printf("---------------------------------------\n");
+}
+
+#endif

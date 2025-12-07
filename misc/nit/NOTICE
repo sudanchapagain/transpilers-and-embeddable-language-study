@@ -1,0 +1,97 @@
+This product includes software developed as part of the Nit Language
+project ( http://nitlanguage.org ).
+
+Files: *
+Copyright: 2004-2017 Jean Privat <jean@pryen.org>
+           2006-2008 Floréal Morandat <morandat@lirmm.fr>
+           2008-2011 Jean-Sebastien Gelinas <calestar@gmail.com>
+           2009      Julien Chevalier <chevjulien@gmail.com>
+           2009-2017 Alexis Laferrière <alexis.laf@xymus.net>
+           2011      Matthieu Auger <matthieu.auger@gmail.com>
+           2011-2017 Alexandre Terrasa <alexandre@moz-code.org>
+           2012      Alexandre Pennetier <alexandre.pennetier@me.com>
+           2013-2016 Lucas Bajolet <r4pass@hotmail.com>
+           2013      Stefan Lage <lagestfan@gmail.com>
+           2013      Nathan Heu <heu.nathan@courrier.uqam.ca>
+           2013      Matthieu Lucas <lucasmatthieu@gmail.com>
+           2014-2017 Romain Chanoir <romain.chanoir@viacesi.fr>
+           2014-2016 Frédéric Vachon <fredvac@gmail.com>
+           2014      Johan Kayser <johan.kayser@viacesi.fr>
+           2014-2015 Julien Pagès <julien.projet@gmail.com>
+           2014      Geoffrey Hecht <geoffrey.hecht@gmail.com>
+           2014-2017 Jean-Christophe Beaupré <jcbrinfo@users.noreply.github.com>
+           2015      Arthur Delamare <arthur.delamare@viacesi.fr>
+           2015-2016 Mehdi Ait Younes <overpex@gmail.com>
+           2015      Renata Carvalho <renatawm@gmail.com>
+           2015      Simon Zeni <simonzeni@gmail.com>
+           2015      Anis Boubaker <anis@boubaker.ca>
+           2015      Istvan SZALAI <szalai972@gmail.com>
+           2015      Hervé Matysiak <herve.matysiak@viacesi.fr>
+           2015      Jean-Philippe Caissy <jean-philippe.caissy@shopify.com>
+           2015      Alexandre Blondin Massé <alexandre.blondin.masse@gmail.com>
+           2015-2016 Philippe Pepos Petitclerc <ppeposp@gmail.com>
+           2015-2016 Guilherme Mansur <guilhermerpmansur@gmail.com>
+           2016      Tony Gaetani <tony.gaetani@gmail.com>
+License: Apache 2.0 (see LICENSE)
+Comment: The main license of the work, except for the following exceptions
+
+Files: lib/*
+       clib/*
+       share/nitdoc/*
+Copyright: 2004-2017 Jean Privat <jean@pryen.org>
+           2006-2008 Floréal Morandat <morandat@lirmm.fr>
+           2009-2011 Jean-Sebastien Gelinas <calestar@gmail.com>
+           2009-2017 Alexis Laferrière <alexis.laf@xymus.net>
+           2009      Julien Chevalier <chevjulien@gmail.com>
+           2011-2017 Alexandre Terrasa <alexandre@moz-concept.com>
+           2012      Alexandre Pennetier <alexandre.pennetier@me.com>
+           2013-2016 Lucas Bajolet <r4pass@hotmail.com>
+           2013      Nathan Heu <heu.nathan@courrier.uqam.ca>
+           2013      Matthieu Lucas <lucasmatthieu@gmail.com>
+           2013      Stefan Lage <lagestfan@gmail.com>
+           2014-2017 Romain Chanoir <romain.chanoir@viacesi.fr>
+           2014-2016 Frédéric Vachon <fredvac@gmail.com>
+           2014      Johan Kayser <johan.kayser@viacesi.fr>
+           2014      Geoffrey Hecht <geoffrey.hecht@gmail.com>
+           2014      Julien Pagès <julien.projet@gmail.com>
+           2014      Christophe Gigax <christophe.gigax@viacesi.fr>
+           2014      Clement de Figueiredo <clement.defigueiredo@gmail.com>
+           2014      Maxime Leroy <maxime.leroy76@gmail.com>
+           2014      Johann Dubois <johann.dubois@outlook.com>
+           2014-2017 Jean-Christophe Beaupré <jcbrinfo@users.noreply.github.com>
+           2014-2015 Alexandre Blondin Massé <alexandre.blondin.masse@gmail.com>
+           2015      Mehdi Ait Younes <overpex@gmail.com>
+           2015      Budi Kurniawan <budi2020@gmail.com>
+           2015-2016 Philippe Pepos Petitclerc <ppeposp@gmail.com>
+           2015-2016 Guilherme Mansur <guilhermerpmansur@gmail.com>
+Licence: BSD 2 (see LICENSE-BSD)
+Comment: Use of libraries and resources is basically unrestricted. We hold the copyright
+         on the compiler and the tools but not on the programs made by the users.
+
+Files: share/nitdoc/scripts/jquery-1.7.1.min.js
+Copyright: 2011 John Resig, http://jquery.com/
+Licence: BSD 2 (see LICENSE-BSD)
+
+Files: /share/png/*
+Copyright: 1998-2014 Glenn Randers-Pehrson
+           1996-1997 Andreas Dilger
+           1995-1996 Guy Eric Schalnat, Group 42, Inc.
+License: libpng license (see share/png/LICENSE)
+
+Files: contrib/pep8analysis/www/viz.js
+Copyright: Copyright (c) 2012 Michael Daines
+Licence: see contrib/pep8analysis/COPYING-viz-js
+
+Files: contrib/online_ide/www/css/jquery.terminal.css
+       contrib/online_ide/www/js/jquery.terminal-0.8.7.js
+Copyright: Copyright (c) 2011-2014 Jakub Jankiewicz <http://jcubic.pl>
+Licence: GNU LGPL Version 3 license
+
+Files: contrib/online_ide/www/js/FileSaver.js
+Copyright: Eli Grey, http://eligrey.com
+Licence: X11/MIT (see https://github.com/eligrey/FileSaver.js/blob/master/LICENSE.md)
+
+Files: contrib/nitin
+Copyright: 2017      Jean Privat <jean@pryen.org>
+License: GNU GPL version 3 or later (see LICENSE-GPL-3)
+Comment: GPLv3 because GNU Readline is licensed under the GPLv3

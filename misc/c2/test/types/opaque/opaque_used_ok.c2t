@@ -1,0 +1,28 @@
+// @recipe bin
+$warnings no-unused
+
+// @file{file1}
+module foo;
+
+public type Foo struct @(opaque) {
+    i32 x;
+}
+
+public fn i32 f4() {
+    return sizeof(Foo);
+}
+
+// @file{file2}
+module bar;
+import foo local;
+
+Foo* v;
+type Bar struct {
+    Foo* f;
+}
+public fn Foo* f1() { return nil; }
+fn void f2(Foo* arg1) {}
+public fn void f3() {
+    Foo* f;
+}
+

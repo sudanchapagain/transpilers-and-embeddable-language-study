@@ -1,0 +1,14 @@
+// @warnings{no-unused}
+module test;
+
+type Enum enum i8 {
+    A,
+}
+
+fn void test2() {
+    i32* a = &enum_min(Enum); // @error{cannot take the address of an rvalue of type 'i8'}
+}
+
+fn void test3() {
+    i32* a = &Enum.min; // @error{cannot take the address of an enum constant}
+}

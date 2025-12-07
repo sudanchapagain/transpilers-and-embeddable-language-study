@@ -1,0 +1,84 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import string_buffer;
+import src_loc local;
+
+public type ArrayDesignatedInitExpr struct @(opaque) {
+    Expr base;
+    Expr* designator;
+    Expr* initValue;
+    // TODO value during analysis
+}
+
+public fn ArrayDesignatedInitExpr* ArrayDesignatedInitExpr.create(ast_context.Context* c,
+                                                                    SrcLoc loc,
+                                                                    Expr* designator,
+                                                                    Expr* initValue)
+{
+    ArrayDesignatedInitExpr* e = c.alloc(sizeof(ArrayDesignatedInitExpr));
+    e.base.init(ExprKind.ArrayDesignatedInit, loc, 0, 0, 0, ValType.RValue);
+    e.designator = designator;
+    e.initValue = initValue;
+#if AstStatistics
+    Stats.addExpr(ExprKind.ArrayDesignatedInit, sizeof(ArrayDesignatedInitExpr));
+#endif
+    return e;
+}
+
+fn Expr* ArrayDesignatedInitExpr.instantiate(ArrayDesignatedInitExpr* e, Instantiator* inst) {
+    return (Expr*)ArrayDesignatedInitExpr.create(inst.c,
+                                                 e.base.base.loc,
+                                                 e.designator.instantiate(inst),
+                                                 e.initValue.instantiate(inst));
+}
+
+public fn Expr* ArrayDesignatedInitExpr.getDesignator(const ArrayDesignatedInitExpr* e) {
+    return e.designator;
+}
+
+public fn Expr** ArrayDesignatedInitExpr.getDesignator2(ArrayDesignatedInitExpr* e) {
+    return &e.designator;
+}
+
+public fn Expr* ArrayDesignatedInitExpr.getInit(const ArrayDesignatedInitExpr* e) {
+    return e.initValue;
+}
+
+public fn Expr** ArrayDesignatedInitExpr.getInit2(ArrayDesignatedInitExpr* e) {
+    return &e.initValue;
+}
+
+fn SrcLoc ArrayDesignatedInitExpr.getEndLoc(const ArrayDesignatedInitExpr* e) {
+    return e.initValue.getEndLoc();
+}
+
+fn void ArrayDesignatedInitExpr.print(const ArrayDesignatedInitExpr* e, string_buffer.Buf* out, u32 indent) {
+    e.base.printKind(out, indent);
+    e.base.printTypeBits(out);
+    out.newline();
+    e.designator.print(out, indent + 1);
+    e.initValue.print(out, indent + 1);
+}
+
+fn void ArrayDesignatedInitExpr.printLiteral(const ArrayDesignatedInitExpr* e, string_buffer.Buf* out) {
+    out.add1('[');
+    e.getDesignator().printLiteral(out);
+    out.add("] = ");
+    e.getInit().printLiteral(out);
+}

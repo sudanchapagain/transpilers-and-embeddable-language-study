@@ -1,0 +1,57 @@
+import time
+import libc
+import runtime
+
+fn main() {
+    libc.time_t timestamp = 1691656611
+    rawptr<libc.tm> ti = libc.gmtime(&timestamp) // switch localtime to gmtime to prevent local timezone issues when running tests
+
+    string tz = ti.__tm_zone.to_string()
+
+    var hour = ti.tm_hour
+    // if tz == 'CST' { // remove this adjustment since we are using gmtime now
+       // hour -= 8
+    //}
+
+    // 51 36 8 10 7 123 4 221 0 0 UTC
+    println(ti.tm_sec, ti.tm_min, hour, ti.tm_mday, ti.tm_mon, ti.tm_year, ti.tm_wday, ti.tm_yday, ti.tm_isdst)
+
+    // 受到时区不同略有不同
+    if tz == 'CST' {
+        println(ti.__tm_gmtoff == 28800)
+    } else if tz == 'UTC' {
+        println(ti.__tm_gmtoff == 0)
+    } else {
+        println('unknown timezone:', tz)
+    }
+
+    var tp = libc.tm {
+        tm_year: 122,
+        tm_mon: 7,
+        tm_mday: 9,
+        tm_hour: 17,
+        tm_min: 30,
+        tm_sec: 52,
+    }
+
+    // UTC 1660066252
+    // CST 1660037452
+    timestamp = libc.timegm(&tp) // Replace mktime with timegm to prevent local timezone issues when running tests
+    if tz == 'CST' {
+        println(timestamp == 1660037452)
+    } else if tz == 'UTC' {
+        println(timestamp == 1660066252)
+    } else {
+        println('unknown timezone:', tz)
+    }
+
+    // format 测试(需要一个 100 空间的 buf)
+    var buf = vec_new<u8>(0, 100)
+    var len = libc.strftime(buf.ref() as libc.cstr, buf.len() as u64, '%Y-%m-%d %H:%M:%S'.to_cstr(), &tp)
+    buf = buf.slice(0, len as i64)
+    println('datetime:', buf as string, '!!!')
+
+    // time 库测试
+    var t = time.now()
+    println(t.timestamp() > 1691665760)
+}

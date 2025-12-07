@@ -1,0 +1,231 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import string_buffer;
+import src_loc local;
+
+public type BuiltinExprKind enum u8 {
+    Sizeof,
+    Elemsof,
+    EnumMin,
+    EnumMax,
+    OffsetOf,
+    ToContainer,
+}
+
+// Keep in sync
+const char*[] builtin_names = {
+    "sizeof",
+    "elemsof",
+    "enum_min",
+    "enum_max",
+    "offsetof",
+    "to_container",
+}
+
+static_assert(elemsof(BuiltinExprKind), elemsof(builtin_names));
+
+type BuiltinExprBits struct {
+    u32 : NumExprBits;
+    u32 kind : 3;       // BuiltinExprKind
+    u32 src_len : 32 - NumExprBits - 3; // length of () expression
+}
+
+type ToContainerData struct {
+    Expr* member;
+    Expr* pointer;
+}
+
+type OffsetOfData struct {
+    Expr* member;       // Identifier / MemberExpr
+}
+
+public type BuiltinExpr struct @(opaque) {
+    Expr base;
+    // TODO use TypeRef (can contain Type or VarDecl ref)
+    Expr* inner;
+    Value value;
+
+    OffsetOfData[0] offset;     // tail-allocated, only for offsetof
+    ToContainerData[0] container;   // tail-allocated, only for to_container
+}
+
+public fn BuiltinExpr* BuiltinExpr.create(ast_context.Context* c, SrcLoc loc, u32 src_len, Expr* inner, BuiltinExprKind kind) {
+    const u32 size = sizeof(BuiltinExpr);
+    BuiltinExpr* e = c.alloc(size);
+    e.base.init(ExprKind.Builtin, loc, true, true, false, ValType.RValue);
+    e.base.base.builtinExprBits.kind = kind;
+    e.base.base.builtinExprBits.src_len = src_len;
+    e.inner = inner;
+    e.value.setUnsigned(0);
+#if AstStatistics
+    Stats.addExpr(ExprKind.Builtin, size);
+#endif
+    return e;
+}
+
+public fn BuiltinExpr* BuiltinExpr.createOffsetOf(ast_context.Context* c, SrcLoc loc, u32 src_len, Expr* typeExpr, Expr* member) {
+    const u32 size = sizeof(BuiltinExpr) + sizeof(OffsetOfData);
+    BuiltinExpr* e = c.alloc(size);
+    e.base.init(ExprKind.Builtin, loc, true, true, false, ValType.RValue);
+    e.base.base.builtinExprBits.kind = BuiltinExprKind.OffsetOf;
+    e.base.base.builtinExprBits.src_len = src_len;
+    e.inner = typeExpr;
+    e.value.setUnsigned(0);
+    e.offset[0].member = member;
+#if AstStatistics
+    Stats.addExpr(ExprKind.Builtin, size);
+#endif
+    return e;
+}
+
+public fn BuiltinExpr* BuiltinExpr.createToContainer(ast_context.Context* c, SrcLoc loc, u32 src_len, Expr* typeExpr, Expr* member, Expr* pointer) {
+    const u32 size = sizeof(BuiltinExpr) + sizeof(ToContainerData);
+    BuiltinExpr* e = c.alloc(size);
+    e.base.init(ExprKind.Builtin, loc, false, false, false, ValType.RValue);
+    e.base.base.builtinExprBits.kind = BuiltinExprKind.ToContainer;
+    e.base.base.builtinExprBits.src_len = src_len;
+    e.inner = typeExpr;
+    e.value.setUnsigned(0);
+    e.container[0].member = member;
+    e.container[0].pointer = pointer;
+#if AstStatistics
+    Stats.addExpr(ExprKind.Builtin, size);
+#endif
+    return e;
+}
+
+fn Expr* BuiltinExpr.instantiate(BuiltinExpr* e, Instantiator* inst) {
+    switch (e.getKind()) {
+    case Sizeof:
+    case Elemsof:
+    case EnumMin:
+    case EnumMax:
+        return (Expr*)BuiltinExpr.create(inst.c, e.base.base.loc, e.base.base.builtinExprBits.src_len,
+                                         e.inner.instantiate(inst), e.getKind());
+    case OffsetOf:
+        return (Expr*)BuiltinExpr.createOffsetOf(inst.c, e.base.base.loc, e.base.base.builtinExprBits.src_len,
+                                                 e.inner.instantiate(inst),
+                                                 e.offset[0].member.instantiate(inst));
+    case ToContainer:
+        return (Expr*)BuiltinExpr.createToContainer(inst.c, e.base.base.loc, e.base.base.builtinExprBits.src_len,
+                                                    e.inner.instantiate(inst),
+                                                    e.container[0].member.instantiate(inst),
+                                                    e.container[0].pointer.instantiate(inst));
+    }
+    return nil;
+}
+
+public fn BuiltinExprKind BuiltinExpr.getKind(const BuiltinExpr* e) {
+    return (BuiltinExprKind)e.base.base.builtinExprBits.kind;
+}
+
+public fn Value BuiltinExpr.getValue(const BuiltinExpr* e) { return e.value; }
+
+public fn void BuiltinExpr.setValue(BuiltinExpr* e, Value value) {
+    e.value = value;
+}
+
+public fn void BuiltinExpr.setUValue(BuiltinExpr* e, u64 val) {
+    e.value.setUnsigned(val);
+}
+
+public fn Expr* BuiltinExpr.getInner(const BuiltinExpr* e) { return e.inner; }
+
+fn SrcLoc BuiltinExpr.getEndLoc(const BuiltinExpr* e) {
+    return e.base.base.loc + e.base.base.builtinExprBits.src_len;
+}
+
+public fn Expr* BuiltinExpr.getOffsetOfMember(const BuiltinExpr* b) {
+    assert(b.getKind() == BuiltinExprKind.OffsetOf);
+    return b.offset[0].member;
+}
+
+public fn Expr* BuiltinExpr.getToContainerMember(const BuiltinExpr* b) {
+    assert(b.getKind() == BuiltinExprKind.ToContainer);
+    return b.container[0].member;
+}
+
+public fn Expr* BuiltinExpr.getToContainerPointer(const BuiltinExpr* b) {
+    assert(b.getKind() == BuiltinExprKind.ToContainer);
+    return b.container[0].pointer;
+}
+
+public fn Expr** BuiltinExpr.getToContainerPointer2(BuiltinExpr* b) {
+    assert(b.getKind() == BuiltinExprKind.ToContainer);
+    return &b.container[0].pointer;
+}
+
+fn void BuiltinExpr.print(const BuiltinExpr* e, string_buffer.Buf* out, u32 indent) {
+    e.base.printKind(out, indent);
+    e.base.printTypeBits(out);
+    out.color(col_Value);
+    out.print(" %s", builtin_names[e.getKind()]);
+    out.color(col_Calc);
+    out.print(" %s", e.value.str());
+    out.newline();
+
+    e.inner.print(out, indent + 1);
+
+    switch (e.getKind()) {
+    case Sizeof:
+        break;
+    case Elemsof:
+        break;
+    case EnumMin:
+        break;
+    case EnumMax:
+        break;
+    case OffsetOf:
+        e.offset[0].member.print(out, indent + 1);
+        break;
+    case ToContainer:
+        e.container[0].member.print(out, indent + 1);
+        e.container[0].pointer.print(out, indent + 1);
+        break;
+    }
+}
+
+fn void BuiltinExpr.printLiteral(const BuiltinExpr* e, string_buffer.Buf* out) {
+    out.add(builtin_names[e.getKind()]);
+    out.lparen();
+    switch (e.getKind()) {
+    case Sizeof:
+        e.inner.printLiteral(out);
+        break;
+    case Elemsof:
+    case EnumMin:
+    case EnumMax:
+        e.inner.printLiteral(out);
+        break;
+    case OffsetOf:
+        e.inner.printLiteral(out);
+        out.add(", ");
+        e.offset[0].member.printLiteral(out);
+        break;
+    case ToContainer:
+        e.inner.printLiteral(out);
+        out.add(", ");
+        e.container[0].member.printLiteral(out);
+        out.add(", ");
+        e.container[0].pointer.printLiteral(out);
+        break;
+    }
+    out.rparen();
+}
+

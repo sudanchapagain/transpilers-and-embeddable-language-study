@@ -1,0 +1,426 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module deps_generator;
+
+import ast local;
+import ast_visitor;
+import deps_generator_utils;
+import component;
+import file_utils;
+import string_buffer;
+import string_list;
+import string_pool;
+
+import string local;
+import stdlib local;
+import stdio local;
+
+type Dir struct {
+    u32 name_idx;
+    u32 indent; // of children
+    string_buffer.Buf* buf;
+
+    Dir* subdirs;
+    u32 count;
+    u32 capacity;
+}
+
+fn void Dir.init(Dir* d, u32 name_idx, u32 indent) {
+    d.name_idx = name_idx;
+    d.indent = indent;
+    d.buf = string_buffer.create(16*1024, false, 2);
+}
+
+fn Dir* Dir.get(Dir* d, u32 name_idx) {
+    // search for subdir, create if it doesn't exist
+    for (u32 i=0; i<d.count; i++) {
+        if (d.subdirs[i].name_idx == name_idx) return &d.subdirs[i];
+    }
+
+    if (d.count == d.capacity) {
+        d.capacity += 2;
+        Dir* subdirs = calloc(d.capacity, sizeof(Dir));
+        if (d.subdirs) {
+            memcpy(subdirs, d.subdirs, d.count * sizeof(Dir));
+            free(d.subdirs);
+        }
+        d.subdirs = subdirs;
+    }
+    //stdio.printf("CREATE %u %u\n", d.indent + 1, name_idx);
+    Dir* subdir = &d.subdirs[d.count];
+    subdir.init(name_idx, d.indent + 1);
+    d.count++;
+
+    return subdir;
+}
+
+fn void Dir.free(Dir* d) {
+    for (u32 i=0; i<d.count; i++) {
+        d.subdirs[i].free();
+    }
+    free(d.subdirs);
+    d.buf.free();
+}
+
+fn void Dir.flatten(const Dir* d, string_buffer.Buf* out, string_pool.Pool* pool) {
+    // flattens subdirs into passed buf
+    for (u32 i=0; i<d.count; i++) {
+        const Dir* subdir = &d.subdirs[i];
+        const char* dirname = pool.idx2str(subdir.name_idx);
+
+        out.indent(d.indent);
+        out.print("<group name='%s' full='dir:%s' collapsed='1'>\n", dirname, dirname);
+
+        out.add2(subdir.buf.data(), subdir.buf.size());
+        subdir.flatten(out, pool);
+
+        out.indent(d.indent);
+        out.add("</group>\n");
+    }
+}
+
+type Generator struct {
+    const char* curfile;
+    bool is_external;  // current component is external
+
+    ast_visitor.Visitor* visitor; // non-basic mode only
+    string_list.List imports; // basic mode only
+
+    Decl** deps;
+    u32 deps_count;
+    u32 deps_capacity;
+
+    Dir root;
+    string_pool.Pool* pool;
+
+    string_buffer.Buf* out; // no owership, points to Buf inside Dir
+    u32 indent;
+
+    // options
+    bool show_dirs;
+    bool basic_mode;
+    bool show_files;
+    bool show_externals;
+}
+
+fn void Generator.on_decl(void* arg, Decl* d, bool global) {
+    Generator* gen = arg;
+
+    switch (d.getKind()) {
+    case Function:
+        FunctionDecl* fd = (FunctionDecl*)d;
+        gen.handleTypeRef(fd.getReturnTypeRef());
+        break;
+    case Import:
+        return;
+    case StructType:
+        StructTypeDecl* s = (StructTypeDecl*)d;
+        u32 num_members = s.getNumMembers();
+        Decl** members = s.getMembers();
+        for (u32 i=0; i<num_members; i++) {
+            Generator.on_decl(arg, members[i], false);
+        }
+        break;
+    case EnumType:
+        EnumTypeDecl* etd = (EnumTypeDecl*)d;
+        EnumConstantDecl** constants = etd.getConstants();
+        for (u32 i=0; i<etd.getNumConstants(); i++) {
+            Decl* ecd = (Decl*)constants[i];
+            // NOTE: we add the symbol here, since we have the EnumDecl here
+            char[64] fullname;
+            sprintf(fullname, "%s.%s", d.getName(), ecd.getName());
+            //gen.refs.add_symbol(fullname, &dest);
+
+            Generator.on_decl(arg, ecd, false);
+        }
+        break;
+    case EnumConstant:
+        break;
+    case FunctionType:
+        break;
+    case AliasType:
+        break;
+    case Variable:
+        VarDecl* v = (VarDecl*)d;
+        gen.handleTypeRef(v.getTypeRef());
+        break;
+    }
+
+    gen.visitor.handle(d);
+}
+
+fn void Generator.handleTypeRef(Generator* gen, const TypeRef* ref) {
+    const Ref* prefix = ref.getPrefix();
+    if (prefix) gen.handleRef(prefix);
+
+    const Ref* user = ref.getUser();
+    if (user) gen.handleRef(user);
+}
+
+fn void Generator.handleRef(Generator* gen, const Ref* ref) {
+    Decl* d = ref.decl;
+
+    if (!d) {
+        fprintf(stderr, "warning: deps: Type Decl not set!\n");
+        return;
+    }
+
+    if (!deps_generator_utils.isGlobal(d)) return;
+    if (d.isEnumConstant()) return;
+    if (!gen.show_externals && d.isExternal()) return;
+
+    gen.deps_add(d);
+}
+
+fn void Generator.on_global_decl(void* arg, Decl* d) {
+    Generator* gen = arg;
+
+    if (!d.isUsed() && gen.is_external) return;
+    if (d.isImport()) return;
+
+    gen.out.indent(gen.indent);
+    gen.out.print("<atom name='%s' full='%s'>\n", deps_generator_utils.getPrefixedName(d), d.getFullName());
+
+    gen.indent++;
+    gen.deps_count = 0;
+    Generator.on_decl(arg, d, true);
+
+    for (u32 i=0; i<gen.deps_count; i++) {
+        Decl* dep = gen.deps[i];
+        gen.out.indent(gen.indent);
+        gen.out.print("<dep dest='%s' str='1'/>\n", dep.getFullName());
+    }
+
+    gen.indent--;
+
+    gen.out.indent(gen.indent);
+    gen.out.add("</atom>\n");
+}
+
+fn void Generator.on_import(void* arg, ImportDecl* d) {
+    Generator* gen = arg;
+    Module* dest = d.getDest();
+    u32 name = dest.getNameIdx();
+    if (gen.imports.contains_idx(name)) return;
+
+    if (!gen.show_externals && dest.isExternal()) return;
+
+    gen.imports.add(name);
+
+    gen.out.indent(gen.indent);
+    gen.out.print("<dep dest='%s' str='1'/>\n", dest.getName());
+}
+
+fn void Generator.on_ast(void* arg, AST* a) {
+    Generator* gen = arg;
+    gen.curfile = a.getFilename();
+
+    if (gen.show_files) {
+        gen.out.indent(gen.indent);
+        gen.out.print("<group name='%s' full='file:%s' collapsed='1'>\n", gen.curfile, gen.curfile);
+        gen.indent++;
+    }
+
+    a.visitDecls(Generator.on_global_decl, arg);
+
+    if (gen.show_files) {
+        gen.indent--;
+        gen.out.indent(gen.indent);
+        gen.out.add("</group>\n");
+    }
+}
+
+fn void Generator.on_module(void* arg, Module* m) {
+    Generator* gen = arg;
+
+    if (gen.is_external && !m.isUsed()) return;
+
+    gen.out = gen.root.buf;
+    gen.indent = gen.root.indent;
+
+    if (!gen.is_external && gen.show_dirs) {
+        // find correct (sub)dir group
+        const char* filename = m.getFirstFilename();
+        const char* cp = filename;
+        Dir* d = &gen.root;
+        const char* start = cp;
+        while (*cp) {
+            if (*cp == '/') {
+                u32 len = (u32)(cp - start);
+                u32 name_idx = gen.pool.add(start, len, true);
+                start = cp+1;
+                d =  d.get(name_idx);
+            }
+            cp++;
+        }
+        gen.out = d.buf;
+        gen.indent = d.indent;
+    }
+
+    gen.out.indent(gen.indent);
+    u32 saved_indent = gen.indent;
+    gen.indent++;
+
+    if (gen.basic_mode) {
+        gen.out.print("<atom name='%s' full='%s'>\n", m.getName(), m.getName());
+        gen.imports.clear();
+        m.visitImports(Generator.on_import, arg);
+
+        gen.indent = saved_indent;
+        gen.out.indent(gen.indent);
+        gen.out.add("</atom>\n");
+    } else {
+        gen.out.print("<group name='%s' full='module:%s' collapsed='1'>\n", m.getName(), m.getName());
+
+        m.visitASTs(Generator.on_ast, arg);
+
+        gen.indent = saved_indent;
+        gen.out.indent(gen.indent);
+        gen.out.add("</group>\n");
+    }
+}
+
+fn void Generator.on_ref(void* arg, const Ref* ref) {
+    Generator* gen = arg;
+    gen.handleRef(ref);
+}
+
+fn void Generator.deps_resize(Generator* gen, u32 capacity) {
+    gen.deps_capacity = capacity;
+
+    Decl** deps = malloc(capacity * sizeof(Decl*));
+    if (gen.deps_count) {
+        memcpy(deps, gen.deps, gen.deps_count * sizeof(Decl*));
+        free(gen.deps);
+    }
+
+    gen.deps = deps;
+}
+
+fn void Generator.deps_add(Generator* gen, Decl* d) {
+    // check if already in list
+    for (u32 i=0; i<gen.deps_count; i++) {
+        if (gen.deps[i] == d) {
+            return;
+        }
+    }
+
+    if (gen.deps_count == gen.deps_capacity) gen.deps_resize(gen.deps_capacity * 2);
+
+    // add
+    gen.deps[gen.deps_count] = d;
+    gen.deps_count++;
+}
+
+#if 0
+fn void Generator.create_basic(Generator* gen, component.Component* c) {
+    const module_list.List* modlist = c.getModules();
+    const Module** mods = modlist.getConst();
+    for (u32 i=0; i<modlist.length(); i++) {
+        const Module* m = mods[i];
+    }
+    /*
+        DIR list:
+            Dir
+              subdir
+                mod1
+                mod2
+              subdir2
+                mod3
+              mod4
+        -> DEPS are only string based, so easy (dont actually need to lookup)
+    */
+    // create list of all modules (u32 -> idx, subdir)
+        // create subdirs structure, sort
+        // have to translate modules
+    // create matrix of deps
+    // write output
+    // step 1: iterate all modules, create Dir structure, count modules
+    // step 2: have list of u32 -> idx
+    // step 2: create matrix with deps
+    //public func void Component.visitModules(const Component* c, module_list.Visitor visitor, void* arg) {
+
+}
+#endif
+
+
+public fn void generate(const char* title, const char* output_dir, component.List* comps, string_pool.Pool* astPool, bool basic_mode) {
+    Generator gen = { nil }
+
+
+    // TODO options to be passed later
+    gen.show_dirs = true;
+    gen.show_files = false;
+    gen.show_externals = false;
+    gen.basic_mode = basic_mode;
+    if (basic_mode) gen.show_files = false;
+
+    if (!basic_mode) {
+        gen.visitor = ast_visitor.create(&gen, Generator.on_ref);
+    }
+    gen.imports.init(astPool);
+    gen.root.init(0, 3);
+    gen.deps_resize(64);
+    gen.pool = string_pool.create(4096, 1024);
+
+    gen.out = gen.root.buf;
+    string_buffer.Buf* out = gen.out;
+
+    out.add("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+    out.print("<dsm name='%s'>\n", title);
+    gen.indent++;
+    out.indent(gen.indent);
+    out.add("<model>\n");
+
+    gen.indent++;
+
+    for (u32 i=0; i<comps.size(); i++) {
+        const component.Component* comp = comps.get(i);
+        gen.is_external = comp.isExternal();
+
+        if (comp.isInternal()) continue;
+        if (gen.is_external && !gen.show_externals) continue;
+
+        out.indent(gen.indent);
+        out.print("<group name='%s' full='component:%s' collapsed='0'>\n", comp.getName(), comp.getName());
+        gen.indent++;
+        comp.visitModules(Generator.on_module, &gen);
+
+        gen.root.flatten(gen.root.buf, gen.pool);
+
+        gen.indent--;
+        out.indent(gen.indent);
+        out.add("</group>\n");
+    }
+
+    gen.indent--;
+
+    out.indent(gen.indent);
+    out.add("</model>\n");
+    gen.indent--;
+    out.add("</dsm>\n");
+
+    file_utils.File file.init(output_dir, "deps.xml");
+    file.write(out.data(), out.size());
+
+    if (gen.visitor) gen.visitor.free();
+
+    free(gen.deps);
+    gen.imports.free();
+    gen.root.free();
+    gen.pool.free();
+}
+

@@ -1,0 +1,57 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ir_tools;
+
+import ir local;
+
+import string_buffer;
+
+import stdio;
+
+// Note: Tools not used
+fn void Tools.generate_graphviz(Tools* t, FunctionInfo* fi) @(unused) {
+    string_buffer.Buf * out = string_buffer.create(16*1024, false, 2);
+
+    out.add("-------------\n");
+    out.add(
+        "dot\n"
+        "digraph G {\n"
+        "node [shape=circle, style=filled]\n"
+        );
+
+    u32 num_blocks = fi.blocks.getCount();
+    for (u32 i=0; i<num_blocks; i++) {
+        out.print("%d[label=\"%d\"];\n", i, i);
+    }
+
+    // Note: could be smarter
+    for (u32 i=0; i<num_blocks; i++) {
+        Block* b = fi.blocks.get(i);
+        for (u32 j=1; j<num_blocks; j++) {
+            if (block_has_dest(b, &fi.cases, j)) {
+                out.print("%d->%d;\n", i, j);
+            }
+        }
+    }
+
+    out.add("}\n");
+    out.add("-------------\n");
+
+    stdio.puts(out.data());
+    out.free();
+}
+
+

@@ -1,0 +1,134 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module build_file;
+
+import string_pool;
+import src_loc local;
+import string_list;
+
+import stdlib;
+import string;
+
+public type Plugin struct {
+    u32 name;    //  index into pool
+    u32 options; // index into pool
+    SrcLoc loc; // TODO FILL (is in yaml parser)
+}
+
+public type Info struct {
+    string_pool.Pool* pool; // no ownership
+    const char* filename;   // no ownership
+
+    // all indexes into pool
+    u32 target;
+    u32 output_dir;
+    u32 cc;
+    u32 cflags;
+    u32 ldflags;    // before other flags
+    u32 ldflags2;   // after other flags
+    u32 asmflags;
+    u32 linkerscript;
+
+    string_list.List lib_dirs;
+    string_list.List plugin_dirs;
+
+    Plugin* plugins; // can be nil
+    u32 plugin_count;
+    u32 plugin_max;
+}
+
+public fn void Info.addPlugin(Info* info, const char* name, const char* options, SrcLoc loc) {
+    if (info.plugin_count == info.plugin_max) {
+        info.plugin_max += 2;
+        Plugin* plugins2 = stdlib.malloc(info.plugin_max * sizeof(Plugin));
+        if (info.plugins) {
+            string.memcpy(plugins2, info.plugins, info.plugin_count * sizeof(Plugin));
+            stdlib.free(info.plugins);
+        }
+        info.plugins = plugins2;
+    }
+
+    Plugin* p = &info.plugins[info.plugin_count];
+    info.plugin_count++;
+    p.name = info.pool.addStr(name, false);
+    p.options = info.pool.addStr(options, false);
+    p.loc = loc;
+}
+
+public fn const char* Info.getTarget(const Info* info) {
+    if (info.target) return info.pool.idx2str(info.target);
+    return nil;
+}
+
+public fn const char* Info.getOutputDir(const Info* info) {
+    if (info.output_dir) return info.pool.idx2str(info.output_dir);
+    return nil;
+}
+
+public fn const char* Info.getCC(const Info* info) {
+    if (info.cc) return info.pool.idx2str(info.cc);
+    return nil;
+}
+
+public fn const char* Info.getCFlags(const Info* info) {
+    if (info.cflags) return info.pool.idx2str(info.cflags);
+    return nil;
+}
+
+public fn const char* Info.getLinkerFlags(const Info* info) {
+    if (info.ldflags) return info.pool.idx2str(info.ldflags);
+    return nil;
+}
+
+public fn const char* Info.getLdFlags2(const Info* info) {
+    if (info.ldflags2) return info.pool.idx2str(info.ldflags2);
+    return nil;
+}
+
+public fn const char* Info.getAsmFlags(const Info* info) {
+    if (info.asmflags) return info.pool.idx2str(info.asmflags);
+    return nil;
+}
+
+/*
+public fn const char* Info.getLinkerScript(const Info* info) {
+    if (info.linkerscript) return info.pool.idx2str(info.linkerscript);
+    return nil;
+}
+*/
+
+public fn const string_list.List* Info.getLibDirs(const Info* info) {
+    return &info.lib_dirs;
+}
+
+public fn const string_list.List* Info.getPluginDirs(const Info* info) {
+    return &info.plugin_dirs;
+}
+
+public fn const Plugin* Info.getPlugin(const Info* info, u32 idx) {
+    return &info.plugins[idx];
+}
+
+public fn u32 Info.getNumPlugins(const Info* info) {
+    return info.plugin_count;
+}
+
+public fn void Info.free(Info* info) {
+    info.lib_dirs.free();
+    info.plugin_dirs.free();
+    stdlib.free(info);
+}
+

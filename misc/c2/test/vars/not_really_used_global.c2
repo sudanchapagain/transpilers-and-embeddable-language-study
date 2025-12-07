@@ -1,0 +1,10 @@
+// @warnings{no-unused-function}
+module test;
+
+i32 a;  // @warning{unused variable 'test.a'}
+
+fn void test1() {
+    a = 10;
+}
+
+

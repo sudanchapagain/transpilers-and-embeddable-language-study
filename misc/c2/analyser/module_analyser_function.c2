@@ -1,0 +1,313 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module module_analyser;
+
+import ast local;
+import label_vector local;
+import scope;
+
+// Note: only analyses prototype + args, not the function body
+fn void Analyser.analyseFunction(Analyser* ma, FunctionDecl* fd) {
+    if (fd.isTemplate()) {
+        // do analyze template name (eg X) for name clash
+        ma.scope.checkGlobalSymbol(fd.getTemplateNameIdx(), fd.getTemplateLoc());
+
+        // check rtype for array-type
+        TypeRef* rtype = fd.getReturnTypeRef();
+        if (rtype.isArray()) {
+            ma.error(rtype.getLoc(), "functions are not allowed to return array types");
+        }
+
+        // check params for array-type
+        u32 num_params = fd.getNumParams();
+        VarDecl** params = fd.getParams();
+        for (u32 i=0; i<num_params; i++) {
+            VarDecl* v = params[i];
+            TypeRef* ref = v.getTypeRef();
+            if (ref.isArray()) {
+                ma.error(ref.getLoc(), "array types are not allowed here");
+            }
+        }
+        return;  // only analyse on instantiation
+    }
+
+    // return type
+    TypeRef* rtype = fd.getReturnTypeRef();
+    QualType qt = ma.analyseTypeRef(rtype);
+    if (qt.isInvalid()) return;
+
+    QualType canon = qt.getCanonicalType();
+    if (canon.isArray()) {
+        ma.error(rtype.getLoc(), "functions are not allowed to return array types");
+    }
+
+    if (canon.isConst() && !canon.isPointer()) {
+        ma.warn(rtype.getLoc(), "'const' type qualifier on return type has no effect");
+    }
+
+    bool is_public = fd.asDecl().isPublic();
+    if (is_public) setTypePublicUsed(qt);
+
+    fd.setRType(qt);
+
+    // analyse params
+    u32 num_params = fd.getNumParams();
+    VarDecl** params = fd.getParams();
+    u32 auto_arg_count = 0;
+    u32 first_auto_arg = 0;
+    for (u32 i=0; i<num_params; i++) {
+        VarDecl* vd = params[i];
+        TypeRef* ref = vd.getTypeRef();
+
+        QualType res = ma.analyseTypeRef(ref);
+        if (res.isInvalid()) continue;
+
+        canon = res.getCanonicalType();
+        if (canon.isArray()) {
+            ma.error(ref.getLoc(), "array types are not allowed here");
+            continue;
+        }
+
+        if (canon.isVoid()) {
+            ma.error(ref.getLoc(), "parameter has invalid type 'void'");
+            continue;
+        }
+
+        if (is_public) setTypePublicUsed(res);
+
+        if (vd.hasInit()) {
+            if (vd.hasAutoAttr()) {
+                ma.error(vd.getAssignLoc(), "automatic argument cannot have default value");
+            }
+            if (vd.hasPrintfFormat()) {
+                ma.error(vd.getAssignLoc(), "printf_format parameter cannot have default value");
+            }
+            Expr** initExpr = vd.getInit2();
+            ma.analyseInitExpr(initExpr, res, vd.getAssignLoc(), false, true);
+        }
+
+        if (vd.hasAutoAttr()) {
+            if (auto_arg_count == 0) first_auto_arg = i;
+            auto_arg_count++;
+            if (auto_arg_count > 3) {
+                ma.error(ref.getLoc(), "too many automatic arguments");
+            }
+            // check type
+            if (vd.hasAttrAutoFile() && !ref.isConstCharPtr()) { // check for 'const char *'
+                ma.error(ref.getLoc(), "attribute 'auto_file' requires a parameter of type 'const char*'");
+            }
+            if (vd.hasAttrAutoLine() && !ref.isU32()) {  // check for 'u32'
+                ma.error(ref.getLoc(), "attribute 'auto_line' requires a parameter of type 'u32'");
+            }
+            if (vd.hasAttrAutoFunc() && !ref.isConstCharPtr()) { // check for 'const char *'
+                ma.error(ref.getLoc(), "attribute 'auto_func' requires a parameter of type 'const char*'");
+            }
+        }
+
+        if (vd.hasPrintfFormat()) {
+            ma.checkPrintfFormat(vd, res, i, fd);
+            fd.setAttrPrintf((u8)i + 1); // change to 1-based
+        }
+
+        // Note: we dont check the arg name for clash here, but when checking body
+        Decl* d = (Decl*)vd;
+        d.setType(res);
+        d.setChecked();
+    }
+
+    bool is_typefn = false;
+    if (num_params && fd.hasPrefix()) {
+        // check if SF if first arg is (const) Struct* or (const) Struct
+        // Note: use TypeRef, since it's faster to check
+        const Ref* prefix = fd.getPrefix();
+        const Decl* pd = prefix.decl;
+        assert(pd);
+        QualType prefixType = pd.getType();
+
+        TypeRef* ref = params[0].getTypeRef();
+        const Ref* param_ref = ref.getUser();
+        // Note: for enum types it can be the Type or a pointer to that type
+        bool is_non_static = ((param_ref && param_ref.decl == prefix.decl) || ref.isPointerTo(prefixType.getIndex()));
+        if (is_non_static) {
+            fd.setCallKind(CallKind.TypeFunc);
+            is_typefn = true;
+        }
+    }
+
+    if (auto_arg_count) {
+        fd.setNumAutoArgs(auto_arg_count);
+
+        // check that auto-args are first, but after Self ptr for type-functions
+        bool seen_normal_arg = false;
+        u32 start = 0;
+        if (is_typefn)
+            start = 1;
+        for (u32 i=start; i<num_params; i++) {
+            VarDecl* v = params[i];
+            if (v.hasAutoAttr()) {
+                if (seen_normal_arg) {
+                    ma.error(v.asDecl().getLoc(), "auto-arguments must come before normal arguments");
+                }
+            } else {
+                seen_normal_arg = true;
+            }
+        }
+    }
+
+    // Note: weak functions are allowed to have a body, since there can be multiple-weak definitions without error
+    // Note: the function body is analysed later
+
+    if (fd.hasAttrConstructor() || fd.hasAttrDestructor()) {
+        // must be void ()
+        if (!rtype.isVoid()) {
+            ma.error(rtype.getLoc(), "functions marked with '%s' cannot return a value",
+                fd.hasAttrConstructor() ? "constructor" : "destructor");
+        }
+        if (num_params || fd.isVariadic()) {
+            ma.error(rtype.getLoc(), "functions marked with '%s' cannot have arguments",
+                fd.hasAttrConstructor() ? "constructor" : "destructor");
+        }
+    }
+    if (fd.hasAttrPure()) {
+        if (num_params == 0) {
+            ma.error(fd.asDecl().getLoc(), "pure functions must have arguments");
+            return;
+        }
+        if (fd.isVariadic()) {
+            ma.error(fd.asDecl().getLoc(), "pure functions cannot be variadic");
+            return;
+        }
+        if (rtype.isVoid()) {
+            ma.error(rtype.getLoc(), "pure functions must return a value");
+            return;
+        }
+        if (auto_arg_count) {
+            VarDecl* v = params[first_auto_arg];
+            ma.error(v.asDecl().getLoc(), "pure functions cannot have auto-arguments");
+            return;
+        }
+    }
+
+    Decl* d = (Decl*)fd;
+    //printf("FUNC %s  cname %d  foreign %d  type_func %d\n", d.getName(), d.hasCName(), ma.mod.isForeign(), fd.isTypeFunc());
+    if (d.hasCName()) {
+        if (!ma.mod.isForeign()) {
+            ma.error(d.getLoc(), "the cname attribute is only allowed for foreign functions");
+            return;
+        }
+        if (fd.hasBody()) { // inline function
+            ma.error(d.getLoc(), "inline functions cannot have a cname attribute");
+            return;
+        }
+    } else {
+        // (static) type function, require cname for foreign functions
+        if (ma.mod.isForeign() && !fd.hasBody() && fd.isTypeFunc()) {
+            ma.error(d.getLoc(), "type functions for foreign functions require a cname attribute");
+            return;
+        }
+    }
+}
+
+fn void Analyser.analyseFunctionBody(Analyser* ma, FunctionDecl* fd, scope.Scope* s) {
+    if (fd.isTemplate()) return;  // only analyse on instantiation
+
+    CompoundStmt* body = fd.getBody();
+    if (!body) return;
+
+    Decl* d = (Decl*)fd;
+    ma.pushCheck(d, s, fd);
+    ma.checkStack[0].usedPublic = false;
+
+    ma.usedPublic = fd.isInline();
+
+    ma.scope.reset();
+    ma.scope.enter(scope.Function | scope.Decl);
+    u32 num_params = fd.getNumParams();
+    VarDecl** params = fd.getParams();
+    for (u32 i=0; i<num_params; i++) {
+        Decl* p = (Decl*)params[i];
+        if (p.getNameIdx()) {
+            bool error = ma.scope.add(p);
+            if (error) return;   // no need to set ma.has_error. NOTE: pushCheck remains!
+        }
+    }
+
+    ma.has_error = false;
+    ma.labels.reset();
+
+    FlowBits flow = ma.analyseCompoundStmt(body);
+
+    // check for return stmt if function returns a value
+    QualType rtype = fd.getRType();
+    if (!rtype.isVoid()) {
+        if (flow & FlowNext) {
+            // error loc is closing brace of the function body
+            ma.error(body.getEndLoc() - 1, "control reaches end of non-void function");
+        }
+    }
+
+    if (!ma.warnings.no_unused_parameter && !fd.hasAttrUnusedParams()) {
+        for (u32 i=0; i<num_params; i++) {
+            Decl* p = (Decl*)params[i];
+            if (!p.isUsed() && p.getNameIdx()) {
+                // TODO check attribute?
+                ma.warn(p.getLoc(), "unused parameter '%s'", p.getName());
+            }
+        }
+    }
+
+    ma.scope.exit(ma.has_error);
+
+    u32 num_labels = ma.labels.getCount();
+    const Label* labels = ma.labels.getLabels();
+    for (u32 i=0; i<num_labels; i++) {
+        const Label* l = &labels[i];
+        if (l.is_label) {
+            if (!l.used && !ma.warnings.no_unused_label) {
+                ma.warn(l.loc, "unused label '%s'", ast.idx2name(l.name_idx));
+            }
+        } else {
+            ma.error(l.loc, "use of undeclared label '%s'", ast.idx2name(l.name_idx));
+        }
+    }
+
+    ma.popCheck();
+}
+
+
+fn void Analyser.checkPrintfFormat(Analyser* ma, VarDecl* v, QualType qt, u32 idx, FunctionDecl* fd) {
+    Decl* d = (Decl*)v;
+    if (!qt.isCharPointer()) {
+        ma.error(d.getLoc(), "printf_format parameter must have type 'const char*'");
+        return;
+    }
+    if (v.hasAutoAttr()) {
+        ma.error(d.getLoc(), "printf_format parameter cannot be an auto-argument");
+        return;
+    }
+
+    if (!fd.isVariadic()) {
+        ma.error(d.getLoc(), "printf_format functions must have a variable number of arguments");
+        return;
+    }
+
+    u32 num_params = fd.getNumParams();
+    if (idx != num_params - 1) {
+        ma.error(d.getLoc(), "printf_format parameter must be the last parameter");
+        return;
+    }
+}
+

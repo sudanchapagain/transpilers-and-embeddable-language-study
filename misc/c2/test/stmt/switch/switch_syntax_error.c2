@@ -1,0 +1,11 @@
+// @warnings{no-unused}
+module test;
+
+public fn void test1(i32 num) {
+    switch (num) {
+    printf("test\n");   // @error{expected 'case' or 'default' keyword}
+    case 10:
+        break;
+    }
+}
+

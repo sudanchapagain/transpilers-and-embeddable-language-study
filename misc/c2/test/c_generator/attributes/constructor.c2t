@@ -1,0 +1,43 @@
+// @recipe bin
+    $warnings no-unused
+    $backend c
+
+// @file{file1}
+module file1;
+
+fn void init() @(constructor) { }
+
+fn void fini() @(destructor) { }
+
+fn void both() @(constructor, destructor) { }
+
+public fn i32 main() {
+    return 0;
+}
+
+// @expect{atleast, cgen/build.c}
+
+__attribute__((constructor))
+static void file1_init(void);
+
+__attribute__((destructor))
+static void file1_fini(void);
+
+__attribute__((constructor)) __attribute__((destructor))
+static void file1_both(void);
+
+__attribute__((constructor))
+static void file1_init(void)
+{
+}
+
+__attribute__((destructor))
+static void file1_fini(void)
+{
+}
+
+__attribute__((constructor)) __attribute__((destructor))
+static void file1_both(void)
+{
+}
+

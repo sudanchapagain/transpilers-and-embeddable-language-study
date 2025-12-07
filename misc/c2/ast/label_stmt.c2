@@ -1,0 +1,86 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import string_buffer;
+import src_loc local;
+
+type LabelStmtBits struct {
+    u32 : NumStmtBits;
+    u32 is_used : 1;
+}
+
+public type LabelStmt struct @(opaque) {
+    Stmt base;
+    u32 name;
+    // 4 bytes padding
+    Stmt *stmt;
+}
+
+public fn LabelStmt* LabelStmt.create(ast_context.Context* c, u32 name, SrcLoc loc, Stmt *stmt) {
+    LabelStmt* s = c.alloc(sizeof(LabelStmt));
+    s.base.init(StmtKind.Label, loc);
+    s.name = name;
+    s.stmt = stmt;
+#if AstStatistics
+    Stats.addStmt(StmtKind.Label, sizeof(LabelStmt));
+#endif
+    return s;
+}
+
+fn Stmt* LabelStmt.instantiate(LabelStmt* s, Instantiator* inst) {
+    if (!s.stmt) return (Stmt*)s;
+
+    return (Stmt*)LabelStmt.create(inst.c, s.name, s.base.loc, s.stmt.instantiate(inst));
+}
+
+public fn void LabelStmt.setUsed(LabelStmt* s) {
+    s.base.labelStmtBits.is_used = true;
+}
+
+public fn bool LabelStmt.isUsed(const LabelStmt* s) {
+    return s.base.labelStmtBits.is_used;
+}
+
+public fn const char* LabelStmt.getName(const LabelStmt* s) {
+    return idx2name(s.name);
+}
+
+public fn u32 LabelStmt.getNameIdx(const LabelStmt* s) {
+    return s.name;
+}
+
+public fn Stmt* LabelStmt.getStmt(const LabelStmt* s) {
+    return s.stmt;
+}
+
+fn void LabelStmt.print(const LabelStmt* s, string_buffer.Buf* out, u32 indent) {
+    s.base.printKind(out, indent);
+    out.color(col_Value);
+    out.space();
+    out.add(idx2name(s.name));
+    if (!s.isUsed()) {
+        out.space();
+        out.color(col_Attr);
+        out.add("unused");
+    }
+
+    out.newline();
+    if (s.stmt)
+        s.stmt.print(out, indent+1);
+}
+

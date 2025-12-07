@@ -1,0 +1,487 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module module_analyser;
+
+import ast local;
+import ctv_analyser;
+import label_vector local;
+import scope;
+
+type Flow enum u8 {
+    Next,
+    Return,
+    Break,
+    Continue,
+    Goto,
+    NoReturn,
+    Error,
+}
+
+type FlowBits u32;
+
+const FlowBits FlowNext      = 1 << Flow.Next;
+const FlowBits FlowReturn    = 1 << Flow.Return;
+const FlowBits FlowBreak     = 1 << Flow.Break;
+const FlowBits FlowContinue  = 1 << Flow.Continue;
+const FlowBits FlowGoto      = 1 << Flow.Goto;
+const FlowBits FlowNoReturn  = 1 << Flow.NoReturn;
+const FlowBits FlowError     = 1 << Flow.Error;
+
+fn Expr* getCondExpr(const Stmt* cond) {
+    if (cond) {
+        if (cond.isExpr()) return (Expr*)cond;
+        if (cond.isDecl()) return ((DeclStmt*)(cond)).getDecl(0).getInit();
+    }
+    return nil;
+}
+
+fn bool Analyser.isNoReturn(Analyser* ma, Expr* e) {
+    if (!e.isCall()) return false;
+    // get from CallExpr -> FunctionDecl
+    const CallExpr* c = (CallExpr*)e;
+    e = c.getFunc();
+    QualType qt = e.getType();
+    const FunctionType* ft = qt.getFunctionTypeOrNil();
+    if (!ft) return false;
+    const FunctionDecl* fd = ft.getDecl();
+    return fd.hasAttrNoReturn();
+}
+
+fn FlowBits Analyser.analyseStmt(Analyser* ma, Stmt* s, bool checkEffect) {
+    FlowBits flow = 0;
+    if (ma.scope.isUnreachable()) {
+        if (s.getKind() != StmtKind.Label && !ma.warnings.no_unreachable_code) {
+            ma.warn(s.getLoc(), "unreachable code");
+        }
+        ma.scope.setReachable();  // prevent multiple warnings
+    }
+    switch (s.getKind()) {
+    case Return:
+        ma.analyseReturnStmt(s);
+        ma.scope.setUnreachable();
+        return FlowReturn;
+    case Expr:
+        // TODO need a different set, since this one uses the Stack of Globals
+        ma.analyseExpr((Expr**)&s, false, 0);
+        Expr* e = (Expr*)s;
+        if (checkEffect && !e.hasEffect()) ma.errorRange(e.getLoc(), e.getRange(), "expression without effect");
+        if (!ma.has_error && ma.isNoReturn(e)) return FlowNoReturn;
+        return FlowNext;
+    case If:
+        flow = ma.analyseIfStmt(s);
+        break;
+    case While:
+        flow = ma.analyseWhileStmt(s);
+        break;
+    case For:
+        flow = ma.analyseForStmt(s);
+        break;
+    case Switch:
+        flow = ma.analyseSwitchStmt(s);
+        break;
+    case Break:
+        ma.analyseBreakStmt(s);
+        ma.scope.setUnreachable();
+        return FlowBreak;
+    case Continue:
+        ma.analyseContinueStmt(s);
+        ma.scope.setUnreachable();
+        return FlowContinue;
+    case Fallthrough:
+        ma.analyseFallthroughStmt(s);
+        return FlowNext;
+    case Label:
+        flow = ma.analyseLabelStmt(s);
+        break;
+    case Goto:
+        ma.analyseGotoStmt(s);
+        ma.scope.setUnreachable();
+        return FlowGoto;
+    case Compound:
+        ma.scope.enter(scope.Decl);
+        flow = ma.analyseCompoundStmt((CompoundStmt*)s);
+        ma.scope.exit(ma.has_error);
+        break;
+    case Decl:
+        ma.analyseDeclStmt(s);
+        return FlowNext;
+    case Asm:
+        ma.analyseAsmStmt(s);
+        return FlowNext;
+    case Assert:
+        ma.analyseAssertStmt(s);
+        return FlowNext;
+    }
+    if (!(flow & FlowNext)) ma.scope.setUnreachable();
+    return flow;
+}
+
+fn void Analyser.analyseBreakStmt(Analyser* ma, Stmt* s) {
+    if (!ma.scope.allowBreak()) {
+        ma.error(s.getLoc(), "'break' statement not in loop or switch statement");
+    }
+}
+
+fn void Analyser.analyseContinueStmt(Analyser* ma, Stmt* s) {
+    if (!ma.scope.allowContinue()) {
+        ma.error(s.getLoc(), "'continue' statement not in loop statement");
+    }
+}
+
+fn void Analyser.analyseFallthroughStmt(Analyser* ma, Stmt* s) {
+    // fallthrough are only allowed as case statements handled in `ma.analyseCase`
+    ma.error(s.getLoc(), "'fallthrough' statement cannot be used here");
+}
+
+fn FlowBits Analyser.analyseLabelStmt(Analyser* ma, Stmt* s) {
+    LabelStmt* ls = (LabelStmt*)s;
+    u32 name = ls.getNameIdx();
+
+    Label* label = ma.labels.find(name);
+    if (label) {
+        if (label.is_label) {
+            ma.error(s.getLoc(), "redefinition of label '%s'", ls.getName());
+            ma.note(label.loc, "previous definition is here");
+        } else {
+            label.is_label = true;
+            label.stmt = ls;
+            ls.setUsed();
+        }
+    } else {
+        Label lab = { .name_idx = name, .loc = s.getLoc(), .is_label = true, .used = false, .stmt = ls }
+        ma.labels.add(lab);
+    }
+
+    Stmt* lss = ls.getStmt();
+    if (!lss) return FlowNext;
+    return ma.analyseStmt(lss, true);
+}
+
+fn void Analyser.analyseGotoStmt(Analyser* ma, Stmt* s) {
+    GotoStmt* gs = (GotoStmt*)s;
+    u32 name = gs.getNameIdx();
+
+    Label* label = ma.labels.find(name);
+    if (label) {
+        label.used = true;
+        if (label.stmt) label.stmt.setUsed();
+    } else {
+        Label lab = { .name_idx = name, .loc = s.getLoc(), .is_label = false, .used = true, .stmt = nil }
+        ma.labels.add(lab);
+    }
+}
+
+fn FlowBits Analyser.analyseCompoundStmt(Analyser* ma, CompoundStmt* c) {
+    FlowBits flow = 0;
+    FlowBits flow2 = FlowNext;
+    u32 count = c.getCount();
+    Stmt** stmts = c.getStmts();
+    for (u32 i=0; i<count; i++) {
+        Stmt* s = stmts[i];
+        flow2 = ma.analyseStmt(s, true);
+        flow |= flow2 & (FlowReturn | FlowBreak | FlowContinue | FlowGoto | FlowNoReturn | FlowError);
+        if (ma.has_error) return flow;
+    }
+    return flow | flow2; // return FlowNext if last statement has FlowNext or empty block
+}
+
+fn QualType Analyser.analyseCondition(Analyser* ma, Stmt** s_ptr, bool check_assign) {
+    Stmt* s = *s_ptr;
+    if (s.isDecl()) {
+        QualType qt = ma.analyseDeclStmt(s);
+        if (qt.isValid()) {
+            DeclStmt* ds = (DeclStmt*)s;
+            VarDecl* vd = ds.getDecl(0);
+            if (!vd.getInit()) {
+                ma.error(vd.asDecl().getLoc(), "variable declaration in condition must have an initializer");
+                return QualType_Invalid;
+            }
+        }
+        return qt;
+    }
+
+    assert(s.isExpr());
+    QualType qt = ma.analyseExpr((Expr**)s_ptr, true, RHS);
+    Expr* e = (Expr*)*s_ptr;
+    if (qt.isValid()) ma.checker.check(builtins[BuiltinKind.Bool], qt, (Expr**)s_ptr, e.getLoc());
+    e = (Expr*)*s_ptr;    // re-read in case of ImplicitCast insertions
+
+    if (check_assign && e.isAssignment()) {
+        ma.warn(e.getLoc(), "using the result of an assignment as a condition without parentheses");
+    }
+
+    return qt;
+}
+
+fn FlowBits Analyser.analyseIfStmt(Analyser* ma, Stmt* s) {
+    FlowBits flow = FlowNext;
+    IfStmt* i = (IfStmt*)s;
+    ma.scope.enter(scope.Decl);
+
+    ma.analyseCondition(i.getCond2(), true);
+    if (ma.has_error) goto done;
+    // TODO: handle constant conditions
+
+    ma.scope.enter(scope.Decl);
+    flow = ma.analyseStmt(i.getThen(), true);
+    ma.scope.exit(ma.has_error);
+
+    FlowBits flow2 = FlowNext;
+    Stmt* else_ = i.getElse();
+    if (else_) {
+        ma.scope.enter(scope.Decl);
+        flow2 = ma.analyseStmt(else_, true);
+        ma.scope.exit(ma.has_error);
+    }
+    flow |= flow2;
+done:
+    ma.scope.exit(ma.has_error);
+    return flow;
+}
+
+fn FlowBits Analyser.analyseForStmt(Analyser* ma, Stmt* s) {
+    FlowBits flow = FlowNext;
+    ForStmt* f = (ForStmt*)s;
+
+    ma.scope.enter(scope.Break | scope.Continue | scope.Decl | scope.Control);
+    Stmt** init = f.getInit2();
+    if (init) {
+        QualType ct = ma.analyseCondition(init, false);
+        if (ct.isInvalid()) goto done;
+    }
+
+    Expr** cond = f.getCond2();
+    if (cond) {
+        QualType qt = ma.analyseExpr(cond, true, RHS);
+        if (qt.isInvalid()) goto done;
+        ma.checker.check(builtins[BuiltinKind.Bool], qt, cond, (*cond).getLoc());
+        if ((*cond).isCtv()) {
+            Value v = ctv_analyser.get_value((*cond));
+            if (v.isZero()) {
+                // TODO: body is never reached
+            } else {
+                flow = 0;
+            }
+        }
+    } else {
+        flow = 0;
+    }
+
+    Expr** cont = f.getCont2();
+    if (cont) {
+        QualType qt = ma.analyseExpr(cont, true, RHS);
+        if (qt.isInvalid()) goto done;
+    }
+
+    FlowBits flow2 = ma.analyseStmt(f.getBody(), true);
+    flow |= flow2 & (FlowReturn | FlowGoto | FlowNoReturn | FlowError);
+    if (flow2 & FlowBreak) flow |= FlowNext;
+done:
+    ma.scope.exit(ma.has_error);
+    return flow;
+}
+
+fn FlowBits Analyser.analyseWhileStmt(Analyser* ma, Stmt* s) {
+    FlowBits flow = FlowNext;
+    WhileStmt* w = (WhileStmt*)s;
+
+    ma.scope.enter(scope.Decl);
+    ma.analyseCondition(w.getCond2(), true);
+    if (ma.has_error) goto done;
+
+    Expr* cond = getCondExpr(w.getCond());
+    if (cond.isCtv()) {
+        Value v = ctv_analyser.get_value(cond);
+        if (v.isZero()) {
+            // TODO: body is never reached
+        } else {
+            flow = 0;
+        }
+    }
+
+    ma.scope.enter(scope.Break | scope.Continue | scope.Decl | scope.Control);
+    FlowBits flow2 = ma.analyseStmt(w.getBody(), true);
+    ma.scope.exit(ma.has_error);
+    flow |= flow2 & (FlowReturn | FlowGoto | FlowNoReturn | FlowError);
+    if (flow2 & FlowBreak) flow |= FlowNext;
+done:
+    ma.scope.exit(ma.has_error);
+    return flow;
+}
+
+fn QualType Analyser.analyseDeclStmt(Analyser* ma, Stmt* s) {
+    QualType qt = QualType_Invalid;
+    DeclStmt* ds = (DeclStmt*)s;
+    u32 count = ds.getDeclCount();
+    bool has_init = false;
+    bool init_err = false;
+    for (u32 i = 0; i < count; i++) {
+        VarDecl* vd = ds.getDecl(i);
+        qt = ma.analyseDecl(vd);
+        if (i == 0) {
+            has_init = vd.hasInit();
+        } else {
+            if (has_init != vd.hasInit()) init_err = true;
+        }
+        has_init |= vd.hasInit();
+    }
+
+    if (init_err) {
+        ma.error(s.getLoc(), "either all declarations must be initialized or none");
+    }
+
+    return qt;
+}
+
+fn QualType Analyser.analyseDecl(Analyser* ma, VarDecl* vd) {
+    Decl* d = (Decl*)vd;
+
+    // Note: d.getType() is 0 here! (use refType)
+    TypeRef* ref = vd.getTypeRef();
+
+    if (ref.isIncrArray()) {
+        ma.error(ref.getLoc(), "incremental arrays not allowed in function scope");
+        return QualType_Invalid;
+    }
+
+    QualType res = ma.analyseTypeRef(ref);
+    if (res.isInvalid()) return QualType_Invalid;
+    d.setType(res);
+
+    if (res.isVoid()) {
+        ma.error(ref.getLoc(), "variable has invalid type 'void'");
+        return QualType_Invalid;
+    }
+
+    if (!d.getAST().isInterface())
+        ma.checkName(d, false);
+
+    Expr** initExpr = vd.getInit2();
+    bool has_init_call = vd.hasInitCall();
+    if (!has_init_call && initExpr) {
+        ma.analyseInitExpr(initExpr, res, vd.getAssignLoc(), false, false);
+        if (vd.hasLocalQualifier()) {
+            Expr* e = vd.getInit();
+            if (!e.isCtc()) {
+                ma.errorRange(e.getLoc(), e.getRange(), "initializer element is not a compile-time constant");
+                return QualType_Invalid;
+            }
+        }
+    } else {
+        if (res.isConstant()) {
+            ma.error(d.getLoc(), "constant variable '%s' must be initialized", d.getName());
+            return QualType_Invalid;
+        }
+        const ArrayType* at = res.getArrayTypeOrNil();
+        if (at) {
+            if (at.hasSize()) {
+                if (at.getSize() == 0) {
+                    ma.error(ref.getLoc(), "only struct members may have array size zero");
+                    return QualType_Invalid;
+                }
+            } else {
+                ma.error(d.getLoc(), "array-type variable '%s' needs an explicit size or an initializer", d.getName());
+                return QualType_Invalid;
+            }
+        }
+    }
+
+    d.setChecked();
+    ma.has_error = ma.has_error | ma.scope.add(d);
+    if (has_init_call) {
+        Expr* e = *initExpr;
+        ma.analyseExpr(&e, false, 0);
+    }
+    return res;
+}
+
+fn void Analyser.analyseAsmStmt(Analyser* ma, Stmt* s) {
+    AsmStmt* a = (AsmStmt*)s;
+
+    u32 num_exprs = a.getNumExprs();
+    Expr** exprs = a.getExprs();
+    u32 num_outputs = a.getNumOutputs();
+
+    for (u32 i=0; i<num_exprs; i++) {
+        bool need_rvalue;
+        u32 side;
+        if (i<num_outputs) { // expr is output
+            need_rvalue = false;
+            side = LHS;
+        } else {
+            need_rvalue = true;
+            side = RHS;
+        }
+        QualType qt = ma.analyseExpr(&exprs[i], need_rvalue, side);
+        if (qt.isInvalid()) return;
+    }
+}
+
+fn void Analyser.analyseAssertStmt(Analyser* ma, Stmt* s) {
+    AssertStmt* a = (AssertStmt*)s;
+    QualType qt = ma.analyseExpr(a.getInner2(), true, RHS);
+    if (qt.isInvalid()) return;
+
+    Expr* inner = a.getInner();
+    ma.checker.check(builtins[BuiltinKind.Bool], qt, a.getInner2(), inner.getLoc());
+}
+
+fn void Analyser.analyseReturnStmt(Analyser* ma, Stmt* s) {
+    ReturnStmt* r = (ReturnStmt*)s;
+
+    Expr** arg = r.getValue2();
+
+    if (ma.curFunction.hasReturn()) {
+        if (!arg) {
+            //Expr* e = r.getValue();
+            // +6 is skip 'return', to end up at ;
+            ma.error(s.getLoc()+6, "non-void function %s should return a value", ma.curFunction.asDecl().getName());
+            return;
+        }
+    } else {
+        if (arg) {
+            Expr* e = r.getValue();
+            ma.error(e.getLoc(), "void function %s should not return a value", ma.curFunction.asDecl().getName());
+            return;
+        }
+    }
+    if (arg) {
+        if (!ma.analyseInitExpr(arg, ma.curFunction.getRType(), (*arg).getLoc(), false, false))
+            return;
+        QualType qt = (*arg).getType();
+
+        if (qt.isPointer()) ma.checkReturnAddrOfLocal(*arg);
+    }
+}
+
+fn void Analyser.checkReturnAddrOfLocal(Analyser* ma, Expr* arg) {
+    //checks for: return &a;
+    if (!arg.isUnaryOp()) return;
+
+    UnaryOperator* uo = (UnaryOperator*)arg;
+    Expr* inner = uo.getInner();
+    if (!inner.isIdentifier()) return;
+    IdentifierExpr* id = (IdentifierExpr*)inner;
+    Decl* d = id.getDecl();
+    assert(d);
+    if (!d.isVarDecl()) return;
+    VarDecl* vd = (VarDecl*)d;
+
+    if ((vd.isLocal() && !vd.hasLocalQualifier()) || vd.isParameter()) {
+        ma.error(arg.getLoc(), "function returns address of local variable");
+    }
+}
+

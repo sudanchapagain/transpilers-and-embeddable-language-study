@@ -1,0 +1,427 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module arch_rv64;
+
+import ir_tools local;
+import ir local;
+import string_buffer;
+
+type RV64_InstrKind enum u8 {
+    Add,
+    AddIw,
+    And,
+    Beqz,
+    Bnez,
+    Divw,
+    Jump,
+    Li,
+    Mul,
+    Or,
+    Remw,
+    Ret,
+    Slli,
+    Sllw,
+    Sraw,
+    Sub,
+    Xor,
+}
+
+const char*[] instr_names = {
+    [RV64_InstrKind.Add]   = "add",
+    [RV64_InstrKind.AddIw] = "addiw",
+    [RV64_InstrKind.And]   = "and",
+    [RV64_InstrKind.Beqz]  = "beqz",
+    [RV64_InstrKind.Bnez]  = "bnez",
+    [RV64_InstrKind.Divw]  = "divw",
+    [RV64_InstrKind.Jump]  = "j",
+    [RV64_InstrKind.Mul]   = "mul",
+    [RV64_InstrKind.Li]    = "li",
+    [RV64_InstrKind.Or]    = "or",
+    [RV64_InstrKind.Remw]  = "remw",
+    [RV64_InstrKind.Ret]   = "ret",
+    [RV64_InstrKind.Slli]  = "slli",
+    [RV64_InstrKind.Sllw]  = "sllw",
+    [RV64_InstrKind.Sraw]  = "sraw",
+    [RV64_InstrKind.Sub]   = "sub",
+    [RV64_InstrKind.Xor]   = "xor",
+}
+
+/*
+type Regs enum u8 {
+    A0, A1, A2, A3, A4, A5, A6, A7, // return + args
+    T0, T1, T2, T3, T4, T5, T6, // temp
+    S1, S2, S3, S4, S5, S6, S7, S8, S9, S10, S11,   // callee saved
+    FP, SP, GP, TP, RA, // other
+}
+*/
+
+const char*[] reg_names = {
+    "a0", "a1", "a2", "a3", "a4", "a5", "a6", "a7",
+    "t0", "t1", "t2", "t3", "t4", "t5", "t6",
+    "s1", "s2", "s3", "s4", "s5", "s6", "s7", "s8", "s9", "s10", "s11",
+    "fp", "sp", "gp", "tp", "ra",
+}
+
+type RegAlloc struct {
+    u32 ngrn;   // Next General-purpose Register Number
+    i32 nsaa;   // Next stacked argument address
+    // TODO arg info [MaxArgs] // number, stack, pointer, etc
+}
+
+fn void instructionSelection(Tools* t, ir.FunctionInfo* f) {
+    // Assume 32 bit for now
+    FunctionInfo* fi = t.fi;
+    u32 num_blocks = fi.blocks.getCount();
+    Block* blocks = fi.blocks.get(0);
+    Instr* instrs = fi.instructions.get(0);
+
+    RV64_InstrKind k;   // TEMP
+    for (u32 blk_id = 0; blk_id < num_blocks; blk_id++) {
+        Block* b = &blocks[blk_id];
+        u32 last = b.instr.start + b.instr.count;
+        u32 num_arg = 0;
+        for (u32 j = b.instr.start; j < last; j++) {
+            Instr* ii = &instrs[j];
+            switch (ii.getKind()) {
+            case None:
+                break;
+            // Arithmetic and Bits
+            case Add:
+                if (ii.args[1].isConstant()) {
+                    // check if it fits, otherwise insert load
+                    ii.setArch(RV64_InstrKind.AddIw);
+                    continue;
+                }
+                ii.setArch(RV64_InstrKind.Add);
+                break;
+            case Sub:
+                // change to add -3? if it fits the intermediate number
+                if (ii.args[1].isConstant()) {
+                    // check if it fits, otherwise insert load
+                    // RV64 has no SUB<intermediate>, so use Add
+                    ii.setArch(RV64_InstrKind.AddIw);
+                    ii.args[1].value *= -1;
+                    continue;
+                }
+                break;
+            case Div:
+                break;
+            case Rem:
+                // TODO do smart things when rhs is a constant
+                ii.setArch(RV64_InstrKind.Remw);
+                break;
+            case Mul:
+                if (ii.args[1].isConstant()) {
+                    u32 power;
+                    u32 value = (u32) ii.args[1].value;
+                    for (power = 1; power < 32; power++) {
+                        if (value == (1 << power)) { // convert to shift
+                            ii.setArch(RV64_InstrKind.Slli);
+                            ii.args[1].init(RefKind.Value, power);
+                            goto next;
+                        }
+                    }
+                    // check if it fits, otherwise insert load
+                }
+                break;
+            case IDiv:
+                // TODO do smart things when rhs is a constant
+                ii.setArch(RV64_InstrKind.Divw);
+                break;
+            case And:
+                ii.setArch(RV64_InstrKind.And);
+                break;
+            case Or:
+                ii.setArch(RV64_InstrKind.Or);
+                break;
+            case Xor:
+                ii.setArch(RV64_InstrKind.Xor);
+                break;
+            case Shr:
+                ii.setArch(RV64_InstrKind.Sraw);
+                break;
+            case Shl:
+                ii.setArch(RV64_InstrKind.Sllw);
+                break;
+            // Comparisons
+            case CmpNe:
+                // combine Cmp + JmpIf into one beq(z) + jump
+                assert(j+1 != last);
+                Instr* next = &instrs[j+1];
+                assert(next.getKind() == JmpIf);
+                if (ii.args[1].isZero()) {
+                    // change cmp ne + jmp_if -> beqz (then) + j (else)
+                    ii.setArch(RV64_InstrKind.Bnez);
+                    ii.instrBits.has_result = 0;
+                    ii.args[1].init(Block, b.dests[0]);
+                } else {
+                    assert(0);  // TODO
+                }
+                next.setArch(RV64_InstrKind.Jump);
+                next.args[0].init(Block, b.dests[1]);
+                next.args[1].clear();
+                break;
+            case CmpEq:
+                break;
+            case CmpLt:
+                break;
+            case CmpGt:
+                break;
+            case CmpLe:
+                break;
+            case CmpGe:
+                break;
+            // Memory
+            case Load1:
+                break;
+            case Load2:
+                break;
+            case Load4:
+                if (ii.args[0].isConstant()) {
+                    ii.setArch(RV64_InstrKind.Li);
+                    // TODO if zero, use 'zero', skip copy
+                } else {
+                    // TODO mov?
+                }
+                break;
+            case Load8:
+                break;
+            case Store1:
+                break;
+            case Store2:
+                break;
+            case Store4:
+                break;
+            case Store8:
+                break;
+            // Stack Allocation
+            case Alloc1:
+            case Alloc2:
+            case Alloc4:
+            case Alloc8:
+                assert(0);  // should not happen
+                break;
+            // Jump instructions
+            case Jmp:
+                ii.setArch(RV64_InstrKind.Jump);
+                ii.args[0].init(Block, b.dests[0]);
+                break;
+            case JmpIf:
+                assert(0);  // should be removed already
+                break;
+            case Ret:
+                ii.setArch(RV64_InstrKind.Ret);
+                break;
+            case Halt:
+                break;
+            case Call:
+                break;
+            case Copy:
+                // NOTE: leave copies in for now, can be removed during register allocation
+                break;
+            // Pseudo instructions (must be converted before converting to ASM)
+            case Arch:
+            case Param:
+            case Arg:
+            case Switch:
+            case Phi:
+            case Comment:
+                // ignore here
+                break;
+            }
+next:
+        }
+    }
+}
+
+
+fn void generateAsm(string_buffer.Buf* out, const char* name, const FunctionInfo* fi, bool is_external) {
+#if 0
+    PER FUNCTION:
+    QBE:    .balign 16
+    GCC:    .attribuet stack_align 16
+    Clang:  .p2align 1
+#endif
+    out.print("\t.global %s\n", name);
+    out.print("\t.type   %s, @function\n", name);
+
+    out.add(name);
+    out.add(":\n");
+    u32 num_blocks = fi.blocks.getCount();
+    const Block* blocks = fi.blocks.get(0);
+    Instr* instrs = fi.instructions.get(0);
+
+    for (u32 blk_id = 0; blk_id < num_blocks; blk_id++) {
+        const Block* b = &blocks[blk_id];
+        if (blk_id == 0) out.add("# ");
+        out.print(".BB%d_%d:\n", fi.id, blk_id);
+        u32 last = b.instr.start + b.instr.count;
+        u32 num_arg = 0;
+        for (u32 j = b.instr.start; j < last; j++) {
+            Instr* ii = &instrs[j];
+            bool first = true;
+            if (ii.isNone()) continue;
+            if (!ii.isArch()) {
+                assert(ii.isCopy());
+                if (ii.args[0].isValue()) {
+                    ii.setArch(RV64_InstrKind.Li);
+                } else {
+                    assert(0);  // TODO
+                }
+            }
+            out.print("\t%-8s", instr_names[ii.instrBits.arch_instr]);
+            if (ii.hasResult()) {
+                assert(ii.hasRegister());
+                out.print("%s", reg_names[ii.getRegister()]);
+                first = false;
+            }
+            for (u32 i = 0; i < 2; i++) {
+                if (ii.args[i].isNone()) break;
+                if (!first) {
+                    out.add(", ");
+                }
+                first = false;
+                const Ref* r = &ii.args[i];
+                switch (r.getKind()) {
+                case None:
+                case Slot:
+                case Temp:
+                    assert(0);  // should not happen
+                    break;
+                case JmpDest:
+                    assert(b.dests[0]);
+                    const Block* dest = &blocks[b.dests[0]];
+                    out.print("@%s.%d", dest.getKindName(), b.dests[0]);
+                    break;
+                case Symbol:
+                    assert(0);  // TODO
+                    //const Symbol* g = ph.c.symbols.get((u32)r.value);
+                    //out.print("@%s", ph.c.pool.idx2str(g.name));
+                    break;
+                case Value:
+                    out.print("%d", r.value);
+                    break;
+                case Integer:
+                    assert(0);  // TODO
+                    //const Constant* con = ph.c.constants.get((u32)r.value);
+                    //out.print("%d", con.ivalue);
+                    break;
+                case Float:
+                    // TODO
+                    break;
+                case Double:
+                    // TODO
+                    break;
+                case Text:
+                    assert(0);  // TODO
+                    //out.add(ph.c.pool.idx2str((u32)r.value));
+                    break;
+                case Register:
+                    out.print("%s", reg_names[r.value]);
+                    break;
+                case Block:
+                    out.print(".BB%d_%d", fi.id, r.value);
+                    break;
+                case PhiClause:
+                case CallNumArgs:
+                    assert(0);  // should not happen
+                    break;
+                }
+            }
+            out.newline();
+        }
+    }
+    out.print("\t.size   %s, .-%s\n", name, name);
+}
+
+fn void applyCallingConv(Tools* t, FunctionInfo* f) {
+    //printf("ARM64 calling conv.\n");
+    FunctionInfo* fi = t.fi;
+    u32 num_blocks = fi.blocks.getCount();
+    Block* blocks = fi.blocks.get(0);
+    Instr* instrs = fi.instructions.get(0);
+
+    RegAlloc regs = { }
+    //regs.nsaa = stack;
+
+    // Params, replace %1 = param with  %1 = copy R0
+    {
+        Block* b0 = &blocks[0];
+        u32 num_arg = 0;
+        while (1) {
+            Instr* ii = &instrs[b0.instr.start + num_arg];
+            if (!ii.isParam()) break;
+            // For now always put stack-based arguments in a register immediately
+            ii.instrBits.kind = InstrKind.Copy;
+            ii.args[0].setRegister(num_arg);    // start with A0
+            num_arg++;
+        }
+    }
+
+    // replace args with copy (if arg is Temp)
+    // arg %1 =>  R0 = copy %1
+    for (u32 blk_id = 0; blk_id < num_blocks; blk_id++) {
+        Block* b = &blocks[blk_id];
+        u32 last = b.instr.start + b.instr.count;
+        u32 num_arg = 0;
+        for (u32 j = b.instr.start; j < last; j++) {
+            Instr* ii = &instrs[j];
+            switch (ii.getKind()) {
+            case Call:
+                num_arg = 0;
+                break;
+            case Ret:
+                if (!ii.args[0].isNone()) {
+                    // just add copy a0 = copy %1
+                    u32 instr_idx = t.inserter.addInstr(j);
+                    Instr* ii2 = t.inserter.getLastInstr();
+                    ii2.init1b(Copy, ii.args[0]);
+                    ii2.setReg(0);
+                    ii.args[0].clear();
+                }
+                break;
+            case Arg:
+                ii.setReg((u8)num_arg);
+                ii.instrBits.kind = InstrKind.Copy;
+                num_arg++;
+                break;
+            default:
+                break;
+            }
+        }
+    }
+}
+
+const Target ArchInfo = {
+    .applyCallingConv = applyCallingConv,
+    .instructionSelection = instructionSelection,
+    .generateAsm = generateAsm,
+    .instr_names = instr_names,
+    .num_instr = elemsof(instr_names),
+    .register_names = reg_names,
+    .num_args_in_regs = 8,
+    .num_regs = 32,
+    .num_temps = 7,
+    .num_saved = 11,
+    .arg0_reg = 0,
+    .saved0_reg = 15,
+    .regs = nil,    // num_regs_long, TODO how what to point to?
+}
+
+public fn const Target* getTarget() {
+    return &ArchInfo;
+}
+

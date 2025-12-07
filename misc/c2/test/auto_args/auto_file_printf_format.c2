@@ -1,0 +1,6 @@
+// @warnings{no-unused}
+module test;
+
+fn void log(const char* fmt @(auto_file, printf_format), ...) { // @error{printf_format parameter cannot be an auto-argument}
+}
+

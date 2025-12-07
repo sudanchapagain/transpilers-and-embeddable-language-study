@@ -1,0 +1,5 @@
+// @warnings{no-unused}
+module test;
+
+i32 j = i32.max + 1; // @error{constant value 2147483648 out-of-bounds for type 'i32', range [-2147483648, 2147483647]}
+

@@ -1,0 +1,42 @@
+import os
+import fmt.utils as util
+import fmt
+import time
+import co
+import runtime
+
+fn logf(string format, ...[any] args) {
+    var msg = fmt.sprintf(format, ...args)
+    var t = time.now()
+    fmt.printf('log: %v time: %v\n', msg, t.datetime())
+}
+
+fn main() {
+    runtime.gc()
+
+    int len = 2
+    int arg_index = 0
+    u8 c = 118
+    if !{util.ascii('d'), util.ascii('a'), util.ascii('v')}.contains(c) || arg_index == len || 1 < 0 {
+        println('into!')
+    }
+
+    var a = vec_new<u8>(0, 102400)
+
+    a = vec_new<u8>(0, 1)
+
+    if !{util.ascii('d'), util.ascii('a'), util.ascii('v')}.contains(c) || arg_index == len || 1 < 0 {
+        println('into!')
+    }
+
+    if !{util.ascii('d'), util.ascii('a'), util.ascii('v')}.contains(c) || arg_index == len || 1 < 0 {
+        println('into!')
+    }
+
+    co.sleep(500)
+
+    logf('hello33 %v', 'world33')
+    var s = 'hello44 %v'
+    logf(s, 'world44')
+    logf('hello55 %v, %v', 'world55', 'haha55')
+}

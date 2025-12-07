@@ -1,0 +1,391 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import string_buffer;
+import src_loc local;
+
+import string;
+
+type StructTypeDeclBits struct {
+    u32 : NumDeclBits;
+    u32 is_struct : 1;
+    u32 is_global : 1;
+    u32 attr_packed : 1;
+    u32 attr_opaque : 1;
+    u32 attr_notypedef : 1;
+}
+
+public type FieldInitInfo struct {
+    u32 num_fields;     // fields[num_fields]
+    u32 num_indexes;    // number of different indexes (unions use 1)
+    FieldInitField[0] fields;
+}
+static_assert(8, sizeof(FieldInitInfo));
+
+public type FieldInitField struct {
+    u32 name_idx;
+    u32 member_idx; // used during analysis to detect duplicate inits, same for anonymous sub-union members
+    // TODO just put StructMemberLayout here? (and modify offset?) would make it bigger because of extra size field
+    u32 offset;
+    u8 bitfield_offset;
+    u8 bitfield_width;
+    u8 is_bitfield : 1;
+    u8 bitfield_signed : 1;
+    u8 bitfield_base_size : 4;  // 1/2/4/8
+    // 1 byte padding
+    Decl* decl;    // can point to anonymous sub-struct members as well
+}
+static_assert(24, sizeof(FieldInitField));
+
+public fn bool FieldInitField.isZeroSizeBitfield(const FieldInitField* f) {
+    return f.is_bitfield && f.bitfield_width == 0;
+}
+
+fn void FieldInitField.print(const FieldInitField* f, string_buffer.Buf* out) {
+    out.color(col_Calc);
+    out.print("offset=%d  idx=%d", f.offset, f.member_idx);
+    if (f.is_bitfield) {
+        out.print(" bitfield(%d, %d, %d %d)", f.bitfield_offset, f.bitfield_width, f.bitfield_signed, f.bitfield_base_size);
+    }
+}
+
+
+public fn const FieldInitField* FieldInitInfo.find(const FieldInitInfo* fi, u32 name) {
+    // TODO split in names array and rest array? for better cache coherency
+    for (u32 i=0; i<fi.num_fields; i++) {
+        if (fi.fields[i].name_idx == name) return &fi.fields[i];
+    }
+    return nil;
+}
+
+public type StructMemberLayout struct {
+    // Note: bitfields all have the same offset+size
+    u32 offset;
+    u32 size;
+    u8 is_bitfield : 1;
+    u8 bitfield_offset : 7;
+    u8 bitfield_width;
+    u8 bitfield_signed : 1;
+    // 2 bytes padding (-1 bit)
+}
+static_assert(12, sizeof(StructMemberLayout));
+
+public type StructLayout struct {
+    u32 size;
+    u32 alignment;
+    u32 attr_alignment; // can be removed? (should be same as alignment)
+    StructMemberLayout[0] members;
+}
+
+public type StructTypeDecl struct @(opaque) {
+    Decl base;
+    u32 num_members;
+    u32 num_struct_functions;
+    FunctionDecl** struct_functions;
+    FieldInitInfo* field_info;  // set lazily on Field-Designated inits
+    Decl*[0] members;   // tail-allocated
+    //StructLayout layout[0]; // tail-allocated
+}
+
+public fn StructTypeDecl* StructTypeDecl.create(ast_context.Context* c,
+                                                  u32 name,
+                                                  SrcLoc loc,
+                                                  bool is_public,
+                                                  u32 ast_idx,
+                                                  bool is_struct,
+                                                  bool is_global,
+                                                  Decl** members,
+                                                  u32 num_members)
+{
+    u32 size = sizeof(StructTypeDecl) + num_members * sizeof(Decl*);
+    size += sizeof(StructLayout);
+    size += num_members * sizeof(StructMemberLayout); // to store StructMemberLayouts
+    size = (size + 7) & ~0x7; // round to 8-byte (temp)
+    StructTypeDecl* d = c.alloc(size);
+    StructType* stype = StructType.create(c, d);
+    QualType qt = QualType.create(stype.asType());
+    stype.asType().setCanonicalType(qt);
+    d.base.init(DeclKind.StructType, name, loc, is_public, qt, ast_idx);
+    d.base.structTypeDeclBits.is_struct = is_struct;
+    d.base.structTypeDeclBits.is_global = is_global;
+
+    if (!is_global) d.base.setUsed(); // set sub-structs to used
+
+    d.num_members = num_members;
+    d.num_struct_functions = 0;
+    d.struct_functions = nil;
+    d.field_info = nil;
+
+    StructLayout* layout = d.getLayout();
+    layout.size = 0;
+    layout.alignment = 0;
+    layout.attr_alignment = 1;
+
+    if (num_members) {
+        string.memcpy(d.members, members, num_members * sizeof(Decl*));
+        string.memset(layout.members, 0, num_members * sizeof(StructMemberLayout));
+    }
+#if AstStatistics
+    Stats.addDecl(DeclKind.StructType, size);
+#endif
+    return d;
+}
+
+public fn Decl* StructTypeDecl.asDecl(StructTypeDecl* d) {
+    return &d.base;
+}
+
+public fn u32 StructTypeDecl.getNumMembers(const StructTypeDecl* d) {
+    return d.num_members;
+}
+
+public fn Decl** StructTypeDecl.getMembers(StructTypeDecl* d) {
+    // NOTE: doesn't check if present!
+    return d.members;
+}
+
+public fn bool StructTypeDecl.isStruct(const StructTypeDecl* d) {
+    return d.base.structTypeDeclBits.is_struct;
+}
+
+public fn bool StructTypeDecl.isUnion(const StructTypeDecl* d) {
+    return !d.base.structTypeDeclBits.is_struct;
+}
+
+fn const FunctionDecl** StructTypeDecl.getStructFunctions(const StructTypeDecl* d) {
+    // TEMP const-cast until ptr-ptr -> const ptr-ptr is fixed in analyser
+    return (const FunctionDecl**)d.struct_functions;
+}
+
+fn u32 StructTypeDecl.getNumStructFunctions(const StructTypeDecl* d) {
+    return d.num_struct_functions;
+}
+
+public fn StructLayout* StructTypeDecl.getLayout(const StructTypeDecl* d) {
+    return (StructLayout*)&d.members[d.num_members];
+}
+
+public fn u32 StructTypeDecl.getSize(const StructTypeDecl* d) {
+    StructLayout* layout = d.getLayout();
+    return layout.size;
+}
+
+public fn u32 StructTypeDecl.getAlignment(const StructTypeDecl* d) {
+    StructLayout* layout = d.getLayout();
+    return layout.alignment;
+}
+
+public fn u32 StructTypeDecl.getAttrAlignment(const StructTypeDecl* d) {
+    StructLayout* layout = d.getLayout();
+    return layout.attr_alignment;
+}
+
+public fn void StructTypeDecl.setAttrAlignment(StructTypeDecl* d, u32 alignment) {
+    StructLayout* layout = d.getLayout();
+    layout.attr_alignment = alignment;
+}
+
+public fn void StructTypeDecl.setPacked(StructTypeDecl* d) {
+    d.base.structTypeDeclBits.attr_packed = 1;
+}
+
+public fn bool StructTypeDecl.isPacked(const StructTypeDecl* d) {
+    return d.base.structTypeDeclBits.attr_packed;
+}
+
+public fn void StructTypeDecl.setOpaque(StructTypeDecl* d) {
+    d.base.structTypeDeclBits.attr_opaque = 1;
+}
+
+public fn bool StructTypeDecl.isOpaque(const StructTypeDecl* d) {
+    return d.base.structTypeDeclBits.attr_opaque;
+}
+
+public fn bool StructTypeDecl.isGlobal(const StructTypeDecl* d) {
+    return d.base.structTypeDeclBits.is_global;
+}
+
+public fn void StructTypeDecl.setAttrNoTypeDef(StructTypeDecl* d) {
+    d.base.structTypeDeclBits.attr_notypedef = 1;
+}
+
+public fn bool StructTypeDecl.hasAttrNoTypeDef(const StructTypeDecl* d) {
+    return d.base.structTypeDeclBits.attr_notypedef;
+}
+
+public fn void StructTypeDecl.setStructFunctions(StructTypeDecl* d, ast_context.Context* c, FunctionDecl** funcs, u32 count) {
+    const u32 size = count * sizeof(FunctionDecl*);
+    FunctionDecl** dest = c.alloc(size);
+    string.memcpy(dest, funcs, size);
+    d.struct_functions = dest;
+    d.num_struct_functions = count;
+}
+
+public fn Decl* StructTypeDecl.findAny(const StructTypeDecl* s, u32 name_idx) {
+    u32 num_members = s.getNumMembers();
+    u32 count = num_members;
+    for (u32 i=0; i<num_members; i++) {
+        Decl* d = s.members[i];
+        u32 member_name = d.getNameIdx();
+
+        if (member_name == name_idx) {
+            return d;
+        }
+
+        if (member_name == 0  && d.isStructType()) {
+            StructTypeDecl* sub = (StructTypeDecl*)d;
+            d = sub.findAny(name_idx);
+            if (d) {
+                return d;
+            }
+        }
+    }
+
+    // NOTE: index is only set for variables!
+    if (s.base.structTypeDeclBits.is_global) {
+        for (u32 i=0; i<s.num_struct_functions; i++) {
+            Decl* sf = (Decl*)s.struct_functions[i];
+            if (sf.getNameIdx() == name_idx) return sf;
+        }
+    }
+    return nil;
+}
+
+public fn Decl* StructTypeDecl.findMember(const StructTypeDecl* s, u32 name_idx, u32* offset) {
+    u32 count = s.getNumMembers();
+    for (u32 i=0; i<count; i++) {
+        Decl* d = s.members[i];
+        u32 member_name = d.getNameIdx();
+
+        if (member_name == name_idx) {
+            if (offset) {
+                const StructLayout* layout = s.getLayout();
+                *offset += layout.members[i].offset;
+            }
+            return d;
+        }
+
+        // search unnamed sub-structs
+        if (member_name == 0 && d.isStructType()) {
+            StructTypeDecl* sub = (StructTypeDecl*)d;
+            d = sub.findMember(name_idx, offset);
+            if (d) {
+                if (offset) {
+                    const StructLayout* layout = s.getLayout();
+                    *offset += layout.members[i].offset;
+                }
+                return d;
+            }
+        }
+    }
+    return nil;
+}
+
+public fn FieldInitInfo* StructTypeDecl.createFieldInfo(StructTypeDecl* d, ast_context.Context* c) {
+    u32 count = d.getDesigMemberCount();
+    d.field_info = c.alloc(sizeof(FieldInitInfo) + count * sizeof(FieldInitField));
+    d.field_info.num_fields = count;
+    // Note: Fields are not initialized here
+    return d.field_info;
+}
+
+public fn const FieldInitInfo* StructTypeDecl.getFieldInfo(const StructTypeDecl* d) {
+    return d.field_info;
+}
+
+// also counts anonymous sub-structs/union members
+public fn u32 StructTypeDecl.getDesigMemberCount(const StructTypeDecl* d) {
+    if (d.field_info) return d.field_info.num_fields;
+
+    u32 count = d.num_members;
+
+    for (u32 i=0; i<d.num_members; i++) {
+        Decl* m = d.members[i];
+        u32 member_name = m.getNameIdx();
+        if (member_name == 0) {
+            count--;
+            if (m.isStructType()) {
+                StructTypeDecl* sub = (StructTypeDecl*)m;
+                count += sub.getDesigMemberCount();
+            }
+        }
+    }
+    return count;
+}
+
+public fn bool StructTypeDecl.hasFieldInfo(const StructTypeDecl* d) {
+    return d.field_info != nil;
+}
+
+fn void StructTypeDecl.print(const StructTypeDecl* d, string_buffer.Buf* out, u32 indent) {
+    d.base.printKind(out, indent, true);
+    d.base.printBits(out);
+    bool is_global = d.base.structTypeDeclBits.is_global;
+    if (is_global) out.add(" global");
+    if (d.base.structTypeDeclBits.is_struct) out.add(" struct");
+    else out.add(" union");
+
+    if (d.isPacked()) out.add(" packed");
+    if (d.isOpaque()) out.add(" opaque");
+    if (d.hasAttrNoTypeDef()) out.add(" notypedef");
+
+    if (is_global) d.base.printAttrs(out);
+
+    StructLayout* layout = d.getLayout();
+    if (layout.size != 0) {
+        out.color(col_Calc);
+        out.print(" size=%d align=%d", layout.size, layout.alignment);
+    }
+
+    out.space();
+    out.color(col_Value);
+    if (d.base.getName()) out.add(d.base.getName());
+    else out.add("<anonymous>");
+    out.newline();
+
+    for (u32 i=0; i<d.num_members; i++) {
+        out.indent(indent + 1);
+        out.color(col_Calc);
+        const StructMemberLayout* ml = &layout.members[i];
+        out.print("offset=%d size=%d", ml.offset, ml.size);
+        if (ml.is_bitfield) {
+            out.print(" bitfield(%d, %d, %d)", ml.bitfield_offset, ml.bitfield_width, ml.bitfield_signed);
+        }
+        out.newline();
+        d.members[i].print(out, indent + 1);
+    }
+
+#if 1
+    if (d.field_info) {
+        out.indent(indent + 1);
+        out.color(col_Calc);
+        const FieldInitInfo* fif = d.field_info;
+        out.print("field info (%d fields, %d indexes)\n", fif.num_fields, fif.num_indexes);
+        for (u32 i=0; i<fif.num_fields; i++) {
+            const FieldInitField* f = &fif.fields[i];
+            out.indent(indent + 2);
+            out.color(col_Value);
+            out.add(idx2name(f.name_idx));
+            out.space();
+            f.print(out);
+            out.newline();
+        }
+    }
+#endif
+}
+

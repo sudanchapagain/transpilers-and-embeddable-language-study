@@ -1,0 +1,444 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module arch_arm64;
+
+import ir_tools local;
+import ir local;
+import string_buffer;
+
+type Arm64_InstrKind enum u8 {
+    Add,
+    Branch,
+    Beq,
+    Bne,
+    Cmp,
+    Mov,
+    Mul,
+    Lsl,
+    Ret,
+    Sub,
+}
+
+const char*[] instr_names = {
+    [Arm64_InstrKind.Add]    = "add",
+    [Arm64_InstrKind.Branch] = "b",
+    [Arm64_InstrKind.Beq]    = "beq",
+    [Arm64_InstrKind.Bne]    = "bne",
+    [Arm64_InstrKind.Cmp]    = "cmp",
+    [Arm64_InstrKind.Lsl]    = "lsl",
+    [Arm64_InstrKind.Mul]    = "mul",
+    [Arm64_InstrKind.Mov]    = "mov",
+    [Arm64_InstrKind.Ret]    = "ret",
+    [Arm64_InstrKind.Sub]    = "sub",
+}
+
+/*
+type Regs enum u8 {
+    R0, R1, R2, R3, R4, R5, R6, R7, // return + args
+    R8, R9, R10, R11, R12, R13, R14, R15,   // temp
+    R19, R20, R21, R22, R23, R24, R25, R26, R27, R28,   // callee saved
+    R16, R17, R18, R29, R30, R31, // other
+}
+*/
+
+const char*[] reg_names = {
+    "w0", "w1", "w2", "w3", "w4", "w5", "w6", "w7", // return + awgs
+    "w8", "w9", "w10", "w11", "w12", "w13", "w14", "w15",   // temp
+    "w19", "w20", "w21", "w22", "w23", "w24", "w25", "w26", "w27", "w28",   // callee saved
+    "w16", "w17", "w18", "w29", "w30", "w31",   // other
+}
+
+type RegAlloc struct {
+    u32 ngrn;   // Next General-purpose Register Number
+    u32 nsrn;   // Next SIMD and FP Register Nmuber
+    u32 nprn;   // Next Scalable Predicate Register Number
+    i32 nsaa;   // Next stacked argument address
+
+    // TODO arg info [MaxArgs] // number, stack, pointer, etc
+}
+
+
+
+fn void instructionSelection(Tools* t, ir.FunctionInfo* f) {
+    // Assume 32 bit for now
+    FunctionInfo* fi = t.fi;
+    u32 num_blocks = fi.blocks.getCount();
+    Block* blocks = fi.blocks.get(0);
+    Instr* instrs = fi.instructions.get(0);
+
+    Arm64_InstrKind k;   // TEMP
+    for (u32 blk_id = 0; blk_id < num_blocks; blk_id++) {
+        Block* b = &blocks[blk_id];
+        u32 last = b.instr.start + b.instr.count;
+        u32 num_arg = 0;
+        for (u32 j = b.instr.start; j < last; j++) {
+            Instr* ii = &instrs[j];
+            switch (ii.getKind()) {
+            case None:
+                break;
+            // Arithmetic and Bits
+            case Add:
+                //if (ii.args[1].isConstant()) {
+                    // check if it fits, otherwise insert load
+                //}
+                ii.setArch(Arm64_InstrKind.Add);
+                break;
+            case Sub:
+                // change to add -3? if it fits the intermediate number
+                //if (ii.args[1].isConstant()) {
+                    // check if it fits, otherwise insert load
+                //}
+                ii.setArch(Arm64_InstrKind.Sub);
+                break;
+            case Div:
+                break;
+            case Rem:
+                break;
+            case Mul:
+                if (ii.args[1].isConstant()) {
+                    u32 power;
+                    u32 value = (u32) ii.args[1].value;
+                    for (power = 1; power < 32; power++) {
+                        if (value == (1 << power)) { // convert to shift
+                            ii.setArch(Arm64_InstrKind.Lsl);
+                            ii.args[1].init(RefKind.Value, power);
+                            goto next;
+                        }
+                    }
+                    // check if it fits, otherwise insert load
+                }
+                ii.setArch(Arm64_InstrKind.Mul);
+                break;
+            case IDiv:
+                break;
+            case And:
+                break;
+            case Or:
+                break;
+            case Xor:
+                break;
+            case Shr:
+                break;
+            case Shl:
+                break;
+            // Comparisons
+            case CmpNe:
+                assert(j+1 != last);
+                Instr* next = &instrs[j+1];
+                ii.setArch(Arm64_InstrKind.Cmp);
+                ii.instrBits.has_result = 0;
+                assert(next.getKind() == JmpIf);
+                // invert, assert true block is next
+                next.setArch(Arm64_InstrKind.Beq);
+                next.args[0].init(Block, b.dests[1]);
+                next.args[1].clear();
+                break;
+            case CmpEq:
+                break;
+            case CmpLt:
+                break;
+            case CmpGt:
+                break;
+            case CmpLe:
+                break;
+            case CmpGe:
+                break;
+            // Memory
+            case Load1:
+                break;
+            case Load2:
+                break;
+            case Load4:
+                break;
+            case Load8:
+                break;
+            case Store1:
+                break;
+            case Store2:
+                break;
+            case Store4:
+                break;
+            case Store8:
+                break;
+            // Stack Allocation
+            case Alloc1:
+            case Alloc2:
+            case Alloc4:
+            case Alloc8:
+                assert(0);  // should not happen
+                break;
+            // Jump instructions
+            case Jmp:
+                ii.setArch(Arm64_InstrKind.Branch);
+                ii.args[0].init(Block, b.dests[0]);
+                break;
+            case JmpIf:
+                break;
+            case Ret:
+                ii.setArch(Arm64_InstrKind.Ret);
+                break;
+            case Halt:
+                break;
+            case Call:
+                break;
+            case Copy:
+                break;
+            // Pseudo instructions (must be converted before converting to ASM)
+            case Arch:
+            case Param:
+            case Arg:
+            case Switch:
+            case Phi:
+            case Comment:
+                // ignore here
+                break;
+            }
+next:
+        }
+    }
+}
+
+fn void applyCallingConv(Tools* t, FunctionInfo* f) {
+
+    //printf("ARM64 calling conv.\n");
+    FunctionInfo* fi = t.fi;
+    u32 num_blocks = fi.blocks.getCount();
+    Block* blocks = fi.blocks.get(0);
+    Instr* instrs = fi.instructions.get(0);
+
+    // Stage A - initialization
+    RegAlloc regs = { }
+    //regs.nsaa = stack;
+
+    // Stage B - Pre-padding + extension of arguments
+    // TODO for now only support integers
+    for (u32 i = 0; i < f.num_args; i++) {
+        Type tt = f.getArg(i);
+        //printf("  [%d] %s\n", i, tt.str());
+    }
+
+    // Stage C - Assignment of arguments to registers and stack
+    for (u32 i = 0; i < f.num_args; i++) {
+        Type argtype = f.getArg(i);
+        //printf("ARG[%d]: ", i);
+        u8 size = 0;
+        u8 align = 0;
+        //printf("  [%d] %s\n", i, tt.str());
+        switch (argtype) {
+        case None:
+        case I8:
+        case I16:
+        case I32:
+        case I64:
+        case U8:
+        case U16:
+        case U32:
+        case U64:
+            if (regs.ngrn < 8) {
+                // C.9 - assign x[ngrn]
+                //printf(" x%d\n", regs.ngrn);
+                regs.ngrn++;
+                continue;
+            }
+            break;
+        case F32:
+        case F64:
+            if (regs.nsrn < 8) {
+                // C.1 - assign v[nsrn]
+                //printf(" v%d\n", regs.nsrn);
+                regs.nsrn++;
+                continue;
+            }
+            // TODO HFA/HVA C.1-C.5
+            size = 8;   // C.5
+            //printf(" S-%d\n", regs.nsaa);
+            regs.nsaa += size;
+            continue;
+        }
+
+        // C.10
+        if (align == 16) regs.ngrn = (regs.ngrn + 1) & ~0x1;
+        // TODO more
+
+    }
+
+
+
+    // Params, replace %1 = param with  %1 = copy R0
+    {
+        Block* b0 = &blocks[0];
+        u32 num_arg = 0;
+        while (1) {
+            Instr* ii = &instrs[b0.instr.start + num_arg];
+            if (!ii.isParam()) break;
+            // For now always put stack-based arguments in a register immediately
+            ii.instrBits.kind = InstrKind.Copy;
+            ii.args[0].setRegister(num_arg);    // start with R0
+            num_arg++;
+        }
+    }
+
+    // replace args with copy (if arg is Temp)
+    // arg %1 =>  R0 = copy %1
+    for (u32 blk_id = 0; blk_id < num_blocks; blk_id++) {
+        Block* b = &blocks[blk_id];
+        u32 last = b.instr.start + b.instr.count;
+        u32 num_arg = 0;
+        for (u32 j = b.instr.start; j < last; j++) {
+            Instr* ii = &instrs[j];
+            switch (ii.getKind()) {
+            case Call:
+                num_arg = 0;
+                break;
+            case Ret:
+                if (!ii.args[0].isNone()) {
+                    // just add copy a0 = copy %1
+                    u32 instr_idx = t.inserter.addInstr(j);
+                    Instr* ii2 = t.inserter.getLastInstr();
+                    ii2.init1b(Copy, ii.args[0]);
+                    ii2.setReg(0);
+                    ii.args[0].clear();
+                }
+                break;
+            case Arg:
+                ii.setReg((u8)num_arg);
+                ii.instrBits.kind = InstrKind.Copy;
+                num_arg++;
+                break;
+            default:
+                break;
+            }
+        }
+    }
+}
+
+fn void generateAsm(string_buffer.Buf* out, const char* name, const FunctionInfo* fi, bool is_external) {
+    // NOTE: currently exactly the same as RV64 version!
+#if 0
+    PER FUNCTION:
+    QBE:    .balign 16
+    GCC:    .attribuet stack_align 16
+    Clang:  .p2align 1
+#endif
+    out.print("\t.global %s\n", name);
+    out.print("\t.type   %s, @function\n", name);
+
+    out.add(name);
+    out.add(":\n");
+    u32 num_blocks = fi.blocks.getCount();
+    const Block* blocks = fi.blocks.get(0);
+    Instr* instrs = fi.instructions.get(0);
+
+    for (u32 blk_id = 0; blk_id < num_blocks; blk_id++) {
+        const Block* b = &blocks[blk_id];
+        if (blk_id == 0) out.add("# ");
+        out.print(".BB%d_%d:\n", fi.id, blk_id);
+        u32 last = b.instr.start + b.instr.count;
+        u32 num_arg = 0;
+        for (u32 j = b.instr.start; j < last; j++) {
+            Instr* ii = &instrs[j];
+            bool first = true;
+            if (ii.isNone()) continue;
+            if (!ii.isArch()) {
+                assert(ii.isCopy());
+                ii.setArch(Arm64_InstrKind.Mov);
+            }
+            out.print("\t%-8s", instr_names[ii.instrBits.arch_instr]);
+            if (ii.hasResult()) {
+                assert(ii.hasRegister());
+                out.print("%s", reg_names[ii.getRegister()]);
+                first = false;
+            }
+            for (u32 i = 0; i < 2; i++) {
+                if (ii.args[i].isNone()) break;
+                if (!first) {
+                    out.add(", ");
+                }
+                first = false;
+                const Ref* r = &ii.args[i];
+                switch (r.getKind()) {
+                case None:
+                case Slot:
+                case Temp:
+                    assert(0);  // should not happen
+                    break;
+                case JmpDest:
+                    assert(b.dests[0]);
+                    const Block* dest = &blocks[b.dests[0]];
+                    out.print("@%s.%d", dest.getKindName(), b.dests[0]);
+                    break;
+                case Symbol:
+                    assert(0);  // TODO
+                    //const Symbol* g = ph.c.symbols.get((u32)r.value);
+                    //out.print("@%s", ph.c.pool.idx2str(g.name));
+                    break;
+                case Value:
+                    out.print("#%d", r.value);
+                    break;
+                case Integer:
+                    assert(0);  // TODO
+                    //const Constant* con = ph.c.constants.get((u32)r.value);
+                    //out.print("%d", con.ivalue);
+                    break;
+                case Float:
+                    // TODO
+                    break;
+                case Double:
+                    // TODO
+                    break;
+                case Text:
+                    assert(0);  // TODO
+                    //out.add(ph.c.pool.idx2str((u32)r.value));
+                    break;
+                case Register:
+                    out.print("%s", reg_names[r.value]);
+                    break;
+                case Block:
+                    out.print(".BB%d_%d", fi.id, r.value);
+                    break;
+                case PhiClause:
+                case CallNumArgs:
+                    assert(0);  // should not happen
+                    break;
+                }
+            }
+            out.stripTrailingSpaces();
+            out.newline();
+        }
+    }
+    out.print("\t.size   %s, .-%s\n", name, name);
+}
+
+const Target ArchInfo = {
+    .applyCallingConv = applyCallingConv,
+    .instructionSelection = instructionSelection,
+    .generateAsm = generateAsm,
+    .instr_names = instr_names,
+    .num_instr = elemsof(instr_names),
+    .register_names = reg_names,
+    .num_args_in_regs = 8,
+    .num_regs = 32,
+    .num_temps = 8,
+    .num_saved = 10,
+    .arg0_reg = 0,
+    .saved0_reg = 16,
+    .regs = nil,    // num_regs_long, TODO how what to point to?
+}
+
+public fn const Target* getTarget() {
+    return &ArchInfo;
+}
+

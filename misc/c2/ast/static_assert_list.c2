@@ -1,0 +1,67 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import string local;
+import stdlib local;
+
+type StaticAssertList struct {
+    u32 count;
+    u32 capacity;
+    StaticAssert** asserts;
+}
+
+fn void StaticAssertList.init(StaticAssertList* l, u32 initial_size) {
+    l.count = 0;
+    l.capacity = initial_size;
+    l.asserts = nil;
+    if (initial_size) {
+        l.asserts = malloc(l.capacity * sizeof(StaticAssert*));
+    }
+}
+
+fn void StaticAssertList.free(StaticAssertList* l) {
+    if (l.asserts) free(l.asserts);
+}
+
+fn void StaticAssertList.add(StaticAssertList* l, StaticAssert* v) {
+    if (l.count >= l.capacity) {
+        l.capacity += 4;
+        void* asserts2 = malloc(l.capacity * sizeof(StaticAssert*));
+        void* old = l.asserts;
+        if (old) {
+            memcpy(asserts2, old, l.count * sizeof(StaticAssert*));
+            free(old);
+        }
+        l.asserts = asserts2;
+    }
+
+    l.asserts[l.count] = v;
+    l.count++;
+}
+
+fn u32 StaticAssertList.getCount(const StaticAssertList* l) {
+    return l.count;
+}
+
+fn StaticAssert* StaticAssertList.getAt(const StaticAssertList* l, u32 idx) {
+    return l.asserts[idx];
+}
+
+fn StaticAssert** StaticAssertList.get(StaticAssertList* l) {
+    return l.asserts;
+}
+

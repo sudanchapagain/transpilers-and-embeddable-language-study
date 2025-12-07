@@ -1,0 +1,182 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import string_buffer;
+import src_loc local;
+import string;
+
+type EnumTypeDeclBits struct {
+    u32 : NumDeclBits;
+    u32 is_incremental : 1;
+    u32 num_constants : 12;
+}
+
+public type EnumTypeDecl struct @(opaque) {
+    Decl base;
+    QualType implType;
+    u32 num_enum_functions;
+    FunctionDecl** enum_functions;
+    EnumConstantDecl*[0] constants; // tail-allocated, for non-incremental enums
+    EnumConstantDecl**[0] incr_constants; // tail-allocated, for incremental enums
+}
+
+public fn EnumTypeDecl* EnumTypeDecl.create(ast_context.Context* c,
+                                              u32 name,
+                                              SrcLoc loc,
+                                              bool is_public,
+                                              u32 ast_idx,
+                                              QualType implType,
+                                              bool is_incremental,
+                                              EnumConstantDecl** constants,
+                                              u32 num_constants)
+{
+    u32 size = sizeof(EnumTypeDecl) + num_constants * sizeof(EnumConstantDecl*);
+    if (is_incremental) size += sizeof(EnumConstantDecl**);
+    EnumTypeDecl* d = c.alloc(size);
+    EnumType* etype = EnumType.create(c, d);
+    QualType qt = QualType.create((Type*)etype);
+    d.base.init(DeclKind.EnumType, name, loc, is_public, qt, ast_idx);
+    d.base.enumTypeDeclBits.is_incremental = is_incremental;
+    d.base.enumTypeDeclBits.num_constants = num_constants;
+    d.implType = implType;
+    d.num_enum_functions = 0;
+    d.enum_functions = nil;
+
+    if (is_incremental) {
+        assert(num_constants == 0);
+        d.incr_constants[0] = nil;
+    } else {
+        string.memcpy(d.constants, constants, num_constants * sizeof(EnumConstantDecl*));
+
+        for (u32 i=0; i<num_constants; i++) {
+            constants[i].asDecl().setType(qt);
+        }
+    }
+#if AstStatistics
+    Stats.addDecl(DeclKind.EnumType, size);
+#endif
+    return d;
+}
+
+/*
+public fn void EnumTypeDecl.setIncrMembers(EnumTypeDecl* d, Decl** constants, u32 num_constants) {
+    d.base.enumTypeDeclBits.num_constants = num_constants;
+    string.memcpy(d.constants, constants, num_constants * sizeof(EnumConstantDecl*));
+}
+*/
+
+public fn QualType EnumTypeDecl.getImplType(const EnumTypeDecl* d) {
+    return d.implType;
+}
+
+public fn Decl* EnumTypeDecl.asDecl(EnumTypeDecl* d) { return &d.base; }
+
+public fn bool EnumTypeDecl.isIncremental(const EnumTypeDecl* d) {
+    return d.base.enumTypeDeclBits.is_incremental;
+}
+
+public fn u32 EnumTypeDecl.getNumConstants(const EnumTypeDecl* d) {
+    return d.base.enumTypeDeclBits.num_constants;
+}
+
+public fn EnumConstantDecl** EnumTypeDecl.getConstants(EnumTypeDecl* d) {
+    if (d.isIncremental()) {
+        return d.incr_constants[0];
+    }
+    return d.constants;
+}
+
+public fn void EnumTypeDecl.setIncrConstants(EnumTypeDecl* d, ast_context.Context* c, IdentifierExpr** constants, u32 count) {
+    assert(count);
+    const u32 size = count * sizeof(EnumConstantDecl*);
+    EnumConstantDecl** decls = c.alloc(size);
+
+    QualType qt = d.base.getType();
+
+    for (u32 i=0; i<count; i++) {
+        IdentifierExpr* id = constants[i];
+
+        // take ast_idx of EnumTypeDecl (is same module, but might be different AST!)
+        decls[i] = EnumConstantDecl.create(c, id.getNameIdx(), id.asExpr().getLoc(), d.base.isPublic(), d.base.ast_idx, nil);
+        decls[i].asDecl().setType(qt);
+    }
+
+    d.incr_constants[0] = decls;
+    d.base.enumTypeDeclBits.num_constants = count;
+}
+
+public fn EnumConstantDecl* EnumTypeDecl.findConstant(EnumTypeDecl* d, u32 name_idx) {
+    EnumConstantDecl** constants = d.constants;
+    if (d.isIncremental()) constants = d.incr_constants[0];
+    for (u32 i=0; i<d.getNumConstants(); i++) {
+        EnumConstantDecl* ecd = constants[i];
+        Decl* ed = (Decl*)ecd;
+        if (ed.getNameIdx() == name_idx) return ecd;
+    }
+    return nil;
+}
+
+public fn EnumConstantDecl* EnumTypeDecl.getConstant(const EnumTypeDecl* d, u32 idx) {
+    if (d.isIncremental()) return d.incr_constants[0][idx];
+    return d.constants[idx];
+}
+
+public fn void EnumTypeDecl.setEnumFunctions(EnumTypeDecl* d, ast_context.Context* c, FunctionDecl** funcs, u32 count) {
+    const u32 size = count * sizeof(FunctionDecl*);
+    FunctionDecl** dest = c.alloc(size);
+    string.memcpy(dest, funcs, size);
+    d.enum_functions = dest;
+    d.num_enum_functions = count;
+}
+
+/*
+public fn const FunctionDecl** EnumTypeDecl.getFunctions(const EnumTypeDecl* d) {
+    // TEMP const-cast until ptr-ptr -> const ptr-ptr is fixed in analyser
+    return (const FunctionDecl**)d.enum_functions);
+}
+
+public fn u32 EnumTypeDecl.getNumFunctions(const EnumTypeDecl* d) {
+    return d.num_enum_functions;
+}
+*/
+
+public fn Decl* EnumTypeDecl.findFunction(const EnumTypeDecl* d, u32 name_idx) {
+    for (u32 i=0; i<d.num_enum_functions; i++) {
+        Decl* ef = (Decl*)d.enum_functions[i];
+        if (ef.getNameIdx() == name_idx) return ef;
+    }
+    return nil;
+}
+
+fn void EnumTypeDecl.print(EnumTypeDecl* d, string_buffer.Buf* out, u32 indent) {
+    d.base.printKind(out, indent, true);
+    d.base.printBits(out);
+    if (d.isIncremental()) out.add(" incremental");
+    d.base.printAttrs(out);
+    d.base.printName(out);
+    out.space();
+    d.implType.print(out);
+    out.newline();
+
+    EnumConstantDecl** constants = d.constants;
+    if (d.isIncremental()) constants = d.incr_constants[0];
+    for (u32 i=0; i<d.base.enumTypeDeclBits.num_constants; i++) {
+        constants[i].print(out, indent + 1);
+    }
+}
+

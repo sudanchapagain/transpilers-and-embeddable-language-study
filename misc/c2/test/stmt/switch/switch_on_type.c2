@@ -1,0 +1,19 @@
+// @warnings{no-unused}
+module test;
+
+type Kind enum u8 {
+    A,
+    B,
+}
+
+public fn i32 main() {
+    switch (Kind) {  // @error{lvalue/rvalue required}
+    case A:
+        break;
+    case B:
+        break;
+    }
+    return 0;
+}
+
+

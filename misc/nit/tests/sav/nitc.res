@@ -1,0 +1,3 @@
+Usage: nitc [OPTION]... file.nit...
+Compiles Nit programs.
+Use --help for help

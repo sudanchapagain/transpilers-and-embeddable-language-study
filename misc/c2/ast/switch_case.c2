@@ -1,0 +1,147 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import string_buffer;
+import src_loc local;
+
+import string;
+
+type SwitchCaseBits struct {
+    u32 num_conds : 8;
+    u32 num_stmts : 10;
+    u32 is_default : 1;
+    u32 has_decls : 1;
+    u32 has_fallthrough : 1;
+}
+
+public type SwitchCase struct @(opaque) {
+    union {
+        SwitchCaseBits bits;
+        u32 allbits;
+    }
+    SrcLoc loc;
+    Expr*[0] conds;    // tail-allocated
+    //Stmt*[0] stmts; // tail-allocated
+}
+
+public fn SwitchCase* SwitchCase.create(ast_context.Context* c,
+                                        SrcLoc loc,
+                                        bool is_default,
+                                        Expr** conds, u32 num_conds,
+                                        Stmt** stmts, u32 num_stmts)
+{
+    assert(num_stmts < 1024);   // 2^10
+    assert(num_conds < 256);    // 2^8
+
+    u32 size = sizeof(SwitchCase) + num_conds * sizeof(Expr*) + num_stmts * sizeof(Stmt*);
+    SwitchCase* s = c.alloc(size);
+    s.allbits = 0;
+    s.bits.num_conds = num_conds;
+    s.bits.num_stmts = num_stmts;
+    s.bits.is_default = is_default;
+    s.loc = loc;
+    string.memcpy(s.conds, conds, num_conds * sizeof(Expr*));
+    Stmt** dst_stmts = s.getStmts();
+    string.memcpy(dst_stmts, stmts, num_stmts * sizeof(Stmt*));
+#if AstStatistics
+    Stats.addSwitchCase(size);
+#endif
+    return s;
+}
+
+fn SwitchCase* SwitchCase.instantiate(SwitchCase* src, Instantiator* inst) {
+    u32 num_conds = src.bits.num_conds;
+    u32 num_stmts = src.bits.num_stmts;
+    u32 size = sizeof(SwitchCase) + num_conds * sizeof(Expr*) + num_stmts * sizeof(Stmt*);
+    SwitchCase* dst = inst.c.alloc(size);
+    dst.allbits = src.allbits;
+    dst.loc = src.loc;
+    // Instantiate the conditions in case constant expressions depend on template argument
+    for (u32 i = 0; i < num_conds; i++) {
+        dst.conds[i] = src.conds[i].instantiate(inst);
+    }
+    Stmt** src_stmts = src.getStmts();
+    Stmt** dst_stmts = dst.getStmts();
+    for (u32 i = 0; i < num_stmts; i++) {
+        dst_stmts[i] = src_stmts[i].instantiate(inst);
+    }
+#if AstStatistics
+    Stats.addSwitchCase(size);
+#endif
+    return dst;
+}
+
+public fn u32 SwitchCase.getNumConds(const SwitchCase* s) { return s.bits.num_conds; }
+public fn Expr* SwitchCase.getCond(SwitchCase* s, u32 index) {
+    return index < s.bits.num_conds ? s.conds[index] : nil;
+}
+
+public fn u32 SwitchCase.getNumStmts(const SwitchCase* s) { return s.bits.num_stmts; }
+
+public fn Stmt** SwitchCase.getStmts(SwitchCase* s) {
+    return (Stmt**)&s.conds[s.bits.num_conds];
+}
+
+public fn Stmt* SwitchCase.getStmt(const SwitchCase* s, u32 n) {
+    if (n < s.bits.num_stmts) {
+        Stmt** stmts = (Stmt**)&s.conds[s.bits.num_conds];
+        return stmts[n];
+    }
+    return nil;
+}
+
+public fn bool SwitchCase.isDefault(const SwitchCase* s) { return s.bits.is_default; }
+public fn bool SwitchCase.hasDecls(const SwitchCase* s) { return s.bits.has_decls; }
+public fn void SwitchCase.setHasDecls(SwitchCase* s) { s.bits.has_decls = 1; }
+public fn void SwitchCase.setHasFallthrough(SwitchCase* s) { s.bits.has_fallthrough = 1; }
+public fn bool SwitchCase.hasFallthrough(const SwitchCase* s) { return s.bits.has_fallthrough; }
+
+public fn SrcLoc SwitchCase.getLoc(const SwitchCase* s) { return s.loc; }
+
+fn void SwitchCase.print(const SwitchCase* s, string_buffer.Buf* out, u32 indent) {
+    out.indent(indent);
+    out.color(col_Stmt);
+    out.add("SwitchCase");
+    if (s.bits.is_default) {
+        out.color(col_Attr);
+        out.add(" default");
+    }
+    if (s.bits.has_decls) {
+        out.color(col_Attr);
+        out.add(" decls");
+    }
+    if (s.bits.num_conds > 1) {
+        out.color(col_Attr);
+        out.add(" multi");
+    }
+    if (s.bits.has_fallthrough) {
+        out.color(col_Attr);
+        out.add(" fallthrough");
+    }
+    out.newline();
+
+    for (u32 i = 0; i < s.bits.num_conds; i++) {
+        if (i != 0) out.add(", ");
+        s.conds[i].print(out, indent + 1);
+    }
+
+    for (u32 i = 0; i < s.bits.num_stmts; i++) {
+        s.getStmt(i).print(out, indent + 2);
+    }
+}
+

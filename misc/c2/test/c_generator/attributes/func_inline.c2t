@@ -1,0 +1,38 @@
+// @recipe bin
+    $warnings no-unused
+    $backend c
+
+// @file{file1}
+module test;
+
+public fn i32 foo() @(inline) {
+    return 1;
+}
+
+fn i32 bar() @(inline) {
+    return 2;
+}
+
+public fn i32 main(i32 argc, const i8** argv)
+{
+    return 0;
+}
+
+// @expect{atleast, cgen/build.c}
+
+static inline
+int32_t test_foo(void)
+{
+    return 1;
+}
+
+static inline
+int32_t test_bar(void);
+
+
+static inline
+int32_t test_bar(void)
+{
+    return 2;
+}
+

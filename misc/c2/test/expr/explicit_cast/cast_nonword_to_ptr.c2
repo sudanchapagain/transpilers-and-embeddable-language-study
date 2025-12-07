@@ -1,0 +1,38 @@
+// @warnings{no-unused}
+module test;
+
+type Struct struct {
+    i32 x;
+}
+Struct* s;
+Struct* s1;
+
+type Enum enum u32 {
+    A, B
+}
+
+fn void test1() {
+    u16 a = 0;
+    s1 = (Struct*)a;       // @error{only integers of type 'u64' may be cast to a pointer}
+}
+
+fn void test2() {
+    // TODO this is allowed on 32-bit architectures
+    u32 b = 0;
+    s1 = (Struct*)b;       // @error{only integers of type 'u64' may be cast to a pointer}
+}
+
+fn void test3() {
+    u64 c = 0;
+    s1 = (Struct*)c;
+}
+
+fn void test4() {
+    Enum d = Enum.A;
+    s1 = (Struct*)d;       // @error{invalid cast from 'test.Enum' to 'test.Struct*'}
+}
+
+fn void test5() {
+    s1 = (Struct*)test1;
+}
+

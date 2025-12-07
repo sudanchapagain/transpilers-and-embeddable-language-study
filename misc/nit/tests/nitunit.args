@@ -1,0 +1,14 @@
+test_nitunit.nit test_test_nitunit.nit --no-color -o $WRITE
+test_nitunit.nit --gen-suite --only-show
+test_nitunit.nit --gen-suite --only-show --private
+test_nitunit2.nit --no-color -o $WRITE
+test_doc2.nit --no-color -o $WRITE
+test_nitunit3 --no-color -o $WRITE
+test_nitunit_md.md --no-color -o $WRITE
+test_doc3.nit --no-color -o $WRITE
+test_nitunit4 --no-color -o $WRITE
+test_nitunit5.nit --no-color -o $WRITE
+test_nitunit6.nit --no-color -o $WRITE
+test_nitunit7.nit --no-color -o $WRITE
+test_nitunit8.nit --no-color -o $WRITE
+test_nitunit11.nit --no-color -o $WRITE

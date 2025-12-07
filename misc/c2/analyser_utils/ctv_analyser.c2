@@ -1,0 +1,98 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ctv_analyser;
+
+import ast local;
+import diagnostics;
+import src_loc local;
+
+type Limit struct {
+    i64 min_val;
+    u64 max_val;
+}
+
+fn void Limit.init(Limit* l, u32 width, bool is_signed) {
+    if (is_signed) {
+        i64 max_val = (i64)0x7FFFFFFFFFFFFFFF >> (64 - width);
+        l.min_val = -max_val - 1;
+        l.max_val = (u64)max_val;
+    } else {
+        l.min_val = 0;
+        l.max_val = (u64)~(u64)0 >> (64 - width);
+    }
+}
+
+public fn Value get_value(const Expr* e) {
+    return ast.evalExpr(e);
+}
+
+public fn bool check(diagnostics.Diags* diags, QualType qt, const Expr* e) {
+    QualType canon = qt.getCanonicalType();
+    if (!canon.isBuiltin()) return true;  // TODO find out cases
+
+    assert(e.isCtv());
+
+    Value value = ctv_analyser.get_value((e));
+
+    if (value.kind == ValueKind.Error) {
+        diags.errorRange(e.getLoc(), e.getRange(), "%s", value.error_msg);
+        return false;
+    }
+    return checkTypeRange(diags, qt, &value, 0, e);
+}
+
+public fn bool checkBitfield(diagnostics.Diags* diags, u8 bitfield_width, bool bitfield_signed, const Expr* e) {
+    Value value = ctv_analyser.get_value((e));
+    if (value.kind == ValueKind.Error) {
+        diags.errorRange(e.getLoc(), e.getRange(), "%s", value.error_msg);
+        return false;
+    }
+    Limit limit.init(bitfield_width, bitfield_signed);
+
+    if (!value.checkRange(limit.min_val, limit.max_val)) {
+        diags.errorRange(e.getLoc(), e.getRange(), "constant value %s out-of-bounds for bitfield, range [%d, %d]",
+                         value.str(), limit.min_val, limit.max_val);
+        return false;
+    }
+    return true;
+}
+
+// Expr* e can be nil
+public fn bool checkTypeRange(diagnostics.Diags* diags, QualType qt, Value* value, SrcLoc loc, const Expr* e) {
+    QualType canon = qt.getCanonicalType();
+    if (!canon.isBuiltin()) return true;  // TODO find out cases
+    // hack to accept `u32 x = ~1;`
+    if (e && e.isTilde()) return true;
+
+    BuiltinType* bi = canon.getBuiltin();
+    // TODO: check float32 range
+    if (bi.getKind() == BuiltinKind.Float32 || bi.getKind() == BuiltinKind.Float64) return true;
+
+    Limit limit.init(bi.getWidth(), bi.isSigned());
+
+    if (!value.checkRange(limit.min_val, limit.max_val)) {
+        SrcRange range = { 0, 0 }
+        if (e) {
+            loc = e.getLoc();
+            range = e.getRange();
+        }
+        diags.errorRange(loc, range, "constant value %s out-of-bounds for type '%s', range [%d, %d]",
+                         value.str(), qt.diagNameBare(), limit.min_val, limit.max_val);
+        return false;
+    }
+    return true;
+}
+

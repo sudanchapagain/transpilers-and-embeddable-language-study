@@ -1,0 +1,17 @@
+enum Foo : char
+{
+	ABC,
+	BCD
+}
+typedef Abc = int;
+fn void main()
+{
+	$assert Foo.BCD - 1 == Foo.ABC;
+	$assert Foo.ABC + 1 == Foo.BCD;
+	$assert $typeof(Foo.BCD - 1).typeid == Foo.typeid;
+	$assert $typeof(Foo.ABC + 1).typeid == Foo.typeid;
+	Foo x = Foo.BCD;
+	$assert $typeof(x - 1).typeid == Foo.typeid;
+	x = x - 1;
+	$assert $typeof(x + 1).typeid == Foo.typeid;
+}

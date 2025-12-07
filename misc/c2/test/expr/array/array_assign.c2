@@ -1,0 +1,16 @@
+// @warnings{no-unused}
+module test;
+
+char[2] array;
+
+fn void test1() {
+    array++;    // @error{array type 'char[2]' is not assignable}
+}
+
+fn void test2() {
+    array--;    // @error{array type 'char[2]' is not assignable}
+}
+
+fn void test3() {
+    array = 30;    // @error{array type 'char[2]' is not assignable}
+}

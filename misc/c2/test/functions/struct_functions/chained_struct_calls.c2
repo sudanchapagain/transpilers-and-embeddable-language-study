@@ -1,0 +1,32 @@
+// @warnings{no-unused}
+module test;
+
+type A struct {
+    i32 x;
+}
+
+fn u32 A.run(A* a) {
+    return 10;
+}
+
+type B struct {
+    A a;
+}
+
+fn A* B.getA(B* b) {
+    return &b.a;
+}
+
+type C struct {
+    B b;
+}
+
+fn B* C.getB(C* c) {
+    return &c.b;
+}
+
+fn void test1() {
+    C c;
+    u32 n = c.getB().getA().run();
+}
+

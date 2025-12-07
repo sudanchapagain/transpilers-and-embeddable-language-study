@@ -1,0 +1,34 @@
+// @recipe bin
+$warnings no-unused
+
+// @file{file1}
+module foo;
+
+public type Type struct @(opaque) {
+    i32 x;
+}
+
+public fn Type* Type.create() {
+    Type* t = nil;
+    return t;
+}
+
+fn void Type.internal(Type* t) {
+    t.x = 1;
+}
+
+public fn void Type.init(Type* t) {
+    t.internal();
+}
+
+// @file{file2}
+module bar;
+
+import foo local;
+
+fn void test() {
+    Type* t = Type.create();
+    t.init();       // ok
+    t.x = 10;       // @error{cannot dereference opaque struct 'foo.Type'}
+}
+

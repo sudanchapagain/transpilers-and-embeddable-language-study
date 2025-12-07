@@ -1,0 +1,69 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import string;
+import stdlib;
+
+public type FunctionDeclList struct {
+    u32 count;
+    u32 capacity;
+    FunctionDecl** decls;
+}
+
+public fn void FunctionDeclList.init(FunctionDeclList* l) {
+    string.memset(l, 0, sizeof(FunctionDeclList));
+}
+
+public fn void FunctionDeclList.free(FunctionDeclList* l) {
+    if (l.decls) stdlib.free(l.decls);
+}
+
+public fn void FunctionDeclList.clear(FunctionDeclList* l) @(unused) {
+    l.count = 0;
+}
+
+public fn void FunctionDeclList.add(FunctionDeclList* l, FunctionDecl* d) {
+    if (l.count >= l.capacity) {
+        l.capacity = (l.capacity == 0) ? 4 : l.capacity * 2;
+        void* decls2 = stdlib.malloc(l.capacity * sizeof(FunctionDecl*));
+        void* old = l.decls;
+        if (old) {
+            string.memcpy(decls2, old, l.count * sizeof(FunctionDecl*));
+            stdlib.free(old);
+        }
+        l.decls = decls2;
+    }
+
+    l.decls[l.count] = d;
+    l.count++;
+}
+
+public fn u32 FunctionDeclList.size(const FunctionDeclList* l) {
+    return l.count;
+}
+
+public fn FunctionDecl** FunctionDeclList.getDecls(const FunctionDeclList* l) {
+    return l.decls;
+}
+
+public fn FunctionDecl* FunctionDeclList.find(const FunctionDeclList* l, u32 name_idx) {
+    for (u32 i=0; i<l.count; i++) {
+        FunctionDecl* fd = l.decls[i];
+        if (fd.asDecl().getNameIdx() == name_idx) return fd;
+    }
+    return nil;
+}

@@ -1,0 +1,6 @@
+// @warnings{no-unused}
+module test;
+
+type PTR const i8*;
+const PTR Size2 = nil;
+i32[Size2] b;      // @error{array size has non-integer type '(alias)test.PTR => const i8*'}

@@ -1,0 +1,202 @@
+/* Copyright 2022-2025 Bas van den Berg, Charlie Gordon
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module c_generator;
+
+import src_loc local;
+import source_mgr;
+import string_buffer;
+
+import string;
+import stdlib;
+
+type TraceCall struct {
+    u8 filename_idx;
+    u8 column;
+    u16 line;
+    u16 caller_idx;
+    u16 callee_idx;
+}
+
+type TraceCallList struct {
+    TraceCall* array;
+    u32 count;
+    u32 capacity;
+}
+
+fn u32 TraceCallList.add(TraceCallList *cl, TraceCall call) {
+    if (cl.count >= cl.capacity) {
+        cl.capacity += cl.capacity / 2 + 16;
+        TraceCall *array2 = stdlib.malloc(cl.capacity * sizeof(TraceCall));
+        if (cl.array) {
+            string.memcpy(array2, cl.array, cl.count * sizeof(TraceCall));
+            stdlib.free(cl.array);
+        }
+        cl.array = array2;
+    }
+    u32 index = cl.count++;
+    cl.array[index] = call;
+    return index;
+}
+
+fn void TraceCallList.free(TraceCallList* cl) {
+    if (cl.array) {
+        stdlib.free(cl.array);
+        cl.array = nil;
+        cl.count = 0;
+        cl.capacity = 0;
+    }
+}
+
+type StringList struct {
+    u32* hash_array;
+    u32 hash_count;
+    u32 hash_capacity;
+    char **strings;
+    u32 string_count;
+    u32 string_capacity;
+    const char *last_string;
+    u32 last_index;
+}
+
+fn void StringList.free(StringList* sl) {
+    if (sl.strings) {
+        for (u32 i = 0; i < sl.string_count; i++) {
+            stdlib.free(sl.strings[i]);
+        }
+        stdlib.free(sl.strings);
+        stdlib.free(sl.hash_array);
+        string.memset(sl, 0, sizeof(StringList));
+    }
+}
+
+fn u32 StringList.length(StringList* sl) {
+    return sl.string_count;
+}
+
+fn const char* StringList.get(const StringList* sl, u32 i) {
+    return sl.strings[i];
+}
+
+const u32 HASH_INITIAL = 13;
+const u32 HASH_PRIME = 17;
+const u32 HASH_BUCKETS = 256;
+
+fn u32 StringList.add(StringList* sl, const char* s, bool check_last) {
+    if (check_last && s == sl.last_string) return sl.last_index;
+    sl.last_string = s;
+
+    // FNV-1a hash
+    u32 hash = HASH_INITIAL;
+    for (u32 i = 0; s[i]; i++) {
+        hash ^= s[i];
+        hash *= HASH_PRIME;
+    }
+    u32 bucket = hash % HASH_BUCKETS;
+    if (sl.hash_array) {
+        for (u32 i = bucket;; i--) {
+            u32 ii = sl.hash_array[i];
+            u32 n = (u16)ii;
+            if (!string.strcmp(sl.strings[n], s)) return sl.last_index = n;
+            i = ii >> 16;
+            if (i == 0) break;
+        }
+    }
+    if (!sl.hash_capacity) {
+        sl.hash_capacity = HASH_BUCKETS + 32;
+        sl.hash_count = HASH_BUCKETS;
+        sl.hash_array = stdlib.calloc(sl.hash_capacity * sizeof(u32), 1);
+    }
+    u32 slot = sl.string_count;
+    if (sl.hash_array[bucket]) {
+        if (sl.hash_count >= sl.hash_capacity) {
+            sl.hash_capacity += sl.hash_capacity / 2;
+            u32 *hash_array2 = stdlib.malloc(sl.hash_capacity * sizeof(u32));
+            string.memcpy(hash_array2, sl.hash_array, sl.hash_count * sizeof(u32));
+            stdlib.free(sl.hash_array);
+            sl.hash_array = hash_array2;
+        }
+        u32 next = sl.hash_count++;
+        sl.hash_array[next] = sl.hash_array[bucket];
+        slot |= (next + 1) << 16;
+    }
+    sl.hash_array[bucket] = slot;
+#if 0
+    for (u32 i = sl.string_count; i-- > 0;) {
+        if (!string.strcmp(sl.strings[i], s)) return i;
+    }
+#endif
+    if (sl.string_count >= sl.string_capacity) {
+        sl.string_capacity += sl.string_capacity / 2 + 16;
+        char **strings2 = stdlib.malloc(sl.string_capacity * sizeof(char *));
+        if (sl.strings) {
+            string.memcpy(strings2, sl.strings, sl.string_count * sizeof(char *));
+            stdlib.free(sl.strings);
+        }
+        sl.strings = strings2;
+    }
+    u32 index = sl.string_count++;
+    sl.strings[index] = string.strdup(s);
+    return sl.last_index = index;
+}
+
+fn u32 Generator.addCall(Generator* gen, const char* funcname, SrcLoc loc) {
+    source_mgr.Location location = gen.sm.locate(loc);
+    TraceCall call = {
+        .filename_idx = (u8)gen.filenames.add(location.filename, true),
+        .column = (u8)location.column,
+        .line = (u16)location.line,
+        .callee_idx = (u16)gen.funcnames.add(funcname, false),
+        .caller_idx = (u16)(gen.cur_function ?
+                                gen.funcnames.add(gen.cur_function.asDecl().getFullName(), false) : 0),
+    }
+    return gen.calls.add(call);
+}
+
+fn void Generator.writeCalls(Generator* gen, string_buffer.Buf* out) {
+    if (!gen.trace_calls)
+        return;
+
+    out.add("const char *c2_filenames[] = {\n");
+    u32 n = gen.filenames.length();
+    for (u32 i = 0; i < n; i++) {
+        out.print("    \"%s\",\n", gen.filenames.get(i));
+    }
+    out.add("};\n\n");
+
+    out.add("c2_func_t c2_func_data[] = {\n");
+
+    // TODO: store function definition location
+    n = gen.funcnames.length();
+    for (u32 i = 0; i < n; i++) {
+        out.print("    { 0, 0, 0, \"%s\" },\n", gen.funcnames.get(i));
+    }
+    out.add("};\n\n");
+
+    out.add("c2_trace_t c2_trace_data[] = {\n");
+    for (u32 i = 0; i < gen.calls.count; i++) {
+        out.print("    { 0, %d, %d, %d, %d, %d },\n",
+                  gen.calls.array[i].filename_idx, gen.calls.array[i].column, gen.calls.array[i].line,
+                  gen.calls.array[i].caller_idx, gen.calls.array[i].callee_idx);
+    }
+    out.add("};\n\n");
+
+    out.add("uint32_t c2_trace_length = sizeof(c2_trace_data) / sizeof(c2_trace_data[0]);\n"
+            "uint32_t c2_trace_counts[sizeof(c2_trace_data) / sizeof(c2_trace_data[0])];\n\n");
+}
+
+fn void Generator.writeCallExterns(Generator* gen, string_buffer.Buf* out) {
+    out.add("extern uint32_t c2_trace_counts[];\n");
+}

@@ -1,0 +1,715 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ir_context;
+
+import ir local;
+import color local;
+import string_buffer;
+
+import stdio;
+import stdlib;
+import string;
+
+Color col_Instr       = Normal;
+Color col_PseudoInstr = Bred;
+Color col_Decl        = Magenta;
+Color col_Name        = White;
+Color col_Block       = Cyan;
+Color col_Symbol      = Bblue;
+Color col_Attr        = Bmagenta;
+Color col_Unknown     = Yellow;
+Color col_Value       = Magenta;
+Color col_Register    = Bgreen;
+Color col_Data        = Bcyan;
+Color col_Slot        = Bcyan;
+Color col_Temp        = Bgreen;
+Color col_Type        = Green;
+Color col_Comment     = Grey;
+Color col_Fixup       = Bred;
+Color col_Arch        = Bcyan;
+
+const u32 MaxTemps = 4096;
+
+type PrintHelper struct {
+    const Context* c;
+    const BlockList* blocks;
+
+    string_buffer.Buf* out;
+    // TODO resize (must be at least same size as nr of instructions in function
+    u32* temp_ids; // index = instr_idx[from start of func), value is temp%
+    u32 temp_count;
+
+    const Block* cur_block;
+    const FunctionInfo* cur_info;
+    u32 blk_instr_start;
+    u32 blk_instr_count;
+}
+
+fn void PrintHelper.init(PrintHelper* ph, const Context* c) {
+    ph.out = string_buffer.create(64*1024, useColor(), 2);
+
+    // TODO print name of module
+
+    ph.blocks = nil;
+    ph.c = c;
+    ph.temp_ids = stdlib.calloc(MaxTemps, sizeof(u32));
+    ph.temp_count = 0;
+    ph.cur_block = nil;
+    ph.cur_info = nil;
+}
+
+fn void PrintHelper.free(PrintHelper* ph) {
+    ph.out.free();
+    stdlib.free(ph.temp_ids);
+}
+
+fn void PrintHelper.print(const PrintHelper* ph) {
+    ph.out.color(color.Normal);
+    stdio.puts(ph.out.data());
+}
+
+fn void PrintHelper.resetTemps(PrintHelper* ph, u32 num_args, u32 num_instr) {
+    ph.temp_count = num_args;
+    assert(num_instr < MaxTemps);
+    string.memset(ph.temp_ids, 0, num_instr*sizeof(u32));
+}
+
+fn u32 PrintHelper.addTemp(PrintHelper* ph, u32 local_instr_idx) {
+    u32 temp_nr = ph.temp_count;
+    assert(local_instr_idx < MaxTemps);
+    assert(ph.temp_ids[local_instr_idx] == 0);
+    ph.temp_ids[local_instr_idx] = temp_nr;
+    ph.temp_count++;
+    return temp_nr;
+}
+
+fn u32 PrintHelper.findTemp(PrintHelper* ph, u32 instr_idx) {
+    assert(instr_idx < MaxTemps);
+    return ph.temp_ids[instr_idx];
+}
+
+#if DebugIr
+fn void print_dest(string_buffer.Buf* out, BlockId id) {
+    if (id == 0) {
+        out.add1('-');
+    } else {
+        out.print("%d", id);
+    }
+}
+#endif
+
+fn void PrintHelper.collect_temps(PrintHelper* ph) {
+    const Instr* instr = ph.cur_info.instructions.get(0);
+    for (u32 i=0; i<ph.cur_info.instructions.getCount(); i++) {
+        const Instr* ii = &instr[i];
+        if (ii.hasResult()) ph.addTemp(i);
+    }
+}
+
+fn void PrintHelper.print_func(PrintHelper* ph, const Symbol* s, const FunctionInfo* info) {
+    const Context* c = ph.c;
+
+    if (!info) return;  // external symbol
+    //dump_function(info, c.pool.idx2str(s.name));
+
+    ph.blocks = &info.blocks;
+    ph.cur_info = info;
+
+    string_buffer.Buf* out = ph.out;
+
+    // Always start temps at 1
+    ph.resetTemps(1, info.instructions.getCount());
+
+    if (s.is_external) {
+        out.color(col_Attr);
+        out.add("external ");
+    }
+    // print name
+    out.color(col_Attr);
+    out.add("fn");
+    Type rt = info.getReturnType();
+    if (rt != Type.None) {
+        out.space();
+        out.color(col_Type);
+        out.add(rt.str());
+        out.color(color.Normal);
+    }
+    out.color(col_Symbol);
+    out.print(" %s(", c.pool.idx2str(s.name));
+    // Note: start at 1, because entry 0 is return type
+    for (u32 i=1; i<info.num_args; i++) {
+        if (i != 1) out.add(", ");
+        out.color(col_Type);
+        Type t = info.getArg(i);
+        out.add(t.str());
+        out.color(color.Normal);
+    }
+    out.add(") {");
+    out.add("  ");
+    out.color(col_Comment);
+    out.print("# %d blocks, %d instr, %d slots", info.blocks.getCount(), info.instructions.getCount(), info.num_slots);
+    out.newline();
+
+    // print blocks
+    u32 num_blks = info.blocks.getCount();
+#if DebugIr
+    out.color(color.Grey);
+    out.print("  %d blocks\n", num_blks);
+#endif
+
+    // collect temps (needs to be done first since they can refer forward as well)
+    ph.collect_temps();
+
+    const Block* blks = ph.blocks.get(0);
+    u32 max = 0;
+    for (u32 blk_id=0; blk_id<num_blks; blk_id++) {
+        ph.cur_block = &blks[blk_id];
+        const Block* b = ph.cur_block;
+        out.color(color.Yellow);
+        out.print("%s.%d:", b.getKindName(), blk_id);
+        if (!b.used) {
+            out.color(color.Grey);
+            out.add("  # unused");
+        }
+        Index i_idx = b.getInstructions();
+#if DebugIr
+        out.color(color.Grey);
+        out.space();
+        print_dest(out, b.dests[0]);
+        out.space();
+        print_dest(out, b.dests[1]);
+        out.print("  I[%d-%d]", i_idx.start, i_idx.start + i_idx.count -1);
+#endif
+        out.newline();
+        // print instructions
+        ph.blk_instr_start = i_idx.start;
+        ph.blk_instr_count = i_idx.count;
+
+        const Instr* instrs = info.instructions.get(i_idx.start);
+        for (u32 j=0; j<i_idx.count; j++) {
+            ph.printInstr(instrs, j, i_idx.start + j);
+        }
+        if (i_idx.count == 0) {
+            out.color(col_Fixup);
+            out.add("  NO INSTRUCTIONS!!\n");
+        }
+        u32 last = i_idx.start + i_idx.count;
+        if (last > max) max = last;
+        ph.cur_block = nil;
+    }
+
+    // there can be inserted, trailing instructions (outside any block)
+    u32 instr_count = info.instructions.getCount();
+    if (max != instr_count) {
+        out.color(col_Fixup);
+        out.print("Inserted (%d)\n", instr_count - max);
+        const Instr* instrs = info.instructions.get(0);
+        // NOTE: if inserted instructions with JmpDest, printRef() fails!
+        // WORKAROUND just set b0
+        //ph.cur_block = &blks[0];
+        while (max != instr_count) {
+            ph.printInstr(instrs, max, max);
+            max++;
+        }
+        //ph.cur_block = nil;
+    }
+
+    out.color(color.Normal);
+    out.add("}\n");
+}
+
+fn void Context.print_function(const Context* c,
+                               const Symbol* symbol,
+                               const FunctionInfo* info,
+                               const char* version) @(unused) {
+    PrintHelper ph.init(c);
+
+    ph.out.add("------ ");
+    ph.out.add(version);
+    ph.out.add(" ------\n");
+    ph.print_func(symbol, info);
+
+    ph.print();
+    ph.free();
+}
+
+public fn void Context.print(const Context* c) {
+    PrintHelper ph.init(c);
+    string_buffer.Buf* out = ph.out;
+
+    bool prev_is_var = false;
+    for (u32 i=1; i<c.symbols.getCount(); i++) {
+        const Symbol* s = c.symbols.get(i);
+        if (s.is_function) {
+            if (prev_is_var) out.newline();
+            ph.print_func(s, s.f.info);
+            out.newline();
+        } else {
+            if (s.is_external) {
+                out.color(col_Attr);
+                out.add("external ");
+            }
+            out.color(col_Symbol);
+            out.print("%s", c.pool.idx2str(s.name));
+            out.space();
+            out.color(col_Value);
+            out.print("align %d ", s.align);
+            const InitValue* v = c.init_values.get(s.g.init_value_idx);
+            if (s.g.init_value_count == 1) {
+                ph.printInitValue(v, out);
+            } else {
+                out.color(col_Data);
+                out.add("[ ");
+                for (u32 j=0; j<s.g.init_value_count; j++) {
+                    if (j != 0) out.add(", ");
+                    ph.printInitValue(&v[j], out);
+                }
+                out.color(col_Data);
+                out.add(" ]");
+            }
+            out.newline();
+        }
+        prev_is_var = !s.is_function;
+    }
+
+    ph.print();
+    ph.free();
+}
+
+fn void PrintHelper.printInitValue(PrintHelper* ph, const InitValue* v, string_buffer.Buf* out) {
+    switch (v.getKind()) {
+    case None:
+        break;
+    case Byte:
+        out.color(col_Data);
+        out.print("b %d", v.value);
+        break;
+    case Short:
+        out.color(col_Data);
+        out.print("s %d", v.value);
+        break;
+    case Word:
+        out.color(col_Data);
+        out.print("w %d", v.value);
+        break;
+    case Word2:
+        out.color(col_Data);
+        const Constant* con = ph.c.constants.get(v.value);
+        out.print("w %d", con.uvalue);
+        break;
+    case Long:
+        out.color(col_Data);
+        out.print("l %d", v.value);
+        break;
+    case Long2:
+        const Constant* con = ph.c.constants.get(v.value);
+        out.print("l %d", con.uvalue);
+        break;
+    case Symbol:
+        const Symbol* g = ph.c.symbols.get(v.value);
+        out.color(col_Symbol);
+        out.print("@%s", ph.c.pool.idx2str(g.name));
+        break;
+    case Text:
+        out.color(col_Data);
+        const char* text = ph.c.pool.idx2str(v.value);
+        out.add1('"');
+        out.encodeBytes(text, (u32)string.strlen(text) + 1, '"');
+        out.add1('"');
+        break;
+    case Zero:
+        out.color(col_Data);
+        out.print("z %d", v.value);
+        break;
+    }
+}
+
+fn void PrintHelper.printInstr(PrintHelper* ph, const Instr* blk_instrs, u32 blk_instr_idx, u32 gbl_idx) {
+    const Instr* i = &blk_instrs[blk_instr_idx];
+    string_buffer.Buf* out = ph.out;
+
+    InstrKind k = i.getKind();
+
+    // special case for comments
+    if (i.isComment()) {
+        out.resetToLastNewline();
+        out.add("   ");
+        out.color(col_Comment);
+        out.add("# ");
+        out.add(ph.c.pool.idx2str((u32)i.args[0].value));
+        out.color(color.Normal);
+        out.newline();
+        return;
+    }
+
+#if 1
+    // print instr index in front
+    out.color(col_Comment);
+    out.print("%-3d", gbl_idx);
+#endif
+
+    out.indent(2);
+
+    if (i.isNone()) {
+        out.add("-\n");
+        return;
+    }
+
+    if (i.hasResult()) {
+        if (i.hasRegister()) {
+            out.color(col_Register);
+            out.print("r%d", i.getRegister());
+        } else {
+            out.color(col_Temp);
+            u32 temp_nr = ph.findTemp(ph.blk_instr_start + blk_instr_idx);
+            out.print("%%%d", temp_nr);
+        }
+
+        out.color(color.Normal);
+        out.add(" = ");
+    }
+    if (i.isArch()) {
+        out.color(col_Arch);
+        //out.add("(arch) ");
+        //TODO assert ph.c.target.num_instr
+        out.add(ph.c.target.instr_names[i.instrBits.arch_instr]);
+    } else {
+        if (i.isPseudo()) {
+            out.color(col_PseudoInstr);
+        } else {
+            out.color(col_Instr);
+        }
+        out.add(i.getKindName());
+    }
+
+    switch (i.getKind()) {
+    case Call:
+        out.space();
+        ph.printRef(i.args[0], false);
+        i32 num_args = i.args[1].value;
+        out.print(" %d", num_args);
+        break;
+    case JmpIf:
+        for (u32 r=0; r<elemsof(i.args); r++) {
+            if (i.args[r].isValid()) {
+                if (r > 0) out.add1(',');
+                out.space();
+                ph.printRef(i.args[r], false);
+            }
+        }
+        if (!ph.cur_block.dests[1]) {
+            out.space();
+            out.color(col_Fixup);
+            out.add(" MISSING DEST[1]");
+        }
+        break;
+    case Switch:
+        out.color(color.Normal);
+        out.space();
+        ph.printRef(i.args[0], false);
+        out.add(", ");
+        // Note: cannot use printRef, since the dest is not in block.dests[]
+        out.color(col_Block);
+        u32 join_blk = (u32)i.args[1].value;
+        Block* dest = ph.blocks.get(join_blk);
+        out.print("@%s.%d", dest.getKindName(), join_blk);
+        out.newline();
+        CaseId case_id = ph.cur_block.dests[0];
+        u32 num_cases = ph.cur_block.dests[1];
+        for (u32 j=0; j<num_cases; j++) {
+            Case* cc = ph.cur_info.cases.get(case_id+j);
+            out.indent(5);
+            out.color(col_Value);
+            out.print("%d", cc.value);
+            out.space();
+            out.color(col_Block);
+            dest = ph.blocks.get(cc.block);
+            out.print("@%s.%d", dest.getKindName(), cc.block);
+            out.color(color.Normal);
+            out.newline();
+        }
+        return;
+    case Phi:
+        out.color(color.Normal);
+        out.add(" [ ");
+        const PhiClause* clauses = ph.cur_info.phis.get((u32)i.args[0].value);
+        for (u32 j=0; j<i.args[1].value; j++) {
+            if (j != 0) out.add(", ");
+            const PhiClause*pc = &clauses[j];
+            u32 blk_id = pc.src;
+            Block* src = ph.blocks.get(blk_id);
+            out.color(col_Block);
+            out.print("@%s.%d", src.getKindName(), blk_id);
+            out.color(color.Normal);
+            out.add(": ");
+            ph.printRef(pc.ref, false);
+        }
+        out.add(" ]");
+        break;
+    default:
+        for (u32 r=0; r<elemsof(i.args); r++) {
+            if (i.args[r].isValid()) {
+                if (r > 0) out.add1(',');
+                out.space();
+                ph.printRef(i.args[r], false);
+            }
+        }
+        break;
+    }
+
+    out.newline();
+}
+
+fn void PrintHelper.printRef(PrintHelper* ph, Ref r, bool print_type) {
+    string_buffer.Buf* out = ph.out;
+    switch (r.getKind()) {
+    case None:
+        out.add("(none)");
+        break;
+    case Slot:
+        out.color(col_Slot);
+        out.print("s%d", r.value);
+        break;
+    case Temp:
+        out.color(col_Temp);
+        u32 v = ph.findTemp((u32)r.value);
+        if (v == 0) out.color(col_Fixup);
+        out.print("%%%d", v);
+#if DebugIr
+        out.color(color.Grey);
+        out.print("(T%d)", r.value);
+#endif
+        break;
+    case JmpDest:
+        assert(ph.cur_block);
+        const Block* b = ph.cur_block;
+        out.color(col_Block);
+        assert(b.dests[0]);
+        Block* dest = ph.blocks.get(b.dests[0]);
+        out.print("@%s.%d", dest.getKindName(), b.dests[0]);
+        if (b.dests[1]) {
+            out.add(", ");
+            dest = ph.blocks.get(b.dests[1]);
+            out.print("@%s.%d", dest.getKindName(), b.dests[1]);
+        }
+        break;
+    case Symbol:
+        const Symbol* g = ph.c.symbols.get((u32)r.value);
+        out.color(col_Symbol);
+        out.print("@%s", ph.c.pool.idx2str(g.name));
+        break;
+    case Value:
+        out.color(col_Value);
+        out.print("%d", r.value);
+        break;
+    case Integer:
+        out.color(col_Value);
+        const Constant* con = ph.c.constants.get((u32)r.value);
+        out.print("%d", con.ivalue);
+        break;
+    case Float:
+        // TODO
+        break;
+    case Double:
+        // TODO
+        break;
+    case Text:
+        out.color(col_Block);
+        out.add(ph.c.pool.idx2str((u32)r.value));
+        break;
+    case Register:
+        out.color(col_Register);
+        out.print("r%d", r.value);
+        break;
+    case Block:
+        out.color(col_Block);
+        Block* b = ph.blocks.get((u32)r.value);
+        out.print("@%s.%d", b.getKindName(), r.value);
+        break;
+    case PhiClause:
+        out.color(col_Value);
+        out.print("%d", r.value);
+        break;
+    case CallNumArgs:
+        out.color(col_Value);
+        out.print("%d", r.value);
+        break;
+    }
+    out.color(color.Normal);
+}
+
+
+fn void dump_function(const FunctionInfo* info, const char* name) @(unused) {
+    string_buffer.Buf* out = string_buffer.create(16*1024, false, 1);
+    out.print("function %s:\n", name);
+    dump_function_info(out, info);
+    stdio.puts(out.data());
+    out.free();
+}
+
+fn void dump_function_info(string_buffer.Buf* out, const FunctionInfo* info) @(unused) {
+    out.add("  blocks:\n");
+    for (u32 j=0; j<info.blocks.getCount(); j++) {
+        const Block* b = info.blocks.get(j);
+        Index b_idx = b.getInstructions();
+        out.print("    [%3d] %14s  D %2d|%2d  I %3d-%3d",
+            j, b.getKindName(), b.dests[0], b.dests[1], b_idx.start, b_idx.start + b_idx.count - 1);
+        if (b.used) out.add(" unused");
+        if (b.end_with_switch) out.add(" switch");
+        if (b.end_block) out.add(" end");
+        if (b.phi_source) out.add(" phi-src");
+        out.newline();
+    }
+    out.print("  instructions: %d\n", info.instructions.getCount());
+    const Instr* instr = info.instructions.get(0);
+    for (u32 i=0; i<info.instructions.getCount(); i++) {
+        const Instr* r = &instr[i];
+        out.print("    [%3d] %c  %7s", i, r.hasResult() ? 'r' : ' ', r.getKindName());
+        out.print("  %8s %4d  ", r.args[0].getKindName(), r.args[0].value);
+        out.print("  %8s %4d", r.args[01].getKindName(), r.args[1].value);
+        out.newline();
+    }
+
+    u32 num_cases = info.cases.getCount();
+    if (num_cases) {
+        out.print(" cases: (%d)\n", num_cases);
+        const Case* cases = info.cases.get(0);
+        for (u32 i=0; i<num_cases; i++) {
+            const Case* c = &cases[i];
+            out.print("    [%2d] %3d   blk %d\n", i, c.value, c.block);
+        }
+    }
+
+    u32 num_clauses = info.phis.getCount();
+    if (num_clauses) {
+        out.print(" phi clauses: (%d)\n", num_clauses);
+        for (u32 i=0; i<num_clauses; i++) {
+            const PhiClause* pc = info.phis.get(i);
+            out.print("    [%2d] %2d <=  %8s %2d   blk %2d\n", i, pc.dest_idx, pc.ref.getKindName(), pc.ref.value, pc.src);
+        }
+    }
+
+    out.newline();
+}
+
+public fn void Context.dump(const Context* c) @(unused) {
+    string_buffer.Buf* out = string_buffer.create(16*1024, false, 1);
+
+    out.print("symbols: (%d)\n", c.symbols.getCount());
+    for (u32 i=1; i<c.symbols.getCount(); i++) {
+        const Symbol* s = c.symbols.get(i);
+        out.print("  [%2d] %s", i, c.pool.idx2str(s.name));
+        if (s.is_function) {
+            if (s.f.info) dump_function_info(out, s.f.info);  // causes crash??
+        } else {
+            u32 init_value_idx;
+            u32 init_value_count;
+            out.print("  init_value %d-%d",
+                s.g.init_value_idx, s.g.init_value_idx + s.g.init_value_count - 1);
+        }
+        out.newline();
+
+        //out.print("  [%2d] %2d  %2d  %s\n", i, g.name, g.func, c.pool.idx2str(g.name));
+    }
+    out.newline();
+
+    if (c.constants.getCount()) {
+        out.print("constants: (%d)\n", c.constants.getCount());
+        for (u32 i=0; i<c.constants.getCount(); i++) {
+            const Constant* con = c.constants.get(i);
+            // TODO need to know type, for now print as ivalue
+            out.print("  [%2d] %d\n", i, con.ivalue);
+        }
+        out.newline();
+    }
+
+    if (c.init_values.getCount()) {
+        out.print("init values: (%d)\n", c.init_values.getCount());
+        for (u32 i=0; i<c.init_values.getCount(); i++) {
+            const InitValue* v = c.init_values.get(i);
+            out.print("  [%2d] %6s  %d\n", i, v.getKindName(), v.value);
+        }
+        out.newline();
+    }
+
+    stdio.puts(out.data());
+    out.free();
+}
+
+#if 0
+public fn void Context.dump_temps(const Context* c) @(unused) {
+    if (c.tmp_info.blocks.getCount() == 0) return;
+
+    string_buffer.Buf* out = string_buffer.create(16*1024, false, 1);
+
+    out.add("temp blocks:\n");
+    for (u32 i=0; i<c.tmp_info.blocks.getCount(); i++) {
+        const Block* b = c.tmp_info.blocks.get(i);
+        Index b_idx = b.getInstructions();
+        out.print("  [%3d] %14s  D %d-%d  I %d-%d",
+            i, b.getKindName(), b.dests[0], b.dests[1], b_idx.start, b_idx.start + b_idx.count - 1);
+        out.newline();
+    }
+    out.newline();
+
+    out.add("instructions:\n");
+    const Block* start_blk = c.tmp_info.blocks.get(0);
+    const Instr* instr = c.instructions.get(0);
+    for (u32 i=start_blk.instr.start; i<c.instructions.getCount(); i++) {
+        const Instr* r = &instr[i];
+        out.print("  [%3d] %7s", i, r.getKindName());
+        out.print("  %8s %3d  ", r.args[0].getKindName(), r.args[0].value);
+        out.print("  %8s %3d  ", r.args[01].getKindName(), r.args[1].value);
+        out.newline();
+    }
+    out.newline();
+
+    stdio.puts(out.data());
+    out.free();
+}
+#endif
+
+public fn void Context.report(const Context* c) @(unused) {
+    string_buffer.Buf* out = string_buffer.create(256, false, 1);
+
+    u32 total_blocks = 0;
+    u32 total_instr = 0;
+    u32 total_functions = 0;
+    u32 total_globals = 0;
+
+    for (u32 i=1; i<c.symbols.getCount(); i++) {
+        const Symbol* s = c.symbols.get(i);
+        if (s.is_function) {
+            total_functions++;
+            if (s.f.info) {
+                total_blocks += s.f.info.blocks.getCount();
+                total_instr += s.f.info.instructions.getCount();
+            } else {
+                out.print("NO INFO: %s\n", c.pool.idx2str(s.name));
+            }
+        } else {
+            total_globals++;
+        }
+    }
+
+    out.print("IR: %d symbols (%d globals, %d funcs), %d const, %d blocks, %d instr, %d values\n",
+        c.symbols.count, total_globals, total_functions, c.constants.count,
+        total_blocks, total_instr, c.init_values.getCount());
+
+    stdio.puts(out.data());
+    out.free();
+}
+

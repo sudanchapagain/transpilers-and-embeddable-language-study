@@ -1,0 +1,8 @@
+// @warnings{no-unused}
+
+module test;
+
+static_assert(8, sizeof(isize));
+static_assert(8, sizeof(usize));
+static_assert(8, sizeof(void*));
+

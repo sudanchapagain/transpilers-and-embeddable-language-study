@@ -1,0 +1,11 @@
+// @warnings{no-unused}
+module test;
+
+public fn i32 foo() {
+first:
+second:
+third:
+    return 0;
+}
+
+

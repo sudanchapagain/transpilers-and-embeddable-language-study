@@ -1,0 +1,7 @@
+// @warnings{no-unused}
+module test;
+
+fn void test1() {
+    assert(test1());        // @error{invalid type conversion from 'void' to 'bool'}
+}
+

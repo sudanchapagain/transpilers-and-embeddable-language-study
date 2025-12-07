@@ -1,0 +1,9 @@
+fn hello():void! {
+    println('hello nature')
+    throw errorf('world error')
+}
+
+fn main():void! {
+    hello()
+    println('can not get here')
+}

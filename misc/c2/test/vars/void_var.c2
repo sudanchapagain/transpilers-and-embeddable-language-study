@@ -1,0 +1,7 @@
+// @warnings{no-unused}
+module test;
+
+fn void test1() {
+    void a;     // @error{variable has invalid type 'void'}
+}
+

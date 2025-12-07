@@ -1,0 +1,5 @@
+// @warnings{no-unused}
+module test;
+
+public fn void b() @(opaque) {} // @error{attribute 'opaque' is not applicable to functions}
+

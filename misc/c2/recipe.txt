@@ -1,0 +1,547 @@
+
+plugin deps_generator [all-targets files private]
+plugin refs_generator [all-targets]
+
+$config AstStatistics
+
+set common
+    common/attr_handler.c2
+    common/build_target.c2
+    common/component.c2
+    common/console.c2
+    common/diagnostics.c2
+    common/file_list.c2
+    common/file/file_utils.c2
+    common/file/reader.c2
+    common/file/writer.c2
+    common/library_list.c2
+    common/linked_list.c2
+    common/module_list.c2
+    common/process_utils.c2
+    common/source_mgr.c2
+    common/string_list.c2
+    common/string_utils.c2
+    common/utf8.c2
+    common/utils.c2
+    common/warning_flags.c2
+end
+
+set ast
+    # utils
+    ast_utils/attr.c2
+    ast_utils/attr_table.c2
+    ast_utils/color.c2
+    ast_utils/constants.c2
+    ast_utils/context.c2
+    ast_utils/number_radix.c2
+    ast_utils/src_loc.c2
+    ast_utils/string_buffer.c2
+    ast_utils/string_pool.c2
+
+    # ast declarations
+    ast/decl.c2
+    ast/alias_type_decl.c2
+    ast/array_value.c2
+    ast/decl_stmt.c2
+    ast/enum_constant_decl.c2
+    ast/enum_type_decl.c2
+    ast/function_decl.c2
+    ast/function_type_decl.c2
+    ast/import_decl.c2
+    ast/static_assert.c2
+    ast/struct_type_decl.c2
+    ast/value.c2
+    ast/var_decl.c2
+
+    # ast statements
+    ast/stmt.c2
+    ast/asm_stmt.c2
+    ast/assert_stmt.c2
+    ast/break_stmt.c2
+    ast/compound_stmt.c2
+    ast/continue_stmt.c2
+    ast/fallthrough_stmt.c2
+    ast/for_stmt.c2
+    ast/goto_stmt.c2
+    ast/if_stmt.c2
+    ast/label_stmt.c2
+    ast/return_stmt.c2
+    ast/switch_case.c2
+    ast/switch_stmt.c2
+    ast/while_stmt.c2
+
+    # ast expressions
+    ast/expr.c2
+    ast/array_designated_init_expr.c2
+    ast/array_subscript_expr.c2
+    ast/binary_operator.c2
+    ast/bitoffset_expr.c2
+    ast/boolean_literal.c2
+    ast/builtin_expr.c2
+    ast/call_expr.c2
+    ast/char_literal.c2
+    ast/conditional_operator.c2
+    ast/explicit_cast_expr.c2
+    ast/field_designated_init_expr.c2
+    ast/float_literal.c2
+    ast/identifier_expr.c2
+    ast/implicit_cast_expr.c2
+    ast/init_list_expr.c2
+    ast/integer_literal.c2
+    ast/member_expr.c2
+    ast/named_argument.c2
+    ast/nil_expr.c2
+    ast/paren_expr.c2
+    ast/range_expr.c2
+    ast/string_literal.c2
+    ast/type_expr.c2
+    ast/unary_operator.c2
+
+    # ast types
+    ast/type.c2
+    ast/alias_type.c2
+    ast/array_type.c2
+    ast/builtin_type.c2
+    ast/enum_type.c2
+    ast/function_type.c2
+    ast/module_type.c2
+    ast/pointer_type.c2
+    ast/qualtype.c2
+    ast/struct_type.c2
+    ast/type_ref.c2
+
+    # ast utility function
+	ast/array_value_list.c2
+    ast/ast.c2
+	ast/decl_list.c2
+	ast/expr_list.c2
+	ast/function_decl_list.c2
+	ast/import_decl_list.c2
+    ast/instance_table.c2
+    ast/instantiator.c2
+    ast/module.c2
+    ast/pointer_pool.c2
+	ast/static_assert_list.c2
+    ast/statistics.c2
+    ast/string_type_pool.c2
+    ast/symbol_table.c2
+    ast/utils.c2
+
+end
+
+set yaml
+    common/yaml/yaml_data.c2
+    common/yaml/yaml_dump.c2
+    common/yaml/yaml_iterator.c2
+    common/yaml/yaml_tokenizer.c2
+    common/yaml/yaml_parser.c2
+end
+
+set refs
+    common/file/file_utils.c2
+    common/linked_list.c2
+    common/utils.c2
+
+    generator/c2refs.c2
+    generator/radix_tree/radix_tree.c2
+    generator/radix_tree/radix_tree_fs.c2
+    generator/radix_tree/radix_tree_dump.c2
+
+    ast_utils/string_pool.c2
+
+    tools/common/refs_finder.c2
+end
+
+executable c2c
+#	 $warnings no-unused
+    $warnings no-unused-variable
+    $warnings no-unused-parameter
+    $warnings no-unused-enum-constant
+    $warnings unreachable-code
+    $warnings promote-to-error
+    $use pthread dynamic
+
+    $backend c
+#    $backend ir
+#    $disable-asserts
+#    $config DumpTokens
+#    $config PrintGenerated
+#    $config DebugIr
+#    $config Arch32  # should be set by build-file
+    $plugin git_version []
+
+    $use dl dynamic
+
+    (ast)
+
+    ast/ast_evaluator.c2
+
+    (yaml)
+
+    (common)
+
+    common/ast_builder.c2
+    common/build_file.c2
+    common/build_file_parser.c2
+    common/bit_array.c2
+    common/bit_utils.c2
+    common/c_prec.c2
+    common/c2_prec.c2
+    common/component_sorter.c2
+    common/index_list.c2
+    common/dsm_sorter.c2
+    common/manifest_writer.c2
+    common/target_info.c2
+    common/value_maplist.c2
+    common/file/copy.c2
+
+    parser/c2_parser.c2
+    parser/c2_parser_expr.c2
+    parser/c2_parser_stmt.c2
+    parser/c2_parser_switch.c2
+    parser/c2_parser_type.c2
+    parser/c2_tokenizer.c2
+    parser/case_list.c2
+    parser/expr_list.c2
+    parser/keywords.c2
+    parser/stmt_list.c2
+    parser/token.c2
+
+    plugins/plugin_info.c2
+
+    analyser/conversion_checker.c2
+    analyser/conversion_checker_expr.c2
+    analyser/incr_array_list.c2
+    analyser/init_checker.c2
+    analyser/module_analyser.c2
+    analyser/module_analyser_binop.c2
+    analyser/module_analyser_builtin.c2
+    analyser/module_analyser_call.c2
+    analyser/module_analyser_expr.c2
+    analyser/module_analyser_function.c2
+    analyser/module_analyser_init.c2
+    analyser/module_analyser_member.c2
+    analyser/module_analyser_stmt.c2
+    analyser/module_analyser_struct.c2
+    analyser/module_analyser_switch.c2
+    analyser/module_analyser_type.c2
+    analyser/module_analyser_unaryop.c2
+    analyser/module_sorter.c2
+    analyser/struct_field_init_checker.c2
+    analyser/name_vector.c2
+    analyser/label_vector.c2
+    analyser/scope.c2
+    analyser/size_analyser.c2
+    analyser/struct_func_list.c2
+    analyser/unused_checker.c2
+
+    analyser_utils/ctv_analyser.c2
+    analyser_utils/printf_utils.c2
+
+    compiler/c2recipe.c2
+    compiler/c2recipe_parser.c2
+#    compiler/c2recipe_yaml.c2
+    compiler/compiler.c2
+    compiler/compiler_generate.c2
+    compiler/compiler_target.c2
+    compiler/compiler_libs.c2
+    compiler/compiler_analyse.c2
+	compiler/main.c2
+    compiler/manifest.c2
+    compiler/plugin_mgr.c2
+
+    generator/ast_visitor.c2
+    generator/ast_visitor_expr.c2
+    generator/c2i/c2i_generator.c2
+    generator/c2i/c2i_generator_decl.c2
+    generator/c2i/c2i_generator_expr.c2
+    generator/c2i/c2i_generator_stmt.c2
+    generator/c/c_generator.c2
+    generator/c/c_generator_call.c2
+    generator/c/c_generator_expr.c2
+    generator/c/c_generator_special.c2
+    generator/c/c_generator_stmt.c2
+    generator/c/c_generator_trace.c2
+    generator/c/dep_finder.c2
+
+    generator/source_lib/source_lib_generator.c2
+
+    generator/generator_utils.c2
+
+    generator/ir/array_init_sorter.c2
+    generator/ir/basic_struct_layouter.c2
+    generator/ir/field_struct_layouter.c2
+    generator/ir/ir_generator.c2
+    generator/ir/ir_generator_binop.c2
+    generator/ir/ir_generator_call.c2
+    generator/ir/ir_generator_expr.c2
+    generator/ir/ir_generator_member.c2
+    generator/ir/ir_generator_stmt.c2
+    generator/ir/ir_generator_switch.c2
+    generator/ir/ir_generator_locals.c2
+    generator/ir/ref_list.c2
+
+    ir/block.c2
+    ir/block_list.c2
+    ir/case_list.c2
+    ir/common.c2
+    ir/constant.c2
+    ir/constant_list.c2
+    ir/context.c2
+    ir/context_output.c2
+    ir/context_target.c2
+    ir/copy_list.c2
+    ir/function_info.c2
+    ir/graphviz.c2
+    ir/init_value.c2
+    ir/init_value_list.c2
+    ir/inserter.c2
+    ir/instr.c2
+    ir/instr_kind.c2
+    ir/instr_list.c2
+    ir/interference_graph.c2
+    ir/live_map.c2
+    ir/lookup_table.c2
+    ir/phi_list.c2
+    ir/print.c2
+    ir/ref.c2
+    ir/register_alloc.c2
+    ir/rev_list.c2
+    ir/rpo.c2
+    ir/slot_collector.c2
+    ir/slot_values.c2
+    ir/slot_writes_map.c2
+    ir/ssa.c2
+    ir/switch.c2
+    ir/symbol_list.c2
+    ir/target.c2
+    ir/tools.c2
+    ir/types.c2
+    ir/usage_counter.c2
+    ir/work_queue.c2
+    ir/arch_amd64/arch_amd64.c2
+    ir/arch_arm64/arch_arm64.c2
+    ir/arch_rv64/arch_rv64.c2
+end
+
+executable c2tags
+    $warnings no-unused-variable
+    $warnings no-unused-function
+    $warnings no-unused-parameter
+    $warnings no-unused-public
+    $warnings no-unused-enum-constant
+
+    $backend c
+#    $config MeasureTime
+    $config RadixTreeValue
+
+    (refs)
+
+    ast_utils/constants.c2
+
+    tools/c2tags.c2
+end
+
+executable c2rename
+    $warnings no-unused
+    $backend c
+    $config RadixTreeValue
+
+    ast_utils/constants.c2
+
+    common/file/reader.c2
+    common/file/writer.c2
+    common/quicksort.c2
+
+    (refs)
+
+    tools/common/replacer.c2
+    tools/c2rename.c2
+end
+
+executable tester
+#	$warnings no-unused
+    $warnings no-unused-variable
+    $warnings no-unused-function
+    $warnings no-unused-parameter
+    $warnings no-unused-public
+    $warnings no-unused-enum-constant
+
+	$backend c
+    $use pthread dynamic
+#    $config TesterDebug
+
+    ast_utils/color.c2
+    ast_utils/constants.c2
+    ast_utils/string_buffer.c2
+
+    common/file/file_utils.c2
+    common/file/reader.c2
+    common/file/writer.c2
+    common/string_utils.c2
+
+	tools/tester/tester.c2
+	tools/tester/line_db.c2
+	tools/tester/test_db.c2
+    tools/tester/expect_file.c2
+    tools/tester/issues.c2
+    tools/tester/test_utils.c2
+end
+
+executable c2cat
+	$warnings no-unused
+	$backend c
+
+    ast_utils/color.c2
+    ast_utils/constants.c2
+    ast_utils/number_radix.c2
+    ast_utils/src_loc.c2
+    ast_utils/string_buffer.c2
+    ast_utils/string_pool.c2
+
+    common/file/file_utils.c2
+    common/file/reader.c2
+    common/string_list.c2
+    common/utf8.c2
+
+    parser/c2_tokenizer.c2
+    parser/keywords.c2
+    parser/token.c2
+
+    tools/c2cat.c2
+end
+
+executable c2loc
+#	$warnings no-unused
+    $warnings no-unused-variable
+    $warnings no-unused-function
+    $warnings no-unused-parameter
+    $warnings no-unused-public
+    $warnings no-unused-type
+    $warnings no-unused-enum-constant
+
+	$backend c
+
+    ast_utils/color.c2
+    ast_utils/constants.c2
+    ast_utils/src_loc.c2
+    ast_utils/string_buffer.c2
+    ast_utils/string_pool.c2
+
+    common/build_target.c2
+    common/file_list.c2
+    common/file/file_utils.c2
+    common/file/reader.c2
+    common/library_list.c2
+    common/source_mgr.c2
+    common/string_list.c2
+    common/warning_flags.c2
+
+    compiler/c2recipe.c2
+    compiler/c2recipe_parser.c2
+
+    tools/c2loc.c2
+end
+
+lib deps_generator dynamic
+#	$warnings no-unused
+    $warnings no-unused-variable
+    $warnings no-unused-function
+    $warnings no-unused-parameter
+    $warnings no-unused-public
+    $warnings no-unused-enum-constant
+
+	$backend c
+
+    (ast)
+    (common)
+
+    common/ast_builder.c2
+    parser/expr_list.c2
+
+    generator/ast_visitor.c2
+    generator/ast_visitor_expr.c2
+
+    plugins/plugin_info.c2
+    plugins/deps_generator_utils.c2
+    plugins/deps_generator.c2
+    plugins/deps_generator_plugin.c2
+end
+
+lib refs_generator dynamic
+#	$warnings no-unused
+    $warnings no-unused-variable
+    $warnings no-unused-function
+    $warnings no-unused-parameter
+    $warnings no-unused-public
+    $warnings no-unused-enum-constant
+
+	$backend c
+    $config RadixTreeValue
+    $config C2TagsGenerate
+
+    (ast)
+    (common)
+    common/ast_builder.c2
+    common/quicksort.c2
+
+    parser/expr_list.c2
+
+    generator/c2refs.c2
+    generator/ast_visitor.c2
+    generator/ast_visitor_expr.c2
+    generator/radix_tree/radix_tree.c2
+    generator/radix_tree/radix_tree_fs.c2
+    generator/radix_tree/radix_tree_dump.c2
+
+    plugins/plugin_info.c2
+    plugins/refs_generator.c2
+    plugins/refs_generator_plugin.c2
+end
+
+lib git_version dynamic
+    $warnings no-unused
+	$backend c
+    $config RadixTreeValue
+
+    (ast)
+    (common)
+
+    common/ast_builder.c2
+    parser/expr_list.c2
+
+    plugins/plugin_info.c2
+    plugins/git_version_plugin.c2
+end
+
+lib unit_test dynamic
+    $warnings no-unused
+	$backend c
+    $config RadixTreeValue
+
+    (ast)
+    (common)
+
+    common/ast_builder.c2
+    parser/expr_list.c2
+
+    plugins/plugin_info.c2
+    plugins/unit_test_plugin.c2
+end
+
+lib shell_cmd dynamic
+    $warnings no-unused
+	$backend c
+    $config RadixTreeValue
+
+    (ast)
+    (common)
+    (yaml)
+
+    common/ast_builder.c2
+    parser/expr_list.c2
+
+    plugins/plugin_info.c2
+    plugins/shell_cmd_plugin.c2
+end
+

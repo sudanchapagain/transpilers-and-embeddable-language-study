@@ -1,0 +1,21 @@
+/* A simple calculator, see calc.nit */
+Grammar calc;
+
+Lexer
+d = '0'..'9';
+int = d+;
+blank = (' '|'\n')+;
+
+Parser
+Ignored blank;
+e =
+	{int:} int |
+	{par:} '(' e ')'
+Unary
+	{neg:} '-' e
+Left
+	{mul:} e '*' e |
+	{div:} e '/' e
+Left
+	{add:} e '+' e |
+	{sub:} e '-' e ;

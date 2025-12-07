@@ -1,0 +1,3 @@
+Usage: nitdoc [OPTION]... <file.nit>...
+Generates HTML pages of API documentation from Nit source files.
+Use --help for help

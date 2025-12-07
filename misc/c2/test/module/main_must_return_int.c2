@@ -1,0 +1,5 @@
+module test;
+
+public fn void main() {   // @error{function 'main' should return 'i32'}
+}
+

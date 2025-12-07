@@ -1,0 +1,138 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import string_buffer;
+import src_loc local;
+import string local;
+
+public type IdentifierKind enum u8 {
+    Unresolved,
+    Module,
+    Function,
+    Type,
+    Var,
+    EnumConstant,
+    StructMember,          // struct-var.member
+    Label,
+}
+
+fn const char* IdentifierKind.str(IdentifierKind k) {
+    switch (k) {
+    case Unresolved:   return "Unresolved";
+    case Module:       return "Module";
+    case Function:     return "Function";
+    case Type:         return "Type";
+    case Var:          return "Var";
+    case EnumConstant: return "EnumConstant";
+    case StructMember: return "StructMember";
+    case Label:        return "Label";
+    }
+    return "";
+}
+
+type IdentifierExprBits struct {
+    u32 : NumExprBits;
+    u32 has_decl : 1;
+    u32 kind : 3;   // IdentifierKind
+}
+
+public type IdentifierExpr struct @(opaque) {
+    Expr base;
+    union {
+        u32 name_idx;
+        Decl* decl;     // set during analysis
+    }
+}
+
+public fn IdentifierExpr* IdentifierExpr.create(ast_context.Context* c, SrcLoc loc, u32 name) {
+    IdentifierExpr* e = c.alloc(sizeof(IdentifierExpr));
+    e.base.init(ExprKind.Identifier, loc, 0, 0, 0, ValType.NValue);
+    e.name_idx = name;
+#if AstStatistics
+    Stats.addExpr(ExprKind.Identifier, sizeof(IdentifierExpr));
+#endif
+    return e;
+}
+
+fn Expr* IdentifierExpr.instantiate(IdentifierExpr* e, Instantiator* inst) {
+    return (Expr*)IdentifierExpr.create(inst.c, e.base.base.loc, e.name_idx);
+}
+
+public fn Expr* IdentifierExpr.asExpr(IdentifierExpr* e) { return &e.base; }
+
+public fn void IdentifierExpr.setDecl(IdentifierExpr* e, Decl* decl) {
+    e.decl = decl;
+    e.base.base.identifierExprBits.has_decl = true;
+}
+
+public fn Decl* IdentifierExpr.getDecl(const IdentifierExpr* e) {
+    if (!e.base.base.identifierExprBits.has_decl) return nil;
+    return e.decl;
+}
+
+// for (ref-)generator, convenience
+public fn Ref IdentifierExpr.getRef(const IdentifierExpr* e) @(unused) {
+    Ref ref = { e.base.base.loc, e.getNameIdx(), e.getDecl() }
+    return ref;
+}
+
+public fn void IdentifierExpr.setKind(IdentifierExpr* e, IdentifierKind kind) {
+    e.base.base.identifierExprBits.kind = kind;
+}
+
+public fn IdentifierKind IdentifierExpr.getKind(const IdentifierExpr* e) {
+    return (IdentifierKind)e.base.base.identifierExprBits.kind;
+}
+
+public fn const char* IdentifierExpr.getName(const IdentifierExpr* e) {
+    if (e.base.base.identifierExprBits.has_decl) return e.decl.getName();
+    return idx2name(e.name_idx);
+}
+
+fn SrcLoc IdentifierExpr.getEndLoc(const IdentifierExpr* e) {
+    return e.base.base.loc + (u32)strlen(e.getName());
+}
+
+public fn u32 IdentifierExpr.getNameIdx(const IdentifierExpr* e) {
+    if (e.base.base.identifierExprBits.has_decl) return e.decl.getNameIdx();
+    return e.name_idx;
+}
+
+fn void IdentifierExpr.print(const IdentifierExpr* e, string_buffer.Buf* out, u32 indent) {
+    e.base.printKind(out, indent);
+    e.base.printTypeBits(out);
+    out.space();
+    IdentifierKind kind = e.getKind();
+    if (kind == IdentifierKind.Unresolved) out.color(col_Error);
+    else out.color(col_Attr);
+    out.add(kind.str());
+    out.space();
+    if (e.base.base.identifierExprBits.has_decl) {
+        out.color(col_Value);
+        out.add(e.decl.getName());
+    } else {
+        out.color(col_Value);
+        out.add(idx2name(e.name_idx));
+    }
+    out.newline();
+}
+
+fn void IdentifierExpr.printLiteral(const IdentifierExpr* e, string_buffer.Buf* out) {
+    out.add(e.getName());
+}
+

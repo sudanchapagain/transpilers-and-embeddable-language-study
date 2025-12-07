@@ -1,0 +1,582 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module module_analyser;
+
+import ast local;
+import ast_builder;
+import conversion_checker;
+import ctv_analyser;
+import src_loc local;
+
+fn QualType Analyser.analyseExpr(Analyser* ma, Expr** e_ptr, bool need_rvalue, u32 side) {
+    assert(e_ptr);
+    QualType result = ma.analyseExprInner(e_ptr, side);
+    if (result.isInvalid()) return result;
+
+    Expr* e = *e_ptr;
+    e.setType(result);
+
+    if (need_rvalue) {
+        if (e.isLValue()) {
+            QualType canon = result.getCanonicalType();
+            assert(canon.isValid());
+
+            if (canon.isArray()) {
+                result = getPointerFromArray(ma.builder, canon);
+                ma.builder.insertImplicitCast(ImplicitCastKind.ArrayToPointerDecay, e_ptr, result);
+            } else {
+                // LValueToRValue conversion strips const of type
+                result.unsetConst();
+                ma.builder.insertImplicitCast(ImplicitCastKind.LValueToRValue, e_ptr, result);
+            }
+        } else if (e.isNValue()) {
+            ma.error(e.getLoc(), "lvalue/rvalue required");
+            return QualType_Invalid;
+        }
+    }
+
+    return result;
+}
+
+fn QualType Analyser.analyseExprInner(Analyser* ma, Expr** e_ptr, u32 side) {
+    Expr* e = *e_ptr;
+
+    switch (e.getKind()) {
+    case IntegerLiteral:
+    case FloatLiteral:
+    case BooleanLiteral:
+    case CharLiteral:
+    case StringLiteral:
+    case Nil:
+        return e.getType(); // already set in creator
+    case Identifier:
+        Decl* d = ma.analyseIdentifier(e_ptr, side);
+        if (!d) break;
+        return d.getType();
+    case Type:
+        break;
+    case Call:
+        return ma.analyseCallExpr(e_ptr);
+    case InitList:
+    case FieldDesignatedInit:
+    case ArrayDesignatedInit:
+        (*e_ptr).dump();
+        assert(0);
+        break;
+    case BinaryOperator:
+        return ma.analyseBinaryOperator(e_ptr);
+    case UnaryOperator:
+        return ma.analyseUnaryOperator(e_ptr, side);
+    case ConditionalOperator:
+        return ma.analyseConditionalOperator(e_ptr);
+    case Builtin:
+        return ma.analyseBuiltin(e_ptr);
+    case ArraySubscript:
+        return ma.analyseArraySubscriptExpr(e_ptr, side);
+    case Member:
+        return ma.analyseMemberExpr(e_ptr, side);
+    case Paren:
+        ParenExpr* p = (ParenExpr*)e;
+        QualType qt = ma.analyseExpr(p.getInner2(), false, side);
+        Expr* inner = p.getInner();
+        e.copyConstantFlags(inner);
+        e.copyValType(inner);
+        return qt;
+    case BitOffset:
+        break;
+    case ExplicitCast:
+        return ma.analyseExplicitCast(e_ptr);
+    case ImplicitCast:
+        break;
+    case Range:
+        (*e_ptr).dump();
+        assert(0);
+        break;
+    case NamedArgument:
+        NamedArgument* n = (NamedArgument*)e;
+        QualType qt = ma.analyseExpr(n.getInner2(), false, side);
+        Expr* inner = n.getInner();
+        e.copyConstantFlags(inner);
+        e.copyValType(inner);
+        return qt;
+    }
+    return QualType_Invalid;
+}
+
+fn const char* type2str(QualType q) {
+    if (q.isFunction()) return "function";
+    if (q.isConst()) return "constant";
+    return "variable";
+}
+
+fn Decl* Analyser.analyseIdentifier(Analyser* ma, Expr** e_ptr, u32 side) {
+    Expr* e = *e_ptr;
+    IdentifierExpr* i = (IdentifierExpr*)e;
+    Decl* d = ma.scope.find(i.getNameIdx(), e.getLoc(), ma.usedPublic);
+    if (!d) {
+        ma.has_error = true;
+        return nil;
+    }
+
+    if (!d.isChecked()) {
+        if (!ma.analyseGlobalDecl(d)) {
+            return nil;
+        }
+    }
+
+    QualType qt = d.getType();
+    if (qt.isInvalid()) return nil;
+    e.setType(qt);
+    i.setDecl(d);
+
+    if (side & RHS || side == 0) d.setUsed();
+    else {
+        // parameters are used if LHS|RHS
+        if (d.isVarDecl()) {
+            VarDecl* vd = (VarDecl*)d;
+            if (vd.isParameter()) d.setUsed();
+        }
+    }
+
+    IdentifierKind kind = ma.setExprFlags(e_ptr, d);
+    i.setKind(kind);
+
+    if (ma.usedPublic && !d.isPublic() && d.isGlobal()) {
+        // Note: can also be a function or type for inline function bodies
+        const char* kind_str = type2str(qt);
+        if (ma.scope.inFunction()) {
+            ma.error(e.getLoc(), "public inline function using non-public %s '%s'", kind_str, d.getFullName());
+        } else {
+            ma.error(e.getLoc(), "public declaration using non-public %s '%s'", kind_str, d.getFullName());
+        }
+        return nil;
+    }
+    return d;
+}
+
+fn IdentifierKind Analyser.setExprFlags(Analyser* ma, Expr** e_ptr, Decl* d) {
+    Expr* e = *e_ptr;
+    IdentifierKind kind = IdentifierKind.Unresolved;
+    switch (d.getKind()) {
+    case Function:
+        e.setCtc();
+        e.setRValue();
+        kind = IdentifierKind.Function;
+        break;
+    case Import:
+        e.setCtc();
+        kind = IdentifierKind.Module;
+        break;
+    case StructType:
+        kind = IdentifierKind.Type;
+        break;
+    case EnumType:
+        e.setCtc();
+        kind = IdentifierKind.Type;
+        break;
+    case EnumConstant:
+        e.setCtc();
+        e.setCtv();
+        e.setRValue();
+        kind = IdentifierKind.EnumConstant;
+        break;
+    case FunctionType:
+        e.setCtc();
+        kind = IdentifierKind.Type;
+        break;
+    case AliasType:
+        kind = IdentifierKind.Type;
+        break;
+    case Variable:
+        VarDecl* vd = (VarDecl*)d;
+        if (vd.isGlobal() || vd.hasLocalQualifier()) e.setCtc();
+        e.setLValue();
+        const Expr* init = vd.getInit();
+        QualType t = d.getType();
+        if (init && t.isConst() && init.isCtv()) e.setCtv();
+        switch (vd.getKind()) {
+        case GlobalVar:
+        case LocalVar:
+        case FunctionParam:
+            kind = IdentifierKind.Var;
+            break;
+        case StructMember:
+            kind = IdentifierKind.StructMember;
+            break;
+        }
+        break;
+    }
+    return kind;
+}
+
+// 0  cannot happen
+// 1  invalid
+// 2  builtin - builtin
+// 3  builtin - enum -> int
+// 4  pointer - pointer
+// 5  struct - struct
+// 6  enum - builtin -> int
+// 7  enum - enum
+// 8  func - func
+const u8[elemsof(TypeKind)][elemsof(TypeKind)] CondOpTable = {
+    //  Builtin Pointer Array   Struct  Enum    Func   Alias  Module
+    //  Builtin += / -=
+    {   2,      1,      0,      1,      3,      0,     0,     0  },
+    //  Pointer += / -=
+    {   1,      4,      0,      1,      1,      1,     0,     0  },
+    //  Array += / -=
+    {   0,      0,      0,      0,      0,      0,     0,     0  },
+    //  Struct += / -=
+    {   1,      1,      0,      5,      1,      1,     0,     0  },
+    //  Enum += / -=
+    {   6,      1,      0,      1,      7,      1,     0,     0  },
+    //  Function += / -=
+    {   0,      0,      0,      1,      0,      8,     0,     0  },
+    // Alias + Module are zero
+}
+fn QualType Analyser.analyseConditionalOperator(Analyser* ma, Expr** e_ptr) {
+    Expr* e = *e_ptr;
+    ConditionalOperator* cond = (ConditionalOperator*)e;
+    QualType qt = ma.analyseExpr(cond.getCond2(), true, RHS);
+    if (qt.isInvalid()) return QualType_Invalid;
+
+    ma.checker.check(builtins[BuiltinKind.Bool], qt, cond.getCond2(), cond.getCond().getLoc());
+
+    QualType lhs = ma.analyseExpr(cond.getLHS2(), true, RHS);
+    QualType rhs = ma.analyseExpr(cond.getRHS2(), true, RHS);
+    if (lhs.isInvalid() || rhs.isInvalid()) return QualType_Invalid;
+
+    QualType lcanon = lhs.getCanonicalType();
+    QualType rcanon = rhs.getCanonicalType();
+    assert(lcanon.isValid());
+    assert(rcanon.isValid());
+
+    // TODO: refine this by selecting branch depending on cond value
+    if (cond.getCond().isCtv()) e.combineConstantFlags(cond.getLHS(), cond.getRHS());
+
+    u8 res = CondOpTable[lcanon.getKind()][rcanon.getKind()];
+    switch (res) {
+    case 0: // cannot happen
+        break;
+    case 1: // invalid
+        ma.error(e.getLoc(), "invalid operands to ternary operator (%s and %s)", lhs.diagName(), rhs.diagName());
+        return QualType_Invalid;
+    case 2: // builtin - builtin
+        // TODO do integer promotions, check for void, float etc
+        return conversion_checker.get_common_arithmetic_type(lcanon, rcanon);
+    case 3: // builtin - enum -> int
+        // TODO do integer promotions, check for void, float etc
+        return lhs;
+    case 4: // pointer - pointer
+        // TODO check if same type
+        return lhs;
+    case 5: // struct - struct
+        bool ok = ma.checker.check(lhs, rhs, e_ptr, e.getLoc());
+        if (!ok) return QualType_Invalid;
+        return lhs;
+    case 6: // enum - builtin -> int
+        // TODO do integer promotions, check for void, float etc
+        return rhs;
+    case 7: // enum - enum
+        bool ok = ma.checker.check(lhs, rhs, e_ptr, e.getLoc());
+        if (!ok) return QualType_Invalid;
+        return lhs;
+    case 8: // func - func
+        return lhs; // will be checked later
+    }
+    e.dump();
+    assert(0);
+    return QualType_Invalid;
+}
+
+fn bool Analyser.checkAssignment(Analyser* ma, Expr* assignee, QualType tleft, const char* msg, SrcLoc loc) {
+    if (!assignee.isLValue()) {
+        ma.errorRange(assignee.getLoc(), assignee.getRange(), "lvalue required as %s", msg);
+        return false;
+    }
+
+    if (tleft.isArray()) {
+        ma.error(loc, "array type '%s' is not assignable", tleft.diagName());
+        return false;
+    }
+
+    if (tleft.isConst()) {
+        //assignee.dump();
+        if (assignee.isIdentifier()) {
+            IdentifierExpr* i = (IdentifierExpr*)assignee;
+            ma.error(loc, "cannot assign to read-only variable '%s'", i.getDecl().getFullName());
+            return false;
+        }
+        if (assignee.isMember()) {
+            MemberExpr* m = (MemberExpr*)assignee;
+            switch (m.getKind()) {
+            case Unresolved:
+                assert(0);
+                break;
+            case Module:
+                assert(0);
+                break;
+            case Function:
+                break;
+            case Type:
+                break;
+            case Var:
+                ma.error(loc, "cannot assign to read-only variable '%s'", m.getLastMemberName());
+                return false;
+            case EnumConstant:
+                break;
+            case StructMember:
+                ma.error(loc, "assignment of member '%s' in read-only object", m.getLastMemberName());
+                return false;
+            case Label:
+                break;
+            }
+        }
+        ma.error(loc, "cannot assign to variable with const-qualified type '%s'", tleft.diagName());
+        return false;
+    }
+
+    return true;
+}
+
+fn QualType usualUnaryConversions(Expr* e) {
+    QualType qt = e.getType();
+    QualType canon = qt.getCanonicalType();
+
+    if (canon.isBuiltin()) {
+        BuiltinType* bi = canon.getBuiltin();
+        if (bi.isPromotableIntegerType()) return ast.builtins[BuiltinKind.Int32];
+    } else if (canon.isPointer()) {
+        // TODO depend on arch width
+        return ast.builtins[BuiltinKind.UInt64];
+    }
+
+    return qt;
+}
+
+fn QualType Analyser.analyseExplicitCast(Analyser* ma, Expr** e_ptr) {
+    Expr* e = *e_ptr;
+    ExplicitCastExpr* c = (ExplicitCastExpr*)e;
+    TypeRef* ref = c.getTypeRef();
+    QualType destType = ma.analyseTypeRef(ref);
+
+    QualType srcType = ma.analyseExpr(c.getInner2(), true, RHS);
+
+    if (srcType.isInvalid() || destType.isInvalid()) return QualType_Invalid;
+
+    Expr* inner = c.getInner();
+    e.copyConstantFlags(inner);
+    e.copyValType(inner);
+    c.setDestType(destType);
+
+    if (!destType.isScalar()) {
+        ma.error(ref.getLoc(), "used type '%s' where arithmetic or pointer type is required", destType.diagName());
+        return QualType_Invalid;
+    }
+
+    if (!ma.checker.checkCast(destType, srcType, ref.getLoc(), inner.getLoc())) return QualType_Invalid;
+
+    return destType;
+}
+
+fn QualType Analyser.analyseArraySubscriptExpr(Analyser* ma, Expr** e_ptr, u32 side) {
+    Expr* e = *e_ptr;
+    ArraySubscriptExpr* sub = (ArraySubscriptExpr*)e;
+
+    Expr* orig = sub.getBase(); // save orig (might be wrapped in ImplicitCast(ArrayToPointerDecay)
+    // array[..] = ..  also mark array as used for read (RHS)
+    QualType q = ma.analyseExpr(sub.getBase2(), true, side | RHS);
+    if (q.isInvalid()) return q;
+
+    // Derefence alias types
+    Expr* index = sub.getIndex();
+    if (index.isBitOffset()) {
+        if (side & LHS) {
+            ma.errorRange(e.getLoc(), e.getRange(), "bitoffset cannot be used as left hand side expression");
+            return QualType_Invalid;
+        }
+        Expr* base = sub.getBase();
+        q = ma.analyseBitOffsetExpr(q, base, index);
+        e.combineConstantFlags(base, index);
+        return q;
+    }
+
+    q = q.getCanonicalType();
+
+    if (!q.isPointer()) {
+        ma.errorRange(e.getLoc(), e.getRange(), "subscripted value is not an array or pointer");
+        return QualType_Invalid;
+    }
+
+    QualType qidx = ma.analyseExpr(sub.getIndex2(), true, RHS);
+    if (qidx.isInvalid()) return qidx;
+    QualType canon = qidx.getCanonicalType();
+    if (!canon.isInteger() && !canon.isEnum()) {
+        ma.error(sub.getIndex().getLoc(), "array subscript is not an integer");
+        return QualType_Invalid;
+    }
+
+    index = sub.getIndex();
+    if (index.isCtv()) {
+        QualType q2 = orig.getType();
+        ArrayType* at = q2.getArrayTypeOrNil();
+        if (at) {
+            // check range
+            u32 size = at.getSize();
+            if (size != 0) { // dont give error if arrays has size 0 (allowed for struct members)
+                Value val = ctv_analyser.get_value(index);
+                u64 idx = val.as_u64();
+                if (idx >= size) {
+                    ma.error(index.getLoc(), "array out-of-bounds access [%d] in array of [%d]", idx, size);
+                    return QualType_Invalid;
+                }
+            }
+        }
+    }
+
+    PointerType* pt = q.getPointerType();
+    return pt.getInner();
+}
+
+fn QualType Analyser.analyseBitOffsetExpr(Analyser* ma, QualType ltype, Expr* base, Expr* e) {
+    BitOffsetExpr* bo = (BitOffsetExpr*)e;
+    QualType canon = ltype.getCanonicalType();
+
+    BuiltinType* bi = canon.getBuiltin();
+    if (!canon.isBuiltin() || !bi.isUnsigned()) {
+        ma.error(base.getLoc(), "bitoffsets are only allowed on unsigned integer type");
+        return QualType_Invalid;
+    }
+
+    Value lval;
+    Value rval;
+    bool lvalid = ma.analyseBitOffsetIndex(bo.getLHS2(), canon, &lval);
+    bool rvalid = ma.analyseBitOffsetIndex(bo.getRHS2(), canon, &rval);
+
+    if (lvalid && rvalid) {
+        if (lval.is_less(&rval)) {
+            ma.error(e.getLoc(), "left bitoffset index is smaller than right index");
+            return QualType_Invalid;
+        }
+
+        Value width = lval.minus(&rval);
+        u64 w = width.as_u64() + 1;
+        if (w <= 8) {
+            ltype = ast.builtins[BuiltinKind.UInt8];
+        } else if (w <= 16) {
+            ltype = ast.builtins[BuiltinKind.UInt16];
+        } else if (w <= 32) {
+            ltype = builtins[BuiltinKind.UInt32];
+        } else {
+            ltype = ast.builtins[BuiltinKind.UInt64];
+        }
+
+        bo.setWidth((u8)w);
+        e.setType(ltype);
+    }
+
+    e.combineConstantFlags(bo.getLHS(), bo.getRHS());
+
+    return ltype;
+}
+
+fn bool Analyser.analyseBitOffsetIndex(Analyser* ma, Expr** e_ptr, QualType baseType, Value* result) {
+    BuiltinType* base_bi = baseType.getBuiltin();
+
+    QualType qt = ma.analyseExpr(e_ptr, true, RHS);
+    if (qt.isInvalid()) return false;
+
+    Expr* e = *e_ptr; // ignore ImplicitCast
+
+    QualType canon = qt.getCanonicalType();
+    BuiltinType* bi = canon.getBuiltin();
+    if (!canon.isBuiltin() || !bi.isInteger()) {
+        ma.error(e.getLoc(), "index of bitoffset has non-integer type '%s'", qt.diagName());
+        return false;
+    }
+
+    // TODO only allow CTV expressions
+    if (!e.isCtv()) return false;
+
+    Value val = ctv_analyser.get_value(e);
+    if (val.isNegative()) {
+        ma.errorRange(e.getLoc(), e.getRange(), "bitoffset index value '%s' is negative", val.str());
+        return false;
+    }
+    if (val.isFloat()) {
+        return false;
+    }
+
+    // accept shifting 1 << 31
+    if (val.as_u64() >= base_bi.getWidth()) {
+        ma.errorRange(e.getLoc(), e.getRange(), "bitoffset index value '%s' too large for type '%s'", val.str(), baseType.diagName());
+        return false;
+    }
+
+    *result = val;
+
+    return true;
+}
+
+fn void Analyser.memberError(Analyser* ma, u32 name_idx, SrcLoc loc, StructTypeDecl* s) {
+    ma.error(loc, "no member named '%s' in %s '%s'",
+        idx2name(name_idx),
+        s.isStruct() ? "struct" : "union",
+        s.asDecl().getFullName());
+}
+
+// TODO move to AnalyserUtils
+fn Decl* Analyser.findStructMember(Analyser* ma,
+                                   StructTypeDecl* s,
+                                   u32 name_idx,
+                                   SrcLoc loc) {
+    Decl* d = s.findAny(name_idx);
+    if (!d) {
+        ma.memberError(name_idx, loc, s);
+        return nil;
+    }
+
+    return d;
+}
+
+// TODO move to AnalyserUtils
+fn QualType getPointerFromArray(ast_builder.Builder* builder, QualType q) {
+    // Dont get canonical
+    const ArrayType* a = (ArrayType*)q.getTypeOrNil();
+    QualType elem = a.getElemType();
+    /*
+        const arrays can be:
+
+        QualType const
+         ArrayType [0x55d61b312988] size=4
+          QualType
+           StructType [0x55d61b312590] Inner
+
+        or:
+
+        QualType
+         ArrayType [0x55d61b3129c0] size=4
+          QualType const
+           StructType [0x55d61b312590] Inner
+
+        The 2nd case is ok here, but set const explicitly in first case
+    */
+
+    if (q.isConst()) elem.setConst(); // see comments above
+    QualType res = builder.actOnPointerType(elem);
+    return res;
+}
+

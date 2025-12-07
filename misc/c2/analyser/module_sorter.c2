@@ -1,0 +1,118 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module module_sorter;
+
+import ast;
+import component;
+import diagnostics;
+import module_list;
+import dsm_sorter;
+
+import stdlib;
+import string;
+
+import stdio local;
+
+// Sort modules according to imports. Modules without dependencies (inside this component) come first
+public fn void sort(component.Component* c, diagnostics.Diags* diags) {
+    module_list.List* mods = c.getModules();
+    const u32 count = mods.length();
+    if (count <= 1) return;
+
+    ModuleSorter s;
+    s.num_mods = count;
+    s.cur_mod_idx = 0;
+    s.comp = c;
+
+    // preparation
+    ast.Module** orig = mods.get();
+    dsm_sorter.Sorter dsm.init(count);
+    s.modules = orig;
+    s.dsm = &dsm;
+
+    // fill deps
+    c.visitModules(ModuleSorter.handleModule, &s);
+
+    // sort
+    const u8* sorted = dsm.sort();
+    if (!sorted) {
+        diags.error(0, "circular dependency between modules");
+        s.print();
+        // TODO print dependency
+        stdlib.exit(-1);
+    }
+
+    // re-order results
+    ast.Module** copy = stdlib.malloc(count * sizeof(ast.Module*));
+    string.memcpy(copy, orig, count * sizeof(ast.Module*));
+    for (u32 i=0; i<count; i++) orig[i] = copy[sorted[i]];
+    stdlib.free(copy);
+
+    dsm.free();
+}
+
+type ModuleSorter struct {
+    component.Component* comp;
+    u32 num_mods;
+    ast.Module** modules;
+    dsm_sorter.Sorter* dsm;
+    u32 cur_mod_idx;
+}
+
+fn void ModuleSorter.print(const ModuleSorter* s) {
+    const u8* array = s.dsm.get_array();
+
+    printf("                     |");
+    for (u32 y=0; y<s.num_mods; y++) {
+        printf(" %2d", y);
+    }
+    printf("\n");
+    for (u32 y=0; y<s.num_mods; y++) {
+        printf("%16s  %2d |", s.modules[y].getName(), y);
+        for (u32 x=0; x<s.num_mods; x++) {
+            u8 value = array[y * s.num_mods + x];
+            printf("  %c", value ? 'X' : ' ');
+        }
+        printf("\n");
+    }
+}
+
+fn void ModuleSorter.handleModule(void* arg, ast.Module* mod) {
+    ModuleSorter* s = arg;
+    mod.visitImports(ModuleSorter.handleImport, arg);
+    s.cur_mod_idx++;
+}
+
+fn void ModuleSorter.handleImport(void* arg, ast.ImportDecl* d) {
+    ModuleSorter* s = arg;
+    ast.Module* dest = d.getDest();
+    assert(dest);
+
+    // ignore imports from other components
+    if (!s.comp.hasModule(dest)) return;
+
+    u32 dest_idx = s.mod2idx(dest);
+    s.dsm.add_dep(s.cur_mod_idx, dest_idx);
+}
+
+fn u32 ModuleSorter.mod2idx(const ModuleSorter* s, const ast.Module* mod) {
+    for (u32 i=0; i<s.num_mods; i++) {
+        if (s.modules[i] == mod) return i;
+    }
+    assert(0);
+    return 0;   // should not happen
+}
+

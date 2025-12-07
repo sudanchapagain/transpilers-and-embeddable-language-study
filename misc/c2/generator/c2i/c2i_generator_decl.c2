@@ -1,0 +1,313 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module c2i_generator;
+
+import ast local;
+import string_buffer;
+
+fn void Generator.emitGlobalVarDecl(Generator* gen, string_buffer.Buf* out, const Decl* d) {
+    VarDecl* v = (VarDecl*)d;
+
+    gen.emitType(out, d.getType());
+    out.space();
+    if (d.getName()) out.add(d.getName());
+
+    QualType qt = d.getType();
+    bool semi = true;
+    if (qt.isConst() && v.getInit()) {
+        Expr* initExpr = v.getInit();
+        out.add(" = ");
+        gen.emitExpr(out, initExpr);
+        if (out.endsWith('}')) semi = false;
+    }
+
+    if (semi) out.add1(';');
+    out.newline();
+}
+
+fn void Generator.emitVarDecl(Generator* gen, string_buffer.Buf* out, const VarDecl* vd, bool first) {
+    Decl* d = (Decl*)vd;
+
+    if (first) {
+        if (vd.hasLocalQualifier()) out.add("local ");
+        gen.emitType(out, d.getType());
+    } else {
+        out.add1(',');
+    }
+    Expr* bitfield = vd.getBitfield();
+    if (bitfield) {
+        out.add(" : ");
+        gen.emitExpr(out, bitfield);
+    }
+    out.space();
+    const Expr* ie = vd.getInit();
+    if (vd.hasInitCall()) {
+        gen.emitExpr(out, ie);
+    } else {
+        if (d.getName()) {
+            out.add(d.getName());
+            if (ie) {
+                out.add(" = ");
+                gen.emitExpr(out, ie);
+            }
+        }
+        if (vd.hasAutoAttr()) {
+            if (vd.hasAttrAutoFile()) out.add(" @(auto_file)");
+            if (vd.hasAttrAutoLine()) out.add(" @(auto_line)");
+            if (vd.hasAttrAutoFunc()) out.add(" @(auto_func)");
+        }
+    }
+}
+
+fn void Generator.emitGlobalDecl(Generator* gen, Decl* d) {
+    string_buffer.Buf* out = gen.out;
+    switch (d.getKind()) {
+    case Function:
+        gen.emitFunctionDecl(out, d, false);
+        break;
+    case Import:
+        // TODO: might need these
+        break;
+    case StructType:
+        gen.emitStruct(out, d, 0);
+        break;
+    case EnumType:
+        gen.emitEnumType(out, d);
+        break;
+    case EnumConstant:
+        assert(0);
+        break;
+    case FunctionType:
+        gen.emitFunctionTypeDecl(out, d);
+        break;
+    case AliasType:
+        gen.emitAliasTypeDecl(out, d);
+        break;
+    case Variable:
+        gen.emitGlobalVarDecl(out, d);
+        break;
+    }
+    out.newline();
+}
+
+fn void Generator.emitDeclName(Generator* gen, string_buffer.Buf* out, Decl* d) {
+    if (!d.isVariable()) {
+        Module* mod = d.getModule();
+        if (mod != gen.mod) {
+            // TODO potentially needed if ambigous
+            out.add(mod.getName());
+            out.add1('.');
+        }
+        if (d.isFunction()) {
+            FunctionDecl* fd = (FunctionDecl*)d;
+            Ref* prefix = fd.getPrefix();
+            if (prefix) {
+                out.add(gen.astPool.idx2str(prefix.name_idx));
+                out.add1('.');
+            }
+        }
+        if (d.isEnumConstant()) {
+            QualType qt = d.getType();
+            EnumType* et = (EnumType*)qt.getType();
+            out.add(et.getName());
+            out.add1('.');
+        }
+    }
+    out.add(d.getName());
+}
+
+fn void Generator.emitTypePre(Generator* gen, string_buffer.Buf* out, QualType qt) {
+    Decl* decl = nil;
+
+    if (qt.isConst()) out.add("const ");
+    if (qt.isVolatile()) out.add("volatile ");
+
+    switch (qt.getKind()) {
+    case Builtin:
+        BuiltinType* bt = (BuiltinType*)qt.getType();
+        out.add(bt.kind2str());
+        return;
+    case Pointer:
+        PointerType* pt = (PointerType*)qt.getType();
+        gen.emitTypePre(out, pt.getInner());
+        out.add1('*');
+        return;
+    case Array:
+        ArrayType* at = (ArrayType*)qt.getType();
+        gen.emitTypePre(out, at.getElemType());
+        return;
+    case Struct:
+        StructType* st = (StructType*)qt.getType();
+        StructTypeDecl* std = st.getDecl();
+        if (std.hasAttrNoTypeDef()) {
+            out.add(std.isStruct() ? "struct " : "union ");
+        }
+        decl = (Decl*)st.getDecl();
+        break;
+    case Enum:
+        EnumType* et = (EnumType*)qt.getType();
+        decl = (Decl*)et.getDecl();
+        break;
+    case Function:
+        FunctionType* ft = (FunctionType*)qt.getType();
+        decl = (Decl*)ft.getDecl();
+        break;
+    case Alias:
+        AliasType* at = (AliasType*)qt.getType();
+        decl = (Decl*)at.getDecl();
+        break;
+    case Module:
+        assert(0);
+        return;
+    }
+    gen.emitDeclName(out, decl);
+}
+
+fn void Generator.emitTypePost(Generator* gen, string_buffer.Buf* out, QualType qt) {
+    if (!qt.isArray()) return;
+    ArrayType* at = (ArrayType*)qt.getType();
+
+    out.add1('[');
+    if (at.hasSize()) out.print("%d", at.getSize());
+    out.add1(']');
+    gen.emitTypePost(out, at.getElemType());
+}
+
+fn void Generator.emitType(Generator* gen, string_buffer.Buf* out, QualType qt) {
+    gen.emitTypePre(out, qt);
+    gen.emitTypePost(out, qt);
+}
+
+fn void Generator.emitEnumType(Generator* gen, string_buffer.Buf* out, const Decl* d) {
+    EnumTypeDecl* etd = (EnumTypeDecl*)d;
+
+    out.print("type %s enum ", d.getName());
+    QualType implType = etd.getImplType();
+    implType.print(out);
+    out.add(" {\n");
+
+    u32 num_constants = etd.getNumConstants();
+    EnumConstantDecl** constants = etd.getConstants();
+    for (u32 i = 0; i < num_constants; i++) {
+        EnumConstantDecl* ecd = constants[i];
+        out.indent(1);
+        out.add(ecd.asDecl().getName());
+        Expr* initExpr = ecd.getInit();
+        if (initExpr) {
+            out.add (" = ");
+            gen.emitExpr(out, initExpr);
+        }
+        out.add(",\n");
+    }
+    out.add("}\n");
+}
+
+fn void Generator.emitFunctionDecl(Generator* gen, string_buffer.Buf* out, const Decl* d, bool as_type) {
+    FunctionDecl* fd = (FunctionDecl*)d;
+
+    if (!as_type) out.add("fn ");
+    gen.emitType(out, fd.getRType());
+    if (!as_type) {
+        out.space();
+        const char* prefix = fd.getPrefixName();
+        if (prefix) {
+            out.add(prefix);
+            out.add1('.');
+        }
+        out.add(d.getName());
+    }
+    out.lparen();
+
+    VarDecl** params = fd.getParams();
+    u32 num_params = fd.getNumParams();
+    for (u32 i=0; i<num_params; i++) {
+        if (i != 0) out.add(", ");
+        gen.emitVarDecl(out, params[i], true);
+    }
+    if (fd.isVariadic()) {
+        if (num_params) out.add(", ");
+        out.add("...");
+    }
+    out.add1(')');
+
+    if (fd.isInline()) {
+        out.space();
+        gen.in_body = true;
+        gen.emitStmt((ast.Stmt*)fd.getBody(), 0, true);
+        gen.in_body = false;
+        out.newline();
+    } else {
+        out.add(";\n");
+    }
+}
+
+fn void Generator.emitFunctionTypeDecl(Generator* gen, string_buffer.Buf* out, const Decl* d) {
+    const FunctionTypeDecl* ftd = (FunctionTypeDecl*)d;
+    out.print("type %s fn ", d.getName());
+    gen.emitFunctionDecl(out, (Decl*)ftd.getDecl(), true);
+}
+
+fn void Generator.emitAliasTypeDecl(Generator* gen, string_buffer.Buf* out, const Decl* d) {
+    AliasTypeDecl* a = (AliasTypeDecl*)d;
+    out.print("type %s ", d.getName());
+    QualType qt = a.asDecl().getType();
+    gen.emitType(out, qt.getCanonicalType());
+    out.add(";\n");
+}
+
+fn void Generator.emitStructMember(Generator* gen, string_buffer.Buf* out, Decl* d, u32 indent) {
+    if (d.isVariable()) {
+        out.indent(indent);
+        gen.emitVarDecl(out, (VarDecl*)d, true);
+        if (!out.endsWith('}')) out.add1(';');
+        out.newline();
+    } else {
+        assert(d.isStructType());
+        gen.emitStruct(out, d, indent);
+    }
+}
+
+fn void Generator.emitStruct(Generator* gen, string_buffer.Buf* out, const Decl* d, u32 indent) {
+    StructTypeDecl* std = (StructTypeDecl*)d;
+    if (indent == 0) {
+        out.add("type ");
+        out.add(d.getName());
+        if (std.isStruct()) out.add(" struct");
+        else out.add(" union");
+    } else {
+        out.indent(indent);
+        if (std.isStruct()) out.add("struct");
+        else out.add("union");
+        if (d.getNameIdx()) {
+            out.space();
+            out.add(d.getName());
+        }
+    }
+    if (std.isOpaque()) {
+        out.add(" @(opaque) {}\n");
+    } else {
+        out.add(" {\n");
+
+        u32 num_members = std.getNumMembers();
+        Decl** members = std.getMembers();
+        for (u32 i=0; i<num_members; i++) {
+            gen.emitStructMember(out, members[i], indent+1);
+        }
+
+        out.indent(indent);
+        out.add("}\n");
+    }
+}

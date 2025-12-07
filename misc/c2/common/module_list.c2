@@ -1,0 +1,124 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module module_list;
+
+import ast;
+
+import stdlib;
+import string;
+
+public type Visitor fn void (void* arg, ast.Module* m);
+
+public type List struct {
+    ast.Module** mods;              // modules in this Component
+    u32 num_mods;
+    u32 max_mods;
+    bool owns_modules;
+}
+
+public fn void List.init(List* l, bool owns_modules, u32 capacity) {
+    string.memset(l, 0, sizeof(List));
+    l.owns_modules = owns_modules;
+    l.resize(capacity);
+}
+
+public fn void List.free(List* l) {
+    if (l.owns_modules) {
+        for (u32 i=0; i<l.num_mods; i++) {
+            l.mods[i].free();
+        }
+    }
+    stdlib.free(l.mods);
+}
+
+public fn void List.visit(const List* l, Visitor visitor, void* arg) {
+    for (u32 i=0; i<l.num_mods; i++) {
+        visitor(arg, l.mods[i]);
+    }
+}
+
+public fn ast.Module* List.find(const List* l, u32 module_name) {
+    for (u32 i=0; i<l.num_mods; i++) {
+        if (l.mods[i].getNameIdx() == module_name) return l.mods[i];
+    }
+    return nil;
+}
+
+public fn void List.add(List* list, ast.Module* m) {
+    // Note: we dont check for duplicates here
+    if (list.num_mods == list.max_mods) list.resize(list.max_mods * 2);
+    list.mods[list.num_mods] = m;
+    list.num_mods++;
+}
+
+public fn void List.addList(List* list, List* other, bool checkPrivate) {
+    // Note: does not check for duplicates
+    u32 total = list.num_mods + other.num_mods;
+    if (total > list.max_mods) list.resize(total);
+    if (checkPrivate) {
+        for (u32 i = 0; i < other.num_mods; i++) {
+            if (other.mods[i].isPrivate()) continue;
+            list.mods[list.num_mods++] = other.mods[i];
+        }
+    } else {
+        string.memcpy(&list.mods[list.num_mods], other.mods, other.num_mods * sizeof(ast.Module*));
+        list.num_mods = total;
+    }
+
+}
+
+public fn void List.clear(List* l) {
+    assert(!l.owns_modules);
+    l.num_mods = 0;
+}
+
+public fn u32 List.length(const List* l) { return l.num_mods; }
+
+public fn ast.Module** List.get(const List* l) { return l.mods; }
+
+public fn const ast.Module** List.getConst(const List* l) {
+    return (const ast.Module**)l.mods;
+}
+
+public fn ast.Module* List.at(const List* l, u32 idx) {
+    return l.mods[idx];
+}
+
+public fn bool List.contains(const List* l, const ast.Module* mod) {
+    for (u32 i=0; i<l.num_mods; i++) {
+        if (l.mods[i] == mod) return true;
+    }
+    return false;
+}
+
+public fn bool List.containsName(const List* l, u32 name_idx) {
+    for (u32 i=0; i<l.num_mods; i++) {
+        if (l.mods[i].getNameIdx() == name_idx) return true;
+    }
+    return false;
+}
+
+fn void List.resize(List* l, u32 cap) {
+    l.max_mods = cap;
+    void* buf = stdlib.malloc(l.max_mods * sizeof(ast.Module*));
+    if (l.mods) {
+        void* old = l.mods;
+        string.memcpy(buf, old, l.num_mods * sizeof(ast.Module*));
+        stdlib.free(old);
+    }
+    l.mods = buf;
+}
+

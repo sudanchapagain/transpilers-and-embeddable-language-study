@@ -1,0 +1,132 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ir_tools;
+
+import ir local;
+import ir_inserter local;
+
+import index_list;
+
+fn bool Tools.convert_switches(Tools* t) {
+    FunctionInfo* fi = t.fi;
+
+    u32 num_blocks = fi.blocks.getCount();
+    // TODO add to Tools, dont re-create every time
+    // TODO make dynamic
+    index_list.List block_order.init(num_blocks + 16);
+
+    Inserter* inserter = &t.inserter;
+    inserter.clear(num_blocks, fi.instructions.getCount());
+
+    Block* blocks = fi.blocks.get(0);
+    for (u32 i=0; i<num_blocks; i++) {
+        block_order.add(i);
+        Block* b = &blocks[i];
+        if (b.end_with_switch) t.convert_switch_linear(fi, i, &block_order);
+    }
+
+    if (inserter.hasBlocks()) {
+        fi.cases.clear();
+        inserter.insertBlocks(&fi.blocks);
+        //dump_function(fi, "bb1");
+        //print_func(t.arg1, t.arg2, fi, "bb1");
+
+        t.markUsedBlocks(fi);
+        //dump_function(fi, "bb2");
+        //print_func(t.arg1, t.arg2, fi, "bb2");
+
+        t.reorder_blocks(fi, &block_order);
+        block_order.free();
+        return true;
+    }
+    block_order.free();
+    return false;
+}
+
+fn void Tools.convert_switch_linear(Tools* t, FunctionInfo* fi, u32 blk_id, index_list.List* block_order) {
+    Inserter* inserter = &t.inserter;
+
+    // Note: switches can be nested, so need to handle that
+
+    Block* b = fi.blocks.get(blk_id);
+    u32 switch_loc = b.instr.start + b.instr.count - 1;
+    Instr* ii = fi.instructions.get(switch_loc);
+
+    Ref cond = ii.args[0];
+    BlockId join_blk = (u32)ii.args[1].value;
+    CaseId case_id = b.dests[0];
+    u32 num_cases = b.dests[1];
+
+    b.end_with_switch = 0;
+    // just convert switch to jmp
+    Ref jmp_ref.init(RefKind.JmpDest, 0);
+    ii.init1(InstrKind.Jmp, jmp_ref);
+    b.setDest(inserter.getNextBlockId(), 0);
+
+    fi.instructions.reserve(num_cases); // NOTE: invalidates Instr*
+    u32 loc = fi.instructions.getCount();
+    // NOTE: new instructions are only added to new blocks, so no need to use Inserter for instructions
+
+    // Note: empty case are pruned early on, and block updated to join_blk
+    for (u32 j=0; j<num_cases; j++) {
+        bool last_case = (j == num_cases-1);
+
+        BlockId new_blk = inserter.addBlock(BlockKind.SwitchCond);
+        block_order.add(new_blk);
+        Block* cur = inserter.getLastBlock();
+        cur.used = 1;
+        cur.instr.start = loc;
+        cur.instr.count = 2;    // cmp + jmp_if
+
+        Case* cc = fi.cases.get(case_id+j);
+        if (last_case) {
+            // Note: for now default also has a Cond block, could be removed later
+            Block* dest = fi.blocks.get(cc.block);
+            if (cc.block == join_blk) { // case was empty
+                cur.instr.count = 1;    // jmp join_blk
+                cur.setDest(join_blk, 0);
+
+                Instr* i = fi.instructions.add();
+                i.init1(InstrKind.Jmp, jmp_ref);
+                return;
+            }
+            if (dest.kind == SwitchDefault) {
+                cur.instr.count = 1;    // jmp default_blk
+                cur.setDest(cc.block, 0);
+
+                Instr* i = fi.instructions.add();
+                i.init1(InstrKind.Jmp, jmp_ref);
+                return;
+            }
+        }
+        BlockId next_blk = (last_case) ? join_blk : new_blk +1;
+        cur.setDest(cc.block, next_blk);
+
+        // compare
+        Ref cmp_result.init(RefKind.Temp, loc);
+        // TEMP assume case value fits a Value Ref
+        Ref case_value.init(RefKind.Value, cc.value);
+        Instr* i = fi.instructions.add();
+        i.init2b(InstrKind.CmpEq, cond, case_value);
+        loc++;
+
+        // jump
+        i = fi.instructions.add();
+        i.init2(InstrKind.JmpIf, cmp_result, jmp_ref);
+        loc++;
+    }
+}
+

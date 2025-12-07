@@ -1,0 +1,393 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ir_generator;
+
+import ast local;
+import bit_utils;
+import ir local;
+import ir_context;
+import ctv_analyser;
+
+fn void Generator.emitAssign(Generator* gen, ir.Ref* result, const Expr* lhs, const Expr* rhs) {
+    // special case is needed because setting Bitfield is not a simple store
+    if (lhs.isBitfield()) {
+        gen.emitBitfieldAssign(result, lhs, rhs);
+    } else {
+        gen.emitExpr(result, rhs);
+        ir.Ref dest;
+        gen.emitExpr(&dest, lhs);
+        // TODO get type (from either side, should be same by now)
+        gen.ctx.addStoreInstr(ir.Type.I32, *result, dest);
+    }
+}
+
+fn void Generator.emitBinaryOperator(Generator* gen, ir.Ref* result, const Expr* e) {
+    const BinaryOperator* b = (BinaryOperator*)e;
+
+    switch (b.getOpcode()) {
+    case Multiply:
+    case Divide:
+    case Remainder:
+    case Add:
+    case Subtract:
+        break;
+    case ShiftLeft:
+    case ShiftRight:
+        gen.emitShift(result, e);
+        return;
+    case LessThan:
+    case GreaterThan:
+    case LessEqual:
+    case GreaterEqual:
+    case Equal:
+    case NotEqual:
+        break;
+    case And:
+    case Xor:
+    case Or:
+        break;
+    case LAnd:
+        gen.emitLogicalAnd(result, e);
+        return;
+    case LOr:
+        gen.emitLogicalOr(result, e);
+        return;
+    case Assign:
+        gen.emitAssign(result, b.getLHS(), b.getRHS());
+        return;
+    case MulAssign:
+    case DivAssign:
+    case RemAssign:
+    case AddAssign:
+    case SubAssign:
+    case ShlAssign:
+    case ShrAssign:
+    case AndAssign:
+    case XorAssign:
+    case OrAssign:
+        gen.emitOpAssign(result, e);
+        return;
+    }
+
+    // TODO use array with instructions (combine with signed/unsigned)
+    InstrKind kind = InstrKind.None;
+    switch (b.getOpcode()) {
+    case Multiply:
+        kind = InstrKind.Mul;
+        break;
+    case Divide:
+        // TODO idiv/udiv/fdiv
+        kind = InstrKind.IDiv;
+        break;
+    case Remainder:
+        kind = InstrKind.Rem;
+        break;
+    case Add:
+        // TODO or FAdd
+        kind = InstrKind.Add;
+        break;
+    case Subtract:
+        kind = InstrKind.Sub;
+        break;
+    case LessThan:
+        kind = InstrKind.CmpLt;
+        break;
+    case GreaterThan:
+        kind = InstrKind.CmpGt;
+        break;
+    case LessEqual:
+        kind = InstrKind.CmpLe;
+        break;
+    case GreaterEqual:
+        kind = InstrKind.CmpGe;
+        break;
+    case Equal:
+        kind = InstrKind.CmpEq;
+        break;
+    case NotEqual:
+        kind = InstrKind.CmpNe;
+        break;
+    case And:
+        kind = InstrKind.And;
+        break;
+    case Xor:
+        kind = InstrKind.Xor;
+        break;
+    case Or:
+        kind = InstrKind.Or;
+        break;
+    default:
+        assert(0);
+        break;
+    }
+    assert(kind != InstrKind.None);
+
+    ir.Ref left;
+    gen.emitExpr(&left, b.getLHS());
+    ir.Ref right;
+    gen.emitExpr(&right, b.getRHS());
+
+    *result = gen.ctx.addBinaryInstr(kind, left, right);
+}
+
+// 2 cases: as if/while/for condition or outside
+// this is the outside case, should return a result
+fn void Generator.emitLogicalAnd(Generator* gen, ir.Ref* result, const Expr* e) {
+    const BinaryOperator* b = (BinaryOperator*)e;
+    ir_context.Context* c = gen.ctx;
+
+/*
+    emit:
+    start:
+        %1 = load left
+        %2 = icmp ne 0, %1
+        jmp_if %2 and_true join_blk
+    and_true:
+        %3 = load right
+        %4 = icmp ne 0, %3
+        jmp_if %4 and_true join_blk
+    join_blk:
+        %11 = phi [start: 0, and_true: %4]
+*/
+
+    ir.Ref left;
+    gen.emitExpr(&left, b.getLHS());
+
+    ir.Ref zero;
+    zero.init(RefKind.Value, 0);
+
+    ir.Ref cond1 = c.addBinaryInstr(InstrKind.CmpNe, left, zero);
+
+    BlockId true_blk = c.createBlock(BlockKind.AndTrue);
+    BlockId join_blk = c.createBlock(BlockKind.LogicJoin);
+
+    c.addJmpIfInstr(cond1, true_blk, join_blk);
+
+    BlockId block1 = c.getCurBlock();
+
+    c.endBlock();
+    c.startBlock(true_blk);
+    ir.Ref right;
+    gen.emitExpr(&right, b.getRHS());
+
+    ir.Ref cond2 = c.addBinaryInstr(InstrKind.CmpNe, right, zero);
+    c.addJmpInstr(join_blk);
+
+    // TODO update true_blk with c.getCurBlock()?
+    assert(c.getCurBlock() == true_blk);
+
+    c.endBlock();
+    c.startBlock(join_blk);
+
+    *result = gen.ctx.addPhi2Instr(block1, zero, true_blk, cond2);
+}
+
+fn void Generator.emitLogicalOr(Generator* gen, ir.Ref* result, const Expr* e) {
+    const BinaryOperator* b = (BinaryOperator*)e;
+    ir_context.Context* c = gen.ctx;
+
+/*
+    emit:
+    start:
+        %1 = load left
+        %2 = icmp ne 0, %1
+        jmp_if %2 join_blk or_true
+    or_true:
+        %3 = load right
+        %4 = icmp ne 0, %3
+        jmp_if %4 or_true join_blk
+    join_blk:
+        %11 = phi [start: 1, or_true: %4]
+*/
+
+    // TODO check for CTV
+    ir.Ref left;
+    gen.emitExpr(&left, b.getLHS());
+
+    ir.Ref zero;
+    zero.init(RefKind.Value, 0);
+
+    ir.Ref cond1 = gen.ctx.addBinaryInstr(InstrKind.CmpNe, left, zero);
+
+    BlockId false_blk = c.createBlock(BlockKind.OrFalse);
+    BlockId join_blk = c.createBlock(BlockKind.LogicJoin);
+
+    c.addJmpIfInstr(cond1, join_blk, false_blk);
+
+    BlockId block1 = c.getCurBlock();
+
+    c.endBlock();
+    c.startBlock(false_blk);
+    ir.Ref right;
+    // TODO check for CTV
+    gen.emitExpr(&right, b.getRHS());
+
+    ir.Ref cond2 = gen.ctx.addBinaryInstr(InstrKind.CmpNe, right, zero);
+    c.addJmpInstr(join_blk);
+
+    // generating RHS might have added multiple new blocks, take last as phi-source
+    false_blk = c.getCurBlock();
+
+    c.endBlock();
+    c.startBlock(join_blk);
+
+    ir.Ref one;
+    one.init(RefKind.Value, 1);
+
+    *result = gen.ctx.addPhi2Instr(block1, one, false_blk, cond2);
+}
+
+fn void Generator.emitShift(Generator* gen, ir.Ref* result, const Expr* e) {
+    const BinaryOperator* b = (BinaryOperator*)e;
+    InstrKind k;
+    if (b.getOpcode() == BinaryOpcode.ShiftLeft) {
+        k = InstrKind.Shl;
+    } else {
+        //QualType qt = e.getType();
+        //if (qt.isUnsigned()) instr = "shr";
+        //else instr = "sar";
+        k = InstrKind.Shr;
+    }
+
+    ir.Ref left;
+    gen.emitExpr(&left, b.getLHS());
+    ir.Ref right;
+    gen.emitExpr(&right, b.getRHS());
+
+    *result = gen.ctx.addBinaryInstr(k, left, right);
+}
+
+fn void Generator.emitOpAssign(Generator* gen, ir.Ref* result, const Expr* e) {
+    const BinaryOperator* b = (BinaryOperator*)e;
+
+    // TODO put in global array (also use in Generic)
+    // Compare: size <=4 -> w variant, else l variant
+    //              signed:   csltw / csltl
+    //              unsigned: cultw / cultl
+    //              float:    clts / cltd
+    // same for greater, etc
+    InstrKind k = InstrKind.None;
+    switch (b.getOpcode()) {
+    case MulAssign:
+        k = InstrKind.Mul;
+        break;
+    case DivAssign:
+        k = InstrKind.Div;
+        break;
+    case RemAssign:
+        k = InstrKind.Rem;
+        break;
+    case AddAssign:
+        k = InstrKind.Add;
+        break;
+    case SubAssign:
+        k = InstrKind.Sub;
+        break;
+    case ShlAssign:
+        k = InstrKind.Shl;
+        break;
+    case ShrAssign:
+        k = InstrKind.Shr;
+        break;
+    case AndAssign:
+        k = InstrKind.And;
+        break;
+    case XorAssign:
+        k = InstrKind.Xor;
+        break;
+    case OrAssign:
+        k = InstrKind.Or;
+        break;
+    default:
+        assert(0);
+        return;
+    }
+    assert(k != InstrKind.None);
+
+    // emit a += <expr> as: (makes optimizations slightly easier)
+    // %1 = <expr>
+    // %2 = load a
+    // %3 = add %2, %1
+    // store %3
+
+    ir.Ref right;
+    gen.emitExpr(&right, b.getRHS());
+
+    ir.Ref left;
+    gen.emitExpr(&left, b.getLHS());
+
+    // emit as lvalue (=load)
+    ir.Type t = ir.Type.I32; // TODO get type from Expr
+    ir.Ref left_val = gen.ctx.addLoadInstr(t, left);
+
+    right = gen.ctx.addBinaryInstr(k, left_val, right);
+    gen.ctx.addStoreInstr(t, right, left);
+    *result = right;
+}
+
+fn void Generator.emitBitfieldAssign(Generator* gen, ir.Ref* result, const Expr* lhs, const Expr* rhs) {
+    ir_context.Context* c = gen.ctx;
+
+    //assert(lhs.isMember());
+    const MemberExpr* m = (MemberExpr*)lhs;
+    const Decl* d = m.getFullDecl();
+    //assert(d.isVarDecl());
+    const VarDecl* vd = (VarDecl*)d;
+    const Expr* bitfield = vd.getBitfield();
+    // TODO already convert to IntegerLiteral (if not already) in analyser?
+    Value val = ctv_analyser.get_value(bitfield);
+    u32 width = val.as_u32();
+    u32 mask = bit_utils.get_mask32(width); // TEMP u32
+    u32 bit_offset = 0; // TODO get bitfield-offset
+
+    // TODO get base_type, (u8/u16/u32/u64/ etc)
+
+    // TODO handle signed
+
+    ir.Ref src;
+    gen.emitExpr(&src, rhs);
+
+    bool allBitsSet = false;
+    if (rhs.isCtv()) {
+        // check if all bits are set
+        // allBitsSet = true;
+        // TODO
+    } else {
+        // TEMP as u32
+        ir.Ref mask_ref = c.addIntegerConstant(mask);
+        // and with bitsize
+        src = c.addBinaryInstr(InstrKind.And, src, mask_ref);
+    }
+    *result = src;
+
+    ir.Ref base;
+    // TODO need without load
+    gen.emitMemberExpr(&base, lhs);
+
+    ir.Ref dest = base;
+    if (!allBitsSet) {
+        ir.Ref mask_ref = c.addIntegerConstant(~(mask << bit_offset));
+        dest = c.addBinaryInstr(InstrKind.And, base, mask_ref);
+    }
+    if (bit_offset) {
+        ir.Ref offset_ref = c.addIntegerConstant(bit_offset);
+        src = c.addBinaryInstr(InstrKind.Shl, src, offset_ref);
+    }
+    dest = c.addBinaryInstr(InstrKind.Or, dest, src);
+    // TODO fix store, need base without load
+    gen.ctx.addStoreInstr(ir.Type.I32, dest, base);
+}
+

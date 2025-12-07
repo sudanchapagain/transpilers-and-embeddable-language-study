@@ -1,0 +1,230 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast_visitor;
+
+import ast local;
+
+import stdlib;
+
+public type OnRef fn void (void* arg, const Ref* ref);
+
+public type Visitor struct @(opaque) {
+    void* arg;
+    OnRef on_ref;
+}
+
+public fn Visitor* create(void* arg, OnRef on_ref) {
+    Visitor* v = stdlib.calloc(1, sizeof(Visitor));
+    v.arg = arg;
+    v.on_ref = on_ref;
+    return v;
+}
+
+public fn void Visitor.free(Visitor* v) {
+    stdlib.free(v);
+}
+
+// only used by plugins
+public fn void Visitor.handleAssert(Visitor* v, StaticAssert* a) @(unused) {
+    v.handleExpr(a.getLhs());
+    v.handleExpr(a.getRhs());
+}
+
+public fn void Visitor.handle(Visitor* v, Decl* d) {
+    switch (d.getKind()) {
+    case Function:
+        v.handleFunction((FunctionDecl*)d);
+        break;
+    case Import:
+        // TODO
+        break;
+    case StructType:
+        StructTypeDecl* s = (StructTypeDecl*)d;
+        u32 num_members = s.getNumMembers();
+        Decl** members = s.getMembers();
+        for (u32 i=0; i<num_members; i++) {
+            v.handle(members[i]);
+        }
+        break;
+    case EnumType:
+        break;
+    case EnumConstant:
+        const EnumConstantDecl* ecd = (EnumConstantDecl*)d;
+        Expr* init_expr = ecd.getInit();
+        if (init_expr) v.handleExpr(init_expr);
+        break;
+    case FunctionType:
+        FunctionTypeDecl* ftd = (FunctionTypeDecl*)d;
+        v.handleFunction(ftd.getDecl());
+        break;
+    case AliasType:
+        AliasTypeDecl* atd = (AliasTypeDecl*)d;
+        v.handleTypeRef(atd.getTypeRef());
+        break;
+    case Variable:
+        v.handleVarDecl((VarDecl*)d);
+        break;
+    }
+}
+
+fn void Visitor.handleFunction(Visitor* v, FunctionDecl* d) {
+    if (d.isTemplate()) return; // TODO skip template functions for now
+
+    // return type
+    v.handleTypeRef(d.getReturnTypeRef());
+
+    // struct prefix
+    Ref* prefix = d.getPrefix();
+    if (prefix) v.on_ref(v.arg, prefix);
+
+    // args
+    u32 num_params = d.getNumParams();
+    VarDecl** args = d.getParams();
+    for (u32 i=0; i<num_params; i++) v.handleVarDecl(args[i]);
+
+    // body
+    CompoundStmt* body = d.getBody();
+    if (body) {
+        v.handleCompoundStmt(body);
+    }
+}
+
+fn void Visitor.handleVarDecl(Visitor* v, VarDecl* d) {
+    v.handleTypeRef(d.getTypeRef());
+
+    Expr* init_expr = d.getInit();
+    if (init_expr) v.handleExpr(init_expr);
+
+    Expr* bitfield = d.getBitfield();
+    if (bitfield) v.handleExpr(bitfield);
+}
+
+fn void Visitor.handleTypeRef(Visitor* v, const TypeRef* r) {
+    if (r.isUser()) {
+        const Ref* prefix = r.getPrefix();
+        if (prefix) v.on_ref(v.arg, prefix);
+
+        const Ref* user = r.getUser();
+        v.on_ref(v.arg, user);
+    } else if (r.isStructMemberFn()) {
+        const Ref* member = r.getStructMemberType();
+        v.handleFunction((FunctionDecl*)member.decl);
+    }
+
+    u32 num_arrays = r.getNumArrays();
+    for (u32 i=0; i<num_arrays; i++) {
+        Expr* e = r.getArray(i);
+        if (e) v.handleExpr(e); // could be foo[]
+    }
+}
+
+/*
+fn void Visitor.handleType(Visitor* v, QualType qt) {
+    // TODO use TypeRef or QualType?
+}
+*/
+
+fn void Visitor.handleStmt(Visitor* v, Stmt* s) {
+    switch (s.getKind()) {
+    case Return:
+        ReturnStmt* r = (ReturnStmt*)s;
+        Expr* e = r.getValue();
+        if (e) v.handleExpr(e);
+        break;
+    case Expr:
+        v.handleExpr((Expr*)s);
+        break;
+    case If:
+        IfStmt* i = (IfStmt*)s;
+        v.handleStmt(i.getCond());
+        v.handleStmt(i.getThen());
+        Stmt* e = i.getElse();
+        if (e) v.handleStmt(e);
+        break;
+    case While:
+        WhileStmt* w = (WhileStmt*)s;
+        v.handleStmt(w.getCond());
+        v.handleStmt(w.getBody());
+        break;
+    case For:
+        ForStmt* f = (ForStmt*)s;
+        Stmt* in = f.getInit();
+        if (in) v.handleStmt(in);
+        Expr* cond = f.getCond();
+        if (cond) v.handleExpr(cond);
+        Expr* cont = f.getCont();
+        if (cont) v.handleExpr(cont);
+        Stmt* body = f.getBody();
+        if (body) v.handleStmt(body);
+        break;
+    case Switch:
+        SwitchStmt* sw = (SwitchStmt*)s;
+        v.handleExpr(sw.getCond());
+        const u32 numcases = sw.getNumCases();
+        SwitchCase** cases = sw.getCases();
+        for (u32 i=0; i<numcases; i++) {
+            SwitchCase* c = cases[i];
+            u32 numconds = c.getNumConds();
+            for (u32 j=0; j<numconds; j++) v.handleExpr(c.getCond(j));
+            u32 numstmts = c.getNumStmts();
+            for (u32 j=0; j<numstmts; j++) v.handleStmt(c.getStmt(j));
+        }
+        break;
+    case Break:
+        break;
+    case Continue:
+        break;
+    case Fallthrough:
+        break;
+    case Label:
+        LabelStmt* ls = (LabelStmt*)s;
+        ast.Stmt* stmt = ls.getStmt();
+        if (stmt) v.handleStmt(stmt);
+        break;
+    case Goto:
+        // TODO need dest in GotoStmt
+        break;
+    case Compound:
+        v.handleCompoundStmt((CompoundStmt*)s);
+        break;
+    case Decl:
+        DeclStmt* d = (DeclStmt*)s;
+        u32 count = d.getDeclCount();
+        for (u32 i = 0; i < count; i++) {
+            v.handleVarDecl(d.getDecl(i));
+        }
+        break;
+    case Asm:
+        AsmStmt* a = (AsmStmt*)s;
+        u32 num_exprs = a.getNumExprs();
+        Expr** exprs = a.getExprs();
+        for (u32 i=0; i<num_exprs; i++) {
+            v.handleExpr(exprs[i]);
+        }
+        break;
+    case Assert:
+        AssertStmt* a = (AssertStmt*)s;
+        v.handleExpr(a.getInner());
+        break;
+    }
+}
+
+fn void Visitor.handleCompoundStmt(Visitor* v, CompoundStmt* s) {
+    u32 count = s.getCount();
+    Stmt** stmts = s.getStmts();
+    for (u32 i=0; i<count; i++) v.handleStmt(stmts[i]);
+}
+

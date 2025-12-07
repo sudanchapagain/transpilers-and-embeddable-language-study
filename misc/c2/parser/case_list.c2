@@ -1,0 +1,63 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module case_list;
+
+import ast local;
+
+import string local;
+import stdlib local;
+
+// Use stack for small lists, heap for larger ones
+
+public const u32 StackSize = 4;
+
+public type List struct {
+    u32 count;
+    u32 capacity;
+    SwitchCase*[StackSize] stack;
+    SwitchCase** heap;
+}
+
+public fn void List.init(List* l) {
+    memset(l, 0, sizeof(List));
+    l.heap = l.stack;
+    l.capacity = elemsof(l.stack);
+}
+
+public fn void List.add(List* l, SwitchCase* s) {
+    if (l.count == l.capacity) {
+        l.capacity *= 2;
+        SwitchCase** heap2 = malloc(l.capacity * sizeof(SwitchCase*));
+        memcpy(heap2, l.heap, l.count * sizeof(SwitchCase*));
+        if (l.heap != l.stack) free(l.heap);
+        l.heap = heap2;
+    }
+    l.heap[l.count] = s;
+    l.count++;
+}
+
+public fn void List.free(List* l) {
+    if (l.heap != l.stack) free(l.heap);
+}
+
+public fn u32 List.size(const List* l) {
+    return l.count;
+}
+
+public fn SwitchCase** List.getData(List* l) {
+    return l.heap;
+}
+

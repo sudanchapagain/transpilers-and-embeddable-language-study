@@ -1,0 +1,6 @@
+// @warnings{no-unused}
+module test;
+
+fn void f1() @(foobar) {}     // @error{unknown attribute 'foobar'}
+
+

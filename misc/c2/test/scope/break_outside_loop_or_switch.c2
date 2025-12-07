@@ -1,0 +1,19 @@
+// @warnings{no-unused}
+module test;
+
+fn void func1() {
+    break;  // @error{'break' statement not in loop or switch statement}
+}
+
+fn void func2() {
+    {
+        break;  // @error{'break' statement not in loop or switch statement}
+    }
+}
+
+fn void func3() {
+    if (true) {
+        break;  // @error{'break' statement not in loop or switch statement}
+    }
+}
+

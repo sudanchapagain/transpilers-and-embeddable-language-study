@@ -1,0 +1,28 @@
+// @warnings{no-unused}
+module test;
+
+type Foo struct {
+    char a;
+    struct {
+        i16 b;
+        i32 c;
+    }
+    union {
+        char d;
+        i32 e;
+    }
+    i8 f;
+}
+static_assert(20, sizeof(Foo));
+
+Foo[] ff = {
+    { 1, { 2, 3 }, { .d=4 }, 5 },
+    { },
+    { 1, { }, { }, 4 },
+    { .a=1, .b=2, .c=3, .d=4, .f=5 },
+    { 1, { .b=2, .c=3 }, { .e=4 }, 5 },
+    { .a=1, { .b=3 }  },    // @error{mixing field designators with non-field designators}
+}
+
+
+

@@ -1,0 +1,36 @@
+module test;
+
+public fn i32 main(i32 argc, const char** argv) {
+    i32 a = 10;
+    i32 b = 20;
+
+    i32 c = a + b;
+    i32 d = a * b;
+    i32 e = c + d;
+
+    i32 f = a++;
+    i32 g = --a;
+
+    i32* cp = &a;
+    i32 i = *cp;
+
+    bool h = !i;
+    c = ~a;
+
+    g = a << 6;
+    f = b >> 3;
+
+    u32 u1 = 64;
+    u1 = u1 >> 2;
+
+    u1 *= 10;
+    c %= 12;
+
+    d = a & b;
+    e = c | d;
+    a = c ^ d;
+
+    return 0;
+}
+
+

@@ -1,0 +1,35 @@
+import 'other.n'
+
+fn main() {
+    var p = other.person_t{
+        name: 'hualaka',
+        age: 23,
+        sex: true,
+    }
+
+    [other.person_t] list = [p]
+
+    println(list[0].name, list[0].age, list[0].sex)
+    println(p.name, p.age, p.sex)
+
+    p.set_age(30)
+    println(p.get_name())
+    println(list[0].name, list[0].age, list[0].sex, p.name, p.age, p.sex)
+
+    p.test_self()
+
+
+    // rawptr struct test
+    rawptr<other.person_t> b = &p
+    b.age = 32
+    println(b.name, b.age, b.sex)
+
+    // TODO raw ptr check disabled... wait inline
+    // b = null
+    // var c = b.name catch err {
+    //    println(err.msg())
+    //}
+
+    // There is no complete try catch, so it cannot catch
+    // b.name = 'hello'
+}

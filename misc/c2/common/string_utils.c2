@@ -1,0 +1,69 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module string_utils;
+
+import ctype local;
+import string local;
+
+public fn char* toLower(const char* input, char* output) @(unused) {
+    usize i;
+    for (i = 0; input[i]; i++) {
+        output[i] = (char)toupper(input[i]);
+    }
+    output[i] = '\0';
+    return output;
+}
+
+public fn char* toUpper(const char* input, char* output) @(unused) {
+    usize i;
+    for (i = 0; input[i]; i++) {
+        output[i] = (char)toupper(input[i]);
+    }
+    output[i] = '\0';
+    return output;
+}
+
+public fn char* stripNewLine(char* buf) @(unused) {
+    usize len = strlen(buf);
+    if (len > 0 && buf[len - 1] == '\n') {
+        buf[--len] = '\0';
+        if (len > 0 && buf[len - 1] == '\r')
+            buf[--len] = '\0';
+    }
+    return buf;
+}
+
+public fn bool endsWith(const char* text, const char* tail) @(unused) {
+    usize len = strlen(text);
+    usize tlen = strlen(tail);
+    return (tlen <= len && !memcmp(text + len - tlen, tail, tlen));
+}
+
+// NOTE: path is not 0-terminated
+public type PathHandler fn void (void* arg, const char* path, u32 len);
+
+public fn void split_paths(const char* input, void* arg, PathHandler handler) @(unused) {
+    // split by ':'
+    const char* start = input;
+    for (const char* cp = start;; cp++) {
+        if (*cp == '\0' || *cp == ':') {
+            if (cp != start) handler(arg, start, (u32)(cp - start));
+            if (*cp == '\0') return;
+            start = cp + 1;
+        }
+    }
+}
+

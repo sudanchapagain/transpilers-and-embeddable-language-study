@@ -1,0 +1,4 @@
+module test;
+
+public fn void test1() @(export, weak) {}
+

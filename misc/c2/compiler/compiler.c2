@@ -1,0 +1,489 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module compiler;
+
+import ast;
+import ast_builder;
+import ast_context;
+import attr_handler;
+import build_file;
+import build_target;
+import c2_parser;
+import color;
+import component;
+import console;
+import constants;
+import diagnostics;
+import file_list;
+import file_utils;
+import keywords;
+import module_analyser;
+import module_list;
+import plugin_info;
+import source_mgr;
+import string_buffer;
+import string_list;
+import string_pool;
+import string_utils;
+import target_info;
+import utils;
+
+import c_errno local;
+import ctype;
+import string;
+import stdlib;
+import stdio;
+
+public type BeginTargetFn fn void (void* arg, plugin_info.Info* info);
+public type PluginFn fn void (void* arg);
+
+public type PluginHandler struct {
+    BeginTargetFn start_target;   // before parsing, after creation of output-dir + main-component
+    PluginFn after_parsing;       // after parsing, before analysis
+    PluginFn after_analysis;      // after analysis
+    PluginFn end_target;          // target done
+    void* arg;
+}
+
+public type Options struct {
+    bool check_only;
+    bool print_ast;
+    bool print_ast_early;
+    bool fast_build;
+    bool test_mode;
+    bool print_lib_ast;
+    bool print_modules;
+    bool print_symbols;
+    bool print_external_symbols;
+    bool print_ast_stats;
+    u8 print_reports;
+    bool show_libs;
+    bool print_ir;
+    bool print_all_ir;
+    bool trace_calls;
+    bool asan;
+    bool msan;
+    bool ubsan;
+    const char* libdir; // no ownership, from environment variable C2_LIBDIR
+    const char *target_triple;
+}
+
+public fn void build(string_pool.Pool* auxPool,
+                       source_mgr.SourceMgr* sm,
+                       diagnostics.Diags* diags,
+                       build_file.Info* build_info, // can be nil
+                       build_target.Target* target,
+                       const Options* opts,
+                       PluginHandler* pluginHandler)
+{
+    Compiler c = {}
+    plugin_info.Info info = {}
+
+    c.build(auxPool, sm, diags, build_info, target, opts, pluginHandler, &info);
+
+    if (opts.print_reports) {
+        c.sm.report(opts.print_reports > 1);
+        c.context.report();
+        c.astPool.report("astPool");
+        c.auxPool.report("auxPool");
+    }
+
+    diags.printStatus();
+
+    pluginHandler.end_target(pluginHandler.arg);
+    ast.deinit(c.opts.print_ast_stats);
+    c.free();
+}
+
+type Compiler struct {
+    string_pool.Pool* auxPool;   // no ownership
+    source_mgr.SourceMgr* sm;    // no ownership
+    diagnostics.Diags* diags;    // no ownership
+    build_file.Info* build_info; // no ownership, can be nil
+    build_target.Target* target; // no ownership
+    const Options* opts;         // no ownership
+    target_info.Info targetInfo;
+    PluginHandler* pluginHandler; // no ownership
+
+    ast_context.Context* context;
+    string_pool.Pool* astPool;
+    ast_builder.Builder* builder;
+    attr_handler.Handler* attr_handler;
+    module_list.List allmodules;
+    component.List components;
+    keywords.Info kwinfo;
+    c2_parser.Parser* parser;
+    module_analyser.Analyser* analyser;
+    bool is_image; // require build-file, dont allow dynamic libs, dont allow module exports
+
+    component.Component* mainComp;  // no ownership
+    u32 main_idx;  // in astPool
+    u32 libc_name; // in auxPool
+    u32 c2_name; // in auxPool
+    ast.Decl* mainFunc;
+
+    // used to parse external components
+    module_list.List parse_queue;
+
+    string_list.List libdirs;
+    component.Component* current;
+}
+
+fn component.Kind target2compKind(build_target.Kind k) {
+    switch (k) {
+    case Image:
+        return component.Kind.Image;
+    case Executable:
+        return component.Kind.Executable;
+    case StaticLibrary:
+        return component.Kind.StaticLibrary;
+    case DynamicLibrary:
+        return component.Kind.DynamicLibrary;
+    case SourceLibrary:
+        return component.Kind.SourceLibrary;
+    }
+
+    return component.Kind.Executable;
+}
+
+const char[] C2_trace @(embed="generator/c2_trace.c2");
+
+fn void Compiler.build(Compiler* c,
+                         string_pool.Pool* auxPool,
+                         source_mgr.SourceMgr* sm,
+                         diagnostics.Diags* diags,
+                         build_file.Info* build_info, // can be nil
+                         build_target.Target* target,
+                         const Options* opts,
+                         PluginHandler* pluginHandler,
+                         plugin_info.Info* info)
+{
+    // init phase
+    string.memset(c, 0, sizeof(Compiler));
+    c.auxPool = auxPool;
+    c.sm = sm;
+    c.diags = diags;
+    c.build_info = build_info;
+    c.target = target;
+    c.opts = opts;
+    c.pluginHandler = pluginHandler;
+
+    diags.setWarningAsError(target.getWarnings().are_errors);
+    c.diags.clear();
+
+    c.context = ast_context.create(16*1024);
+    c.astPool = string_pool.create(128*1024, 4096);
+
+    // Note: keywords must be added first
+    c.kwinfo.init(c.astPool);
+
+    c.main_idx = c.astPool.addStr("main", true);
+    u32 c2_idx = c.astPool.addStr("c2", true);
+    c.libc_name = c.auxPool.addStr("libc", true);
+    c.c2_name = c.auxPool.addStr("c2", true);
+
+    c.parse_queue.init(false, 64);
+
+    c.attr_handler = attr_handler.create(diags);
+    c.builder = ast_builder.create(c.context,
+                                   diags,
+                                   c.auxPool,
+                                   c2_idx,
+                                   c.main_idx,
+                                   c.attr_handler);
+
+    c.allmodules.init(false, 128);
+    c.components.init();
+    c.is_image = target.getKind() == build_target.Kind.Image;
+    c.libdirs.init(c.auxPool);
+
+    const char* target_str = opts.target_triple;
+
+    const char* output_base = constants.output_dir;
+    if (c.build_info) {
+        const char* output_dir2 = c.build_info.getOutputDir();
+        if (output_dir2) {
+            console.debug("using output dir: %s", output_dir2);
+            output_base = output_dir2;
+        }
+    }
+
+    // add output dir as first libdir, unless --showlibs
+    if (!opts.show_libs) c.libdirs.add(c.auxPool.addStr(output_base, true));
+
+    if (c.build_info) {
+        const string_list.List* dirs = c.build_info.getLibDirs();
+        for (u32 i=0; i<dirs.length(); i++) {
+            c.libdirs.add(dirs.get_idx(i));
+        }
+        target_str = c.build_info.getTarget();
+    } else {
+        if (c.is_image) {
+            // TODO src loc
+            console.error("images require a build-file");
+            stdlib.exit(-1);
+        }
+        if (c.opts.libdir) {
+            // parse into multiple, add each to string-pool
+            string_utils.split_paths(c.opts.libdir, c, Compiler.addLibPath);
+        }
+        getNativeTarget(&c.targetInfo);
+    }
+    if (target_str) {
+        if (!fromString(&c.targetInfo, target_str)) {
+            console.error("invalid target triple: %s", target_str);
+            stdlib.exit(-1);
+        }
+    } else {
+        getNativeTarget(&c.targetInfo);
+    }
+    console.debug("triple: %s", c.targetInfo.str());
+
+    c.addGlobalDefine("SYSTEM", c.targetInfo.getSystemName());
+    c.addGlobalDefine("ARCH", c.targetInfo.getArchName());
+    if (c.targetInfo.intWidth == 64) {
+        c.addFeature("ARCH_64BIT", "1");
+    } else {
+        c.addFeature("ARCH_32BIT", "1");
+    }
+    if (opts.asan) c.addFeature("__ASAN__", "1");
+    if (opts.msan) c.addFeature("__MSAN__", "1");
+    if (opts.ubsan) c.addFeature("__UBSAN__", "1");
+
+    c.addFeature("USE_NATIVE_CTYPES", "1");
+
+    c.parser = c2_parser.create(sm,
+                                diags,
+                                c.astPool,
+                                c.builder,
+                                &c.kwinfo,
+                                target.getFeatures());
+
+    ast.initialize(c.context, c.astPool, c.targetInfo.intWidth / 8, color.useColor());
+
+    c.analyser = module_analyser.create(c.diags,
+                                        c.context,
+                                        c.astPool,
+                                        c.builder,
+                                        &c.allmodules,
+                                        c.target.getWarnings());
+
+    if (opts.show_libs) {
+        c.showAllLibs();
+        // since not all members have been initialized, just exit here, to avoid free() not working
+        stdlib.exit(0);
+    }
+
+    c.mainComp = component.create(c.context,
+                                  c.auxPool,
+                                  target.getNameIdx(),
+                                  target2compKind(target.getKind()));    // TODO make internal
+    if (!target.getNoLibC() && !c.target.hasLib(c.libc_name)) c.mainComp.addDep(c.libc_name);
+    c.components.add(c.mainComp);
+    c.mainComp.addDep(c.c2_name);
+    c.builder.setComponent(c.mainComp);
+
+    // add files to Component for manifest_writer
+    if (c.mainComp.isSourceLib()) {
+        for (u32 i = 0; i < c.target.numFiles(); i++) {
+            const file_list.File* f = c.target.getFile(i);
+            c.mainComp.addFile(f.name, f.loc);
+        }
+    }
+
+    // ------ preparation phase ------
+    c.load_libs();
+    // all components exist and are sorted now
+
+    // prepare info for plugins
+    info.sm = sm;
+    info.diags = diags;
+    info.target = target;
+    info.components = &c.components;
+    info.ast_globals = ast.getGlobals();
+    info.ast_builtins = ast.builtins;
+    info.astPool = c.astPool;
+    info.auxPool = c.auxPool;
+    info.context = c.context;
+    info.builder = c.builder;
+    info.addSource = Compiler.add_source;
+    info.register_attr = Compiler.register_attr;
+    info.fn_arg = c;
+    string.strcpy(info.target_name, c.auxPool.idx2str(target.getNameIdx()));
+
+    // create output directory
+    if (!file_utils.make_path(info.output_dir, elemsof(info.output_dir), output_base, c.auxPool.idx2str(target.getNameIdx()))
+    ||  file_utils.create_path(info.output_dir)) {
+        console.error("cannot create directory %s: %s", info.output_dir, string.strerror(errno));
+        stdlib.exit(-1);
+    }
+
+    pluginHandler.start_target(pluginHandler.arg, info);
+
+    // ------ parsing phase ------
+    if (!c.parseMainComponent()) return;
+
+    if (opts.print_ast_early) {
+        c.mainComp.print(true);
+        return;
+    }
+
+    c.builder.setComponent(c.mainComp);
+    pluginHandler.after_parsing(pluginHandler.arg);
+
+    // parse any source libraries, can add private modules
+    c.parseSourceLibs();
+    // all modules are known now
+
+    // ------ analysis phase ------
+    if (!c.analyse()) return;
+
+    // print info
+    if (c.opts.print_modules) {
+        for (u32 i=0; i<c.components.size(); i++) {
+            c.components.get(i).printModules();
+        }
+        return;
+    }
+
+    if (c.opts.print_symbols | c.opts.print_external_symbols) {
+        for (u32 i=0; i<c.components.size(); i++) {
+            c.components.get(i).printSymbols(c.opts.print_external_symbols);
+        }
+        return;
+    }
+
+    if (opts.print_ast) c.mainComp.print(true);
+
+    if (c.opts.check_only) return;
+
+    // ------ generation phase ------
+    c.generate(info.target_name, info.output_dir);
+}
+
+fn void Compiler.free(Compiler* c) {
+    c.parse_queue.free();
+    c.components.free();
+    c.analyser.free();
+    c.parser.free();
+    c.allmodules.free();
+    c.builder.free();
+    c.attr_handler.free();
+    c.astPool.free();
+    c.context.free();
+    c.libdirs.free();
+}
+
+fn bool Compiler.parseMainComponent(Compiler* c) {
+    // parse main component source files
+    console.debug("parsing %s", c.auxPool.idx2str(c.target.getNameIdx()));
+    u64 t1_start = utils.now();
+    for (u32 j=0; j<c.target.numFiles(); j++) {
+        const file_list.File* f = c.target.getFile(j);
+        i32 file_id = c.sm.loadFile(c.auxPool.idx2str(f.name), f.loc);
+        if (file_id == -1) return false;   // note: error already printed
+        console.debug("parsing %s", c.sm.getFileName(file_id));
+
+        // parse error indicator updated in c.parser state
+        c.parser.parse(file_id, false, false);
+    }
+    if (c.opts.trace_calls) {
+        i32 file_id = c.sm.addResource("generator/c2_trace.c2", C2_trace, elemsof(C2_trace) - 1);
+        if (file_id == -1) return false;   // note: error already printed
+        console.debug("parsing %s", c.sm.getFileName(file_id));
+        c.parser.parse(file_id, false, false);
+    }
+
+    u64 t1_end = utils.now();
+    console.log_time("parsing", t1_end - t1_start);
+#if DumpTokens
+    return false;   // to cause stopping in outer function
+#else
+    return c.diags.isOk();
+#endif
+}
+
+fn component.Component* Compiler.findModuleComponent(const Compiler* c, u32 name_idx) {
+    for (u32 i=0; i<c.components.size(); i++) {
+        component.Component* comp = c.components.get(i);
+        module_list.List* mod_list = comp.getModules();
+        ast.Module** mods = mod_list.get();
+        for (u32 j = 0; j < mod_list.length(); j++) {
+            if (mods[j].getNameIdx() == name_idx) return comp;
+        }
+    }
+    return nil;
+}
+
+fn void Compiler.add_source(void* arg, const char* name, string_buffer.Buf* content) {
+    Compiler* c = arg;
+    u32 size;
+    void *data = content.detach(&size);
+    i32 file_id = c.sm.addGenerated(name, data, size);
+    c.parser.parse(file_id, false, true);
+}
+
+fn bool Compiler.register_attr(void* arg, u32 name, ast.AttrHandlerFn handler, void* arg2) {
+    Compiler* c = arg;
+    return c.attr_handler.register(name, handler, arg2);
+}
+
+fn void Compiler.analyseModule(void* arg, ast.Module* m) {
+    Compiler* c = arg;
+    console.debug("analysing module %s", m.getName());
+    c.analyser.check(m);
+}
+
+fn void Compiler.analyseUsedModule(void* arg, ast.Module* m) {
+    Compiler* c = arg;
+    if (m.isUsed()) {
+        c.analyser.check(m);
+    }
+}
+
+fn void Compiler.findTopModule(void* arg, ast.Module* m) {
+    Compiler* c = arg;
+    // Note: for now all unused modules are top-levels
+    if (m.isUsed()) return;
+    if (c.mainFunc) return;
+
+    c.mainFunc = c.analyser.findMain(m, c.main_idx);
+}
+
+fn void Compiler.addFeature(Compiler* c, const char* str, const char* value) {
+    // TODO: handle value
+    c.target.addFeature(c.auxPool.addStr(str, true));
+}
+
+fn void Compiler.addGlobalDefine(Compiler* c, const char* prefix, const char* tail) {
+    char[32] tmp;
+    stdio.snprintf(tmp, 32, "%s_%s", prefix, tail);
+    for (usize i = 0; tmp[i]; i++) {
+        u8 ch = (u8)tmp[i];
+        tmp[i] = (ch == '-') ? '_' : (char)ctype.toupper(ch);
+    }
+
+    c.addFeature(tmp, "1");
+}
+
+// NOTE: paths are not 0-terminated
+fn void Compiler.addLibPath(void* arg, const char* path, u32 len) {
+    Compiler* c = arg;
+    u32 path_idx = c.auxPool.add(path, len, true);
+    //stdio.printf("PATH [%s]\n", c.auxPool.idx2str(path_idx));
+    c.libdirs.add(path_idx);
+}
+

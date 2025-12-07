@@ -1,0 +1,295 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module string_buffer;
+
+import color local;
+
+import stdio local;
+import stdarg local;
+import stdlib local;
+import string local;
+
+public type Buf struct {
+    u32 capacity;
+    u32 size_;
+    char* data_;
+    bool own;       // data_ should be freed
+    bool grow;      // data_ should be reallocated
+    bool truncated;
+    bool colors;
+    u32 indent_step;
+}
+
+static_assert(24, sizeof(Buf));
+
+public fn Buf* Buf.init(Buf* buf, char* data, u32 capacity, bool grow, bool use_colors, u32 indent_step) {
+    assert(capacity);
+    buf.capacity = capacity;
+    buf.size_ = 0;
+    buf.data_ = data;
+    buf.own = false;
+    buf.truncated = false;
+    buf.grow = grow;
+    buf.colors = use_colors;
+    buf.indent_step = indent_step;
+    if (!data) {
+        buf.data_ = malloc(capacity);
+        buf.own = true;
+    }
+    buf.data_[0] = '\0';
+    return buf;
+}
+
+public fn Buf* create(u32 capacity, bool use_colors, u32 indent_step) {
+    Buf* buf = malloc(sizeof(Buf));
+    return buf.init(nil, capacity, true, use_colors, indent_step);
+}
+
+fn void Buf.deinit(Buf* buf) {
+    if (buf.own) free(buf.data_);
+    buf.data_ = nil;
+}
+
+public fn void Buf.free(Buf* buf) {
+    if (buf) {
+        buf.deinit();
+        free(buf);
+    }
+}
+
+fn bool Buf.extend(Buf* buf, u32 len) {
+    if (!buf.grow) {
+        buf.truncated = true;
+        return false;
+    }
+    u32 new_cap = buf.capacity * 2;
+    while (buf.size_ + len + 1 > new_cap) new_cap *= 2;
+    buf.capacity = new_cap;
+    char* data2 = malloc(new_cap);
+    memcpy(data2, buf.data_, buf.size_);
+    if (buf.own) free(buf.data_);
+    buf.data_ = data2;
+    buf.own = true;
+    return true;
+}
+
+public fn void Buf.setColors(Buf* buf, bool colors) @(unused) {
+    buf.colors = colors;
+}
+
+public fn void Buf.setIndent(Buf* buf, u32 indent_step) @(unused) {
+    buf.indent_step = indent_step;
+}
+
+public fn u32 Buf.size(const Buf* buf) {
+    return buf.size_;
+}
+
+public fn const char* Buf.data(const Buf* buf) {
+    return buf.data_;
+}
+
+public fn const u8* Buf.udata(const Buf* buf) {
+    return (u8*)buf.data_;
+}
+
+public fn void* Buf.detach(Buf* buf, u32 *psize) {
+    *psize = buf.size_;
+    if (buf.own) {
+        // try and shrink allocated buffer
+        void* data = realloc(buf.data_, buf.size_ + 1);
+        if (!data) data = buf.data_;
+        buf.data_ = nil;
+        buf.size_ = 0;
+        buf.capacity = 0;
+        buf.own = false;
+        return data;
+    } else {
+        void* data = malloc(buf.size_ + 1);
+        return memcpy(data, buf.data_, buf.size_ + 1);
+    }
+}
+
+public fn void Buf.clear(Buf* buf) {
+    buf.size_ = 0;
+    buf.truncated = false;
+}
+
+public fn void Buf.color(Buf* buf, Color col) {
+    if (buf.colors) buf.add(col.str());
+}
+
+public fn void Buf.add1(Buf* buf, char c) {
+    if (buf.size_ + 2 > buf.capacity) {
+        if (!buf.extend(1)) return;
+    }
+    buf.data_[buf.size_] = c;
+    buf.size_ += 1;
+    buf.data_[buf.size_] = '\0';
+}
+
+public fn void Buf.add(Buf* buf, const char* text) {
+    u32 len = (u32)strlen(text);
+    buf.add2(text, len);
+}
+
+public fn void Buf.add2(Buf* buf, const char* text, u32 len) {
+    if (buf.size_ + len + 1 > buf.capacity) {
+        // truncate if resize fails.
+        if (!buf.extend(len)) len = buf.capacity - buf.size_ - 1;
+    }
+    memcpy(&buf.data_[buf.size_], text, len);
+    buf.size_ += len;
+    buf.data_[buf.size_] = '\0';
+}
+
+public fn void Buf.newline(Buf* buf) { buf.add1('\n'); }
+public fn void Buf.space(Buf* buf) { buf.add1(' '); }
+public fn void Buf.lparen(Buf* buf) { buf.add1('('); }
+public fn void Buf.rparen(Buf* buf) { buf.add1(')'); }
+
+public fn void Buf.stripTrailingSpaces(Buf* buf) {
+    while (buf.size_ && buf.data_[buf.size_-1] == ' ') buf.size_--;
+    buf.data_[buf.size_] = '\0';
+}
+
+public fn void Buf.print(Buf* buf, const char* format @(printf_format), ...) {
+    char[4096] tmp;
+    // NOTE: no growing
+    va_list args;
+    va_start(args, format);
+    i32 len = vsnprintf(tmp, sizeof(tmp), format, args);
+    va_end(args);
+    assert(len < sizeof(tmp));
+    buf.add2(tmp, (u32)len);
+}
+
+public fn void Buf.vprintf(Buf* buf, const char* format, va_list args) {
+    char[4096] tmp;
+    // NOTE: no growing
+    i32 len = vsnprintf(tmp, sizeof(tmp), format, args);
+    assert(len < sizeof(tmp));
+    buf.add2(tmp, (u32)len);
+}
+
+public fn void Buf.unindent(Buf* buf) {
+    u32 i = buf.indent_step;
+    while (i-- > 0) {
+        if (buf.size_ && buf.data_[buf.size_ - 1] == ' ')
+            buf.data_[--buf.size_] = '\0';
+    }
+}
+
+public fn void Buf.indent(Buf* buf, u32 indent) {
+    indent *= buf.indent_step;
+    if (buf.size_ + indent + 1 > buf.capacity) {
+        if (!buf.extend(indent)) indent = buf.capacity - buf.size_ - 1;
+    }
+    if (indent == 0) return;
+
+    char* cur = buf.data_ + buf.size_;
+    for (u32 i=0; i<indent; i++) cur[i] = ' ';
+    cur[indent] = 0;
+    buf.size_ += indent;
+}
+
+public fn bool Buf.endsWith(const Buf* buf, char c) {
+    return (buf.size_ && buf.data_[buf.size_-1] == c);
+}
+
+public fn u32 Buf.encodeBytes(Buf* buf, const char* p, u32 len, char sep) {
+    u32 size = buf.size_;
+    u32 copy = 0;
+    const char* end = p + len;
+    while (p < end) {
+        u8 c = *p++;
+        switch (c) {
+        case '\a':  c = 'a'; goto add_char;
+        case '\b':  c = 'b'; goto add_char;
+        case '\f':  c = 'f'; goto add_char;
+        case '\n':  c = 'n'; goto add_char;
+        case '\r':  c = 'r'; goto add_char;
+        case '\t':  c = 't'; goto add_char;
+        case '\v':  c = 'v'; goto add_char;
+        case '"':
+        case '\'':
+            if (sep && sep != c) goto normal;
+            fallthrough;
+        case '\\':
+        add_char:
+            if (copy) buf.add2(p - copy - 1, copy);
+            buf.add1('\\');
+            buf.add1(c);
+            copy = 0;
+            break;
+        default:
+            if (c < ' ' || c >= 0x7F) {
+                char[4] arr;
+                if (copy) buf.add2(p - copy - 1, copy);
+                arr[0] = '\\';
+                arr[1] = '0' + ((c >> 6) & 7);
+                arr[2] = '0' + ((c >> 3) & 7);
+                arr[3] = '0' + (c & 7);
+                u32 esc_len = 4;
+                // special case \0 not followed by another digit
+                if (c == 0 && (p == end || !(*p >= '0' && *p <= '9')))
+                    esc_len = 2;
+                buf.add2(arr, esc_len);
+                copy = 0;
+                break;
+            }
+        normal:
+            copy++;
+            break;
+        }
+    }
+    if (copy) buf.add2(p - copy, copy);
+    return buf.size_ - size;
+}
+
+const u8[16] ToHex = { '0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'A', 'B', 'C', 'D', 'E', 'F', }
+
+public fn void Buf.encodeHex(Buf* buf, const u8* data, u32 len) @(unused) {
+    if (buf.size_ + len * 3 + 1 > buf.capacity) {
+        if (!buf.extend(len * 3)) len = (buf.capacity - buf.size_ - 1) / 3;
+    }
+    if (len == 0) return;
+
+    char* cp = &buf.data_[buf.size_];
+    for (u32 i=0; i<len; i++) {
+        if (i != 0) *cp++ = ' ';
+        u8 v = data[i];
+        *cp++ = ToHex[v >> 4];
+        *cp++ = ToHex[v & 0xF];
+    }
+    *cp = 0;
+    buf.size_ += len * 3 - 1;
+}
+
+public fn void Buf.trim(Buf* buf, u32 len) @(unused) {
+    buf.size_ = (buf.size_ >= len) ? buf.size_ - len : 0;
+}
+
+public fn void Buf.resetToLastNewline(Buf* buf) @(unused) {
+    while (buf.size_) {
+        buf.size_--;
+        if (buf.data_[buf.size_] == '\n') {
+            buf.data_[buf.size_] = 0;
+            return;
+        }
+    }
+}
+

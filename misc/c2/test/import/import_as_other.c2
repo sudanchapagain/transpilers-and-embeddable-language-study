@@ -1,0 +1,5 @@
+module test;
+
+import stdio;                 // @note{previous definition is here}
+import stdlib as stdio;       // @error{duplicate import name 'stdio'}
+

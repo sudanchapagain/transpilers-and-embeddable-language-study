@@ -1,0 +1,2 @@
+--config ../contrib/nitiwiki/tests/wiki1/config2.ini --clean --status
+--config ../contrib/nitiwiki/tests/wiki1/config2.ini --clean --render -v ; rm -r ../contrib/nitiwiki/tests/wiki1/out/

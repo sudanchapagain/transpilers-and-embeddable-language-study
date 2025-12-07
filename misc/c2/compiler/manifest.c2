@@ -1,0 +1,170 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module manifest;
+
+import component;
+import console;
+import source_mgr;
+import string_list;
+import string_pool;
+import yaml;
+
+import stdlib;
+import stdio local;
+import string local;
+
+fn const yaml.Node* get_checked(yaml.Parser* parser, const char* path) {
+    const yaml.Node* node = parser.findNode(path);
+    if (!node) {
+        // TODO print manifest filename
+        fprintf(stderr, "error: missing node %s\n", path);
+        stdlib.exit(-1);
+    }
+    return node;
+}
+
+fn bool getYamlInfo(yaml.Parser* parser,
+                    string_pool.Pool* astPool,
+                    string_pool.Pool* auxPool,
+                    component.Component* comp,
+                    string_list.List* mods)
+{
+    /* const yaml.Node* lib_lang = */ get_checked(parser, "info.language");
+    // const yaml.Node* lib_type = get_checked(parser, "info.type");
+    const yaml.Node* lib_kinds = get_checked(parser, "info.kinds");
+
+    yaml.Iter iter = parser.getNodeChildIter(lib_kinds);
+    bool kind_dynamic = false;
+    bool kind_static = false;
+    bool kind_source = false;
+    while (!iter.done()) {
+        const char* kind = iter.getValue();
+        switch (kind) {
+        case "dynamic":
+            kind_dynamic = true;
+            break;
+        case "static":
+            kind_static = true;
+            break;
+        case "source":
+            kind_source = true;
+            break;
+        default:
+            fprintf(stderr, "error in manifest: invalid library kind '%s'\n", kind);
+            stdlib.exit(-1);
+        }
+        iter.next();
+    }
+
+    if (!kind_dynamic && !kind_static && !kind_source) {
+        fprintf(stderr, "error in manifest: a library must be dynamic static and/or source\n");
+        stdlib.exit(stdlib.EXIT_FAILURE);
+    }
+
+    const char* language = parser.getScalarValue("info.language");
+    // component is foreign unless language is specified as c2 or native
+    bool is_foreign = (!language || (strcasecmp(language, "c2") && strcasecmp(language, "native")));
+    comp.setForeign(is_foreign);
+
+    const yaml.Node* modulesNode = get_checked(parser, "modules");
+    comp.setKind(kind_static, kind_dynamic, kind_source);
+
+    if (is_foreign && kind_source) {
+        fprintf(stderr, "manifest: a source library must have c2 as language\n");
+        stdlib.exit(stdlib.EXIT_FAILURE);
+    }
+
+    if (modulesNode) {
+        iter = parser.getNodeChildIter(modulesNode);
+        while (!iter.done()) {
+            // Note: module names need to be put in normal pool, NOT auxPool!
+            const char* value = iter.getValue();
+            assert(value);
+            u32 modname = astPool.addStr(value, true);
+            mods.add(modname);
+            iter.next();
+        }
+    }
+
+    const yaml.Node* sourcesNode = parser.findNode("sources");
+    if (sourcesNode) {
+        if (!kind_source) {
+            fprintf(stderr, "manifest: sources are only allowed for source library kind\n");
+            stdlib.exit(stdlib.EXIT_FAILURE);
+        }
+    } else {
+        if (kind_source) {
+            fprintf(stderr, "manifest: sources are required for source library kind\n");
+            stdlib.exit(stdlib.EXIT_FAILURE);
+        }
+    }
+
+    if (sourcesNode) {
+        iter = parser.getNodeChildIter(sourcesNode);
+        while (!iter.done()) {
+            // Sources are put in auxPool!
+            const char* value = iter.getValue();
+            assert(value);
+            //printf("FILE %s\n", value);
+            u32 file_idx = auxPool.addStr(value, true);
+            //SrcLoc loc = 0; // TODO need sourceloc (not stored in parser!)
+            comp.addFile(file_idx, 0);
+            iter.next();
+        }
+    }
+
+    const char* linkname = parser.getScalarValue("info.linkname");
+    if (linkname) comp.setLinkName(linkname);
+
+    const yaml.Node* deps = parser.findNode("dependencies");
+    if (deps) {
+        iter = parser.getNodeChildIter(deps);
+        while (!iter.done()) {
+            // Note: for now only handle dynamic (can there be any other?)
+            // TODO can be 'any' for source libs (not determined by lib, but by user)
+            // TODO remove type completely
+            u32 dep_idx = auxPool.addStr(iter.getName(), true);
+            comp.addDep(dep_idx);
+            iter.next();
+        }
+    }
+
+    return true;
+}
+
+public fn bool parse(source_mgr.SourceMgr* sm,
+                     i32 file_id,
+                     string_pool.Pool* astPool,
+                     string_pool.Pool* auxPool,
+                     component.Component* comp,
+                     string_list.List* mods)
+{
+    const char* data = sm.get_content(file_id);
+    //u32 loc_start = sm.get_offset(file_id);
+
+    yaml.Parser* parser = yaml.Parser.create();
+
+    bool ok = parser.parse(data);
+    if (ok) {
+        getYamlInfo(parser, astPool, auxPool, comp, mods);
+    } else {
+        console.error("%s: %s", sm.getFileName(file_id), parser.getMessage());
+    }
+
+    parser.destroy();
+    return ok;
+}
+

@@ -1,0 +1,32 @@
+// @warnings{no-unused}
+module test;
+
+type Struct struct {
+    i32 x;
+}
+
+type Enum enum u32 {
+    A, B
+}
+
+type Ptr void*;
+
+type Func fn void(i32);
+
+fn void test1(void* a) {
+    u32 b1 = (u32)(a);  // @error{pointers may only be cast to integer type 'u64'}
+}
+
+fn void test2(void* a) {
+    Enum* b1 = (Enum*)(a);
+}
+
+fn void test3(void* a) {
+    Func b1 = (Func)(a);
+}
+
+fn void test4(void* a) {
+    Ptr b1 = (Ptr)(a);
+    b1 = (Ptr)&a;
+}
+

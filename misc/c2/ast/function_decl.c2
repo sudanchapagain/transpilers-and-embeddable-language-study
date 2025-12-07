@@ -1,0 +1,527 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import src_loc local;
+import string_buffer;
+import string;
+
+public type CallKind enum u8 {
+    Invalid,
+    Normal,
+    TypeFunc,
+    StaticTypeFunc,
+}
+
+const char*[] callKind_names = {
+    "Invalid",
+    "Normal",
+    "SF",
+    "SSF",
+}
+static_assert(elemsof(CallKind), elemsof(callKind_names));
+
+type FunctionDeclBits struct {
+    u32 : NumDeclBits;
+    u32 is_variadic : 1;
+    u32 has_prefix : 1;     // is a (static) type-function
+    u32 call_kind : 2;  // CallKind
+    u32 has_return : 1;     // if it returns something, set during analysis
+    u32 is_template : 1;
+    u32 is_type : 1;     // part of FunctionTypeDecl
+    u32 is_member_type : 1;    // if function is defined in struct as member type
+    u32 has_body : 1;    // if function is defined in C2
+}
+
+type FunctionDeclFlags struct {
+    u16 instance_ast_idx : 16;  // template function instances only
+    u32 num_auto_args : 4;
+    u32 attr_unused_params : 1;
+    u32 attr_noreturn : 1;
+    u32 attr_inline : 1;
+    u32 attr_weak : 1;
+    u32 attr_constructor : 1;
+    u32 attr_destructor : 1;
+    u32 attr_pure : 1;
+}
+
+public type FunctionDecl struct @(opaque) {
+    Decl base;
+    union {
+        CompoundStmt* body;
+        void *address;
+    }
+    QualType rt;          // return type after analysis
+    u8 num_params;
+    u8 attr_printf_arg;        // 0 means not present
+    u16 instance_idx;     // template functions only
+    u32 template_name;    // index into string pool
+    SrcLoc template_loc;
+    union {
+        FunctionDeclFlags flags;
+        u32 flagBits;
+    }
+    Ref prefix;
+    TypeRef rtype;        // return type as in code. note: variable size!
+    //VarDecl*[0] params; // tail-allocated;
+}
+
+public fn FunctionDecl* FunctionDecl.create(ast_context.Context* c,
+                                              u32 name,
+                                              SrcLoc loc,
+                                              bool is_public,
+                                              u32 ast_idx,
+                                              const TypeRefHolder* rtype,
+                                              const Ref* prefix,
+                                              VarDecl** params,
+                                              u32 num_params,
+                                              bool is_variadic,
+                                              bool is_type)
+{
+    u32 size = sizeof(FunctionDecl) + num_params * sizeof(VarDecl*) + rtype.getExtraSize();
+    FunctionDecl* d = c.alloc(size);
+    FunctionType* ftype = FunctionType.create(c, d);
+    QualType qt = QualType.create(ftype.asType());
+    d.base.init(DeclKind.Function, name, loc, is_public, qt, ast_idx);
+    d.base.functionDeclBits.is_variadic = is_variadic;
+    d.base.functionDeclBits.call_kind = prefix ? CallKind.StaticTypeFunc : CallKind.Normal;
+    d.base.functionDeclBits.is_type = is_type;
+    d.body = nil;
+    d.rt = QualType_Invalid;
+    d.num_params = (u8)num_params;
+    d.attr_printf_arg = 0;
+    d.instance_idx = 0;
+    d.template_name = 0;
+    d.template_loc = 0;
+    d.flagBits = 0;
+    d.prefix = {}
+    d.rtype.init(rtype);
+    if (prefix) {
+        d.base.functionDeclBits.has_prefix = 1;
+        d.prefix = *prefix;
+    }
+    if (num_params) {
+        VarDecl** tail = d.rtype.getPointerAfter();
+        string.memcpy(tail, params, num_params * sizeof(VarDecl*));
+    }
+
+#if AstStatistics
+    Stats.addDecl(DeclKind.Function, size);
+#endif
+    return d;
+}
+
+public fn FunctionDecl* FunctionDecl.createTemplate(ast_context.Context* c,
+                                                    u32 name,
+                                                    SrcLoc loc,
+                                                    bool is_public,
+                                                    u32 ast_idx,
+                                                    const TypeRefHolder* rtype,
+                                                    u32 template_name,
+                                                    SrcLoc template_loc,
+                                                    VarDecl** params,
+                                                    u32 num_params,
+                                                    bool is_variadic)
+{
+    u32 size = sizeof(FunctionDecl) + num_params * sizeof(VarDecl*) + rtype.getExtraSize();
+    FunctionDecl* d = c.alloc(size);
+    FunctionType* ftype = FunctionType.create(c, d);
+    QualType qt = QualType.create(ftype.asType());
+    d.base.init(DeclKind.Function, name, loc, is_public, qt, ast_idx);
+    d.base.functionDeclBits.is_variadic = is_variadic;
+    d.base.functionDeclBits.call_kind = CallKind.Normal;
+    d.base.functionDeclBits.is_template = 1;
+    d.base.functionDeclBits.is_type  = false;
+    d.body = nil;
+    d.rt = QualType_Invalid;
+    d.num_params = (u8)num_params;
+    d.attr_printf_arg = 0;
+    d.instance_idx = 0;
+    d.template_name = template_name;
+    d.template_loc = template_loc;
+    d.flagBits = 0;
+    d.prefix = {}
+    d.rtype.init(rtype);
+    if (num_params) {
+        VarDecl** tail = d.rtype.getPointerAfter();
+        string.memcpy(tail, params, num_params * sizeof(VarDecl*));
+    }
+
+#if AstStatistics
+    Stats.addDecl(DeclKind.Function, size);
+#endif
+    return d;
+}
+
+public fn FunctionDecl* FunctionDecl.instantiate(const FunctionDecl* fd, Instantiator* inst)
+{
+    // ref is the template arg (eg myfunc<Foo*)..) -> Foo*)
+    // Note: the rtype could change, so this could make the size larger or smaller:
+    // X could be replaced by mod.Foo, then bigger
+    // X could be replaced by i32, then smaller
+
+    bool rtype_matches = fd.rtype.matchesTemplate(fd.template_name);
+    u32 extra = rtype_matches ? inst.ref.getExtraSize() : fd.rtype.getExtraSize();
+    u32 num_params = fd.num_params;
+    u32 size = sizeof(FunctionDecl) + num_params * sizeof(VarDecl*) + extra;
+    FunctionDecl* fd2 = inst.c.alloc(size);
+    // copy members
+    fd2.base = fd.base;
+    // note: the instantiation is no longer a template function (otherwise ignored by analyseFunctionProto)
+    fd2.base.functionDeclBits.is_template = 0;
+    FunctionType* ftype = FunctionType.create(inst.c, fd2);
+    fd2.base.qt = QualType.create(ftype.asType());
+
+    fd2.body = fd.body;
+    if (fd.base.functionDeclBits.has_body)
+        fd2.body = fd.body.instantiate(inst);
+    fd2.rt = QualType_Invalid;
+    fd2.num_params = fd.num_params;
+    fd2.attr_printf_arg = fd.attr_printf_arg;
+    fd2.instance_idx = 0;
+    fd2.template_name = 0;
+    fd2.template_loc = fd.template_loc;
+    fd2.flagBits = fd.flagBits;
+    fd2.flags.instance_ast_idx = (u16)inst.instance_ast_idx;
+    fd2.prefix = fd.prefix;
+    fd2.rtype.instantiate(&fd.rtype, inst);
+
+    VarDecl** src = fd.rtype.getPointerAfter();
+    VarDecl** dst = fd2.rtype.getPointerAfter();
+    for (u32 i = 0; i < num_params; i++) {
+        dst[i] = src[i].instantiate(inst);
+    }
+
+#if AstStatistics
+    Stats.addDecl(DeclKind.Function, size);
+#endif
+    return fd2;
+}
+
+public fn void FunctionDecl.setBody(FunctionDecl* d, CompoundStmt* body) {
+    d.base.functionDeclBits.has_body = 1;
+    d.body = body;
+}
+
+public fn bool FunctionDecl.hasBody(const FunctionDecl* d) {
+    return d.base.functionDeclBits.has_body;
+}
+
+public fn CompoundStmt* FunctionDecl.getBody(const FunctionDecl* d) {
+    if (d.base.functionDeclBits.has_body) return d.body;
+    return nil;
+}
+
+fn void FunctionDecl.setAddress(FunctionDecl* d, void* address) {
+    d.base.functionDeclBits.has_body = 0;
+    d.address = address;
+}
+
+fn CompoundStmt* FunctionDecl.getAddress(const FunctionDecl* d) {
+    if (d.base.functionDeclBits.has_body) return nil;
+    return d.address;
+}
+
+public fn bool FunctionDecl.isInline(const FunctionDecl* d) {
+    if (!d.getBody()) return false;
+    if (!d.hasAttrInline()) return false;
+    if (!d.base.isPublic()) return false;
+    return true;
+}
+
+public fn bool FunctionDecl.canBeNil(const FunctionDecl* d) {
+    // Variable with Function type (eg callback)
+    return d.isType() || d.isMemberType() || d.hasAttrWeak();
+}
+
+public fn bool FunctionDecl.isType(const FunctionDecl* d) {
+    return d.base.functionDeclBits.is_type;
+}
+
+public fn void FunctionDecl.setRType(FunctionDecl* d, QualType rt) {
+    if (!rt.isVoid()) d.base.functionDeclBits.has_return = 1;
+    d.rt = rt;
+}
+
+public fn QualType FunctionDecl.getRType(const FunctionDecl* d) {
+    return d.rt;
+}
+
+public fn bool FunctionDecl.hasReturn(const FunctionDecl* d) {
+    return d.base.functionDeclBits.has_return;
+}
+
+public fn Decl* FunctionDecl.asDecl(FunctionDecl* d) {
+    return &d.base;
+}
+
+public fn TypeRef* FunctionDecl.getReturnTypeRef(FunctionDecl* d) {
+    return &d.rtype;
+}
+
+public fn bool FunctionDecl.hasPrefix(const FunctionDecl* d) {
+    return d.base.functionDeclBits.has_prefix;
+}
+
+public fn bool FunctionDecl.isTemplate(const FunctionDecl* d) {
+    return d.base.functionDeclBits.is_template;
+}
+
+public fn u32 FunctionDecl.getTemplateNameIdx(const FunctionDecl* d) {
+    return d.template_name;
+}
+
+public fn SrcLoc FunctionDecl.getTemplateLoc(const FunctionDecl* d) {
+    return d.template_loc;
+}
+
+public fn void FunctionDecl.setTemplateInstanceIdx(FunctionDecl* d, u16 idx) {
+    d.instance_idx = idx;
+}
+
+public fn u16 FunctionDecl.getTemplateInstanceIdx(const FunctionDecl* d) {
+    return d.instance_idx;
+}
+
+public fn void FunctionDecl.setInstanceName(FunctionDecl* d, u32 name_idx) {
+    d.base.name_idx = name_idx;
+}
+
+public fn Module* FunctionDecl.getInstanceModule(FunctionDecl* d) {
+    if (d.flags.instance_ast_idx) return idx2ast(d.flags.instance_ast_idx).getMod();
+    return nil;
+}
+
+public fn Ref* FunctionDecl.getPrefix(FunctionDecl* d) {
+    if (d.hasPrefix()) return &d.prefix;
+    return nil;
+}
+
+fn const char* FunctionDecl.getCName(const FunctionDecl* d) {
+    const char* cname = d.base.getCName();
+    if (!cname)
+        cname = d.base.getName();
+    return cname;
+}
+
+public fn const char* FunctionDecl.getPrefixName(const FunctionDecl* d) {
+    if (!d.hasPrefix()) return nil;
+    return d.prefix.getName();
+}
+
+/*
+public fn u32 FunctionDecl.getPrefixNameIdx(const FunctionDecl* d) {
+    if (!d.hasPrefix()) return 0;
+    const Ref* ref = d.rtype.getPointerAfter();
+    return ref.name_idx;
+}
+*/
+
+public fn void FunctionDecl.setCallKind(FunctionDecl* d, CallKind kind) {
+    d.base.functionDeclBits.call_kind = kind;
+}
+
+public fn bool FunctionDecl.isTypeFunc(const FunctionDecl* d) {
+    CallKind ck = d.getCallKind();
+    return ck >= TypeFunc;
+}
+
+public fn CallKind FunctionDecl.getCallKind(const FunctionDecl* d) {
+    return (CallKind)d.base.functionDeclBits.call_kind;
+}
+
+public fn bool FunctionDecl.isVariadic(const FunctionDecl* d) {
+    return d.base.functionDeclBits.is_variadic;
+}
+
+public fn u32 FunctionDecl.getNumParams(const FunctionDecl* d) {
+    return d.num_params;
+}
+
+public fn VarDecl** FunctionDecl.getParams(const FunctionDecl* d) {
+    return d.rtype.getPointerAfter();
+}
+
+public fn u32 FunctionDecl.getNumAutoArgs(const FunctionDecl* d) {
+    return d.flags.num_auto_args;
+}
+
+public fn void FunctionDecl.setNumAutoArgs(FunctionDecl* d, u32 num) {
+    assert(num < 16);
+    d.flags.num_auto_args = num;
+}
+
+public fn void FunctionDecl.setAttrUnusedParams(FunctionDecl* d) {
+    d.flags.attr_unused_params = 1;
+}
+
+public fn bool FunctionDecl.hasAttrUnusedParams(const FunctionDecl* d) {
+    return d.flags.attr_unused_params;
+}
+
+public fn void FunctionDecl.setAttrNoReturn(FunctionDecl* d) {
+    d.flags.attr_noreturn = 1;
+}
+
+public fn bool FunctionDecl.hasAttrNoReturn(const FunctionDecl* d) {
+    return d.flags.attr_noreturn;
+}
+
+public fn void FunctionDecl.setAttrInline(FunctionDecl* d) {
+    d.flags.attr_inline = 1;
+}
+
+public fn bool FunctionDecl.hasAttrInline(const FunctionDecl* d) {
+    return d.flags.attr_inline;
+}
+
+public fn void FunctionDecl.setAttrWeak(FunctionDecl* d) {
+    d.flags.attr_weak = 1;
+}
+
+public fn bool FunctionDecl.hasAttrWeak(const FunctionDecl* d) {
+    return d.flags.attr_weak;
+}
+
+public fn void FunctionDecl.setAttrConstructor(FunctionDecl* d) {
+    d.flags.attr_constructor = 1;
+}
+
+public fn bool FunctionDecl.hasAttrConstructor(const FunctionDecl* d) {
+    return d.flags.attr_constructor;
+}
+
+public fn void FunctionDecl.setAttrDestructor(FunctionDecl* d) {
+    d.flags.attr_destructor = 1;
+}
+
+public fn bool FunctionDecl.hasAttrDestructor(const FunctionDecl* d) {
+    return d.flags.attr_destructor;
+}
+
+public fn void FunctionDecl.setAttrPure(FunctionDecl* d) {
+    d.flags.attr_pure = 1;
+}
+
+public fn bool FunctionDecl.hasAttrPure(const FunctionDecl* d) {
+    return d.flags.attr_pure;
+}
+
+public fn void FunctionDecl.setAttrPrintf(FunctionDecl* d, u8 arg) {
+    d.attr_printf_arg = arg;
+}
+
+/*
+public fn bool FunctionDecl.hasAttrPrintf(const FunctionDecl* d) {
+    return d.attr_printf_arg != 0;
+}
+*/
+
+public fn u8 FunctionDecl.getAttrPrintf(const FunctionDecl* d) {
+    return d.attr_printf_arg;
+}
+
+public fn const char* FunctionDecl.getDiagKind(const FunctionDecl* d) {
+    CallKind ck = d.getCallKind();
+    if (ck == CallKind.TypeFunc) return "type-";
+    return "";
+}
+
+public fn void FunctionDecl.setMemberType(FunctionDecl* d) {
+    d.base.functionDeclBits.is_member_type = 1;
+}
+
+public fn bool FunctionDecl.isMemberType(const FunctionDecl* d) {
+    return d.base.functionDeclBits.is_member_type;
+}
+
+fn void FunctionDecl.print(const FunctionDecl* d, string_buffer.Buf* out, u32 indent) {
+    bool valid_type = d.base.qt.isValid();
+    d.base.printKind(out, indent, valid_type);
+    if (!valid_type) {
+        out.space();
+        d.rtype.print(out, true);
+    }
+
+    d.base.printBits(out);
+
+    out.space();
+    out.color(col_Attr);
+    out.add(callKind_names[d.getCallKind()]);
+    d.base.printAttrs(out);
+    if (d.base.functionDeclBits.is_type) out.add(" Type");
+    if (d.base.functionDeclBits.is_member_type) out.add(" MemberType");
+    out.color(col_Expr); // purple
+    if (d.hasAttrUnusedParams()) out.add(" unused-params");
+    if (d.hasAttrNoReturn()) out.add(" noreturn");
+    if (d.hasAttrInline()) out.add(" inline");
+    if (d.hasAttrWeak()) out.add(" weak");
+    if (d.attr_printf_arg != 0) out.print(" printf_format=%d", d.attr_printf_arg);
+    if (d.hasAttrConstructor()) out.add(" constructor");
+    if (d.hasAttrDestructor()) out.add(" destructor");
+    if (d.hasAttrPure()) out.add(" pure");
+
+    out.space();
+    out.color(col_Value);
+
+    if (d.hasPrefix()) {
+        out.add(d.prefix.getName());
+        out.add1('.');
+    }
+    out.add(d.base.getName());
+    out.newline();
+
+    if (d.base.functionDeclBits.is_template) {
+        out.indent(indent + 1);
+        out.color(col_Template);
+        out.print("template %s\n", idx2name(d.template_name));
+    }
+
+    //d.rtype.print(out, true,);
+
+    VarDecl** params = d.getParams();
+    for (u32 i=0; i<d.num_params; i++) {
+        params[i].print(out, indent + 1);
+    }
+    if (d.base.functionDeclBits.has_body && d.body) {
+        d.body.print(out, indent + 1);
+    }
+}
+
+fn void FunctionDecl.printType(const FunctionDecl* d, string_buffer.Buf* out) {
+    if (d.isType()) {
+        out.add(d.base.getName());
+        return;
+    }
+    if (d.rt.isValid()) {
+        d.rt.print(out);
+    } else {
+        d.rtype.print(out, true);
+    }
+    out.add(" (");
+
+    VarDecl** params = d.getParams();
+    for (u32 i=0; i<d.num_params; i++) {
+        if (i != 0) out.add(", ");
+        params[i].printType(out);
+    }
+
+    if (d.base.functionDeclBits.is_variadic) out.add(", ...");
+
+    out.rparen();
+}
+

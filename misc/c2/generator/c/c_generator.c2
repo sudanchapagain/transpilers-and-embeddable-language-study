@@ -1,0 +1,1530 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module c_generator;
+
+import ast local;
+import c_prec local;
+import diagnostics;
+import build_file;
+import build_target;
+import component;
+import constants;
+import console;
+import dep_finder;
+import file_utils;
+import linked_list;
+import manifest_writer;
+import process_utils;
+import source_mgr;
+import string_buffer;
+import string_list;
+import string_pool;
+import string_utils;
+import target_info;
+
+import c_errno local;
+import string;
+import stdlib;
+import stdio;
+
+type Fragment struct {
+    string_buffer.Buf* buf;
+    linked_list.Element list;
+}
+
+fn Fragment* Fragment.create() {
+    Fragment* f = stdlib.malloc(sizeof(Fragment));
+    f.buf = string_buffer.create(128, false, 3);
+    return f;
+}
+
+fn void Fragment.clear(Fragment* f) {
+    f.buf.clear();
+}
+
+fn void Fragment.free(Fragment* f) {
+    f.buf.free();
+    stdlib.free(f);
+}
+
+type Generator struct {
+    string_pool.Pool* astPool;
+    string_pool.Pool* auxPool;
+    string_buffer.Buf* out;
+    const char* target;
+    build_target.Kind target_kind;
+    const char* results_dir;
+    const char* output_dir;     // output/<target>
+    const char* cgen_dir;       // output/<target>/cgen
+    diagnostics.Diags *diags;
+    source_mgr.SourceMgr* sm;
+    const build_file.Info* build_info;
+    const target_info.Info* targetInfo;
+    bool enable_asserts;
+    bool fast_build;
+    bool asan;
+    bool msan;
+    bool ubsan;
+    bool trace_calls;
+    bool no_trace;  //to disable tracing on c2_trace module
+
+    // set during generation
+    bool cur_external;  // whether current component is external
+    u32 need_const_expr;
+    FunctionDecl* cur_function; // needed for assert
+    const char* mod_name; // set per module
+    string_list.List imports;  // used to filter out duplicate imports (from different ASTs)
+    DeclList decls;
+    dep_finder.Finder deps;
+
+    Decl* mainFunc;
+
+    // to filter exceptions
+    u32 varargsName;
+
+    Module* mod;
+
+    string_buffer.Buf* header;
+
+    // list of fragments
+    linked_list.Element free_list;
+    linked_list.Element used_list;  // for c-file
+    linked_list.Element header_fragments; // for header-file (if used)
+
+    TraceCallList calls;
+    StringList filenames;
+    StringList funcnames;
+}
+
+
+const char[] Dir = "cgen";
+const char[] LogFile = "build.log";
+
+fn string_buffer.Buf* Generator.getBuf(Generator* gen, bool is_public) {
+    // TODO just have 2 pointers, one for publics, one for non-publics. Might point to same buffer?
+    string_buffer.Buf* out = gen.out;
+    if (gen.fast_build && (is_public || gen.cur_external)) out = gen.header;
+    return out;
+}
+
+fn Fragment* Generator.getFragment(Generator* gen) {
+    if (gen.free_list.isEmpty()) {
+        return Fragment.create();
+    }
+
+    linked_list.Element* e = gen.free_list.popFront();
+    Fragment* f = to_container(Fragment, list, e);
+    f.clear();
+    return f;
+}
+
+fn void Generator.addFragment(Generator* gen, Fragment* f, bool is_public) {
+    if (gen.fast_build && (is_public || gen.cur_external)) {
+        gen.header_fragments.addTail(&f.list);
+    } else {
+        gen.used_list.addTail(&f.list);
+    }
+}
+
+fn void Generator.freeFragment(Generator* gen, Fragment* f) {
+    gen.free_list.addTail(&f.list);
+}
+
+
+fn void Generator.emitCtv(Generator* /*gen*/, string_buffer.Buf* out, const Expr* e) {
+    Value val = ast.evalExpr(e);
+    out.print("%s", val.str());
+}
+
+fn void Generator.emitCName(Generator* gen, string_buffer.Buf* out, const Decl* d) {
+    gen.emitCNameMod(out, d, gen.mod);
+}
+
+fn void Generator.emitCNameMod(Generator* /*gen*/, string_buffer.Buf* out, const Decl* d, Module* mod) {
+    if (d.isExternal() && d.getModule().isForeign()) {
+        const char* cname = d.getCName();
+        if (cname) {
+            out.add(cname);
+            return;
+        }
+        if (d.isFunction()) {
+            FunctionDecl* fd = (FunctionDecl*)d;
+            if (fd.isTypeFunc()) goto c2_style;
+        }
+        QualType qt = d.getType();
+        if (!qt.isConst()) {
+            out.add(d.getName());
+            return;
+        }
+    }
+c2_style:
+    out.add(mod.getName());
+    out.add1('_');
+    if (d.isFunction()) {
+        FunctionDecl* fd = (FunctionDecl*)d;
+        Ref* prefix = fd.getPrefix();
+        if (prefix) {
+            out.add(ast.idx2name(prefix.name_idx));
+            out.add1('_');
+        }
+    }
+    if (d.isEnumConstant()) {
+        QualType qt = d.getType();
+        EnumType* et = (EnumType*)qt.getType();
+        out.add(et.getName());
+        out.add1('_');
+    }
+    out.add(d.getName());
+}
+
+fn void Generator.emitDeclName(Generator* gen, string_buffer.Buf* out, const Decl* d) {
+    if (d.isVariable()) {
+        VarDecl* vd = (VarDecl*)d;
+        if (!vd.isGlobal()) {
+            out.add(d.getName());
+            return;
+        }
+    }
+    gen.emitCNameMod(out, d, d.getModule());
+}
+
+fn void Generator.emitEnumType(Generator* gen, string_buffer.Buf* out, Decl* d) {
+    EnumTypeDecl* etd = (EnumTypeDecl*)d;
+
+    // typedef enum types to their implementation type
+    out.add("typedef ");
+    gen.emitTypePre(out, etd.getImplType());
+    out.space();
+    gen.emitCName(out, d);
+    out.add(";\n");
+    out.add("enum ");
+    gen.emitCName(out, d);
+    out.add(" {\n");
+    // set generated, otherwise constant self-ref goes wrong
+    d.setGenerated();
+    u32 num_constants = etd.getNumConstants();
+    EnumConstantDecl** decls = etd.getConstants();
+    for (u32 i=0; i<num_constants; i++) {
+        EnumConstantDecl* ecd = decls[i];
+        out.indent(1);
+        out.add(gen.mod_name);
+        out.add1('_');
+        out.add(d.getName());
+        out.add1('_');
+        out.add(ecd.asDecl().getName());
+        Expr* ie = ecd.getInit();
+        ecd.asDecl().setGenerated();
+        if (ie) {
+            out.add(" = ");
+            gen.emitExpr(out, ie);
+        }
+        out.add(",\n");
+    }
+    out.add("};\n\n");
+}
+
+const char*[] builtinType_cnames = {
+    "char",
+    "int8_t",
+    "int16_t",
+    "int32_t",
+    "int64_t",
+    "uint8_t",
+    "uint16_t",
+    "uint32_t",
+    "uint64_t",
+    "float",
+    "double",
+    "ssize_t",
+    "size_t",
+    "_Bool",
+    "void",
+}
+
+static_assert(elemsof(BuiltinKind), elemsof(builtinType_cnames));
+
+fn void Generator.emitTypePre(Generator* gen, string_buffer.Buf* out, QualType qt) {
+    Decl* decl = nil;
+
+    if (qt.isConst()) out.add("const ");
+    if (qt.isVolatile()) out.add("volatile ");
+
+    switch (qt.getKind()) {
+    case Builtin:
+        BuiltinType* bt = (BuiltinType*)qt.getType();
+        out.add(builtinType_cnames[bt.getKind()]);
+        return;
+    case Pointer:
+        PointerType* pt = (PointerType*)qt.getType();
+        gen.emitTypePre(out, pt.getInner());
+        out.add1('*');
+        return;
+    case Array:
+        ArrayType* at = (ArrayType*)qt.getType();
+        gen.emitTypePre(out, at.getElemType());
+        return;
+    case Struct:
+        StructType* st = (StructType*)qt.getType();
+        StructTypeDecl* std = st.getDecl();
+        if (std.hasAttrNoTypeDef()) {
+            out.add(std.isStruct() ? "struct " : "union ");
+        }
+
+        decl = (Decl*)st.getDecl();
+        break;
+    case Enum:
+        EnumType* et = (EnumType*)qt.getType();
+        decl = (Decl*)et.getDecl();
+        break;
+    case Function:
+        FunctionType* ft = (FunctionType*)qt.getType();
+        FunctionDecl* fd = ft.getDecl();
+        decl = (Decl*)fd;
+        break;
+    case Alias:
+        AliasType* at = (AliasType*)qt.getType();
+        decl = (Decl*)at.getDecl();
+        break;
+    case Module:
+        assert(0);
+        return;
+    }
+
+    gen.emitCNameMod(out, decl, decl.getModule());
+}
+
+fn void Generator.emitTypePost(Generator* gen, string_buffer.Buf* out, QualType qt) {
+    if (!qt.isArray()) return;
+    ArrayType* at = (ArrayType*)qt.getType();
+
+    out.add1('[');
+    if (at.hasSize()) out.print("%d", at.getSize());
+    out.add1(']');
+    gen.emitTypePost(out, at.getElemType());
+}
+
+fn void Generator.genDeclIfNeeded(Generator* gen, Decl* d) {
+    if (d.isGenerated()) return;
+
+    if (d.isVariable()) {
+        VarDecl* vd = (VarDecl*)d;
+        if (!vd.isGlobal()) return;
+    }
+
+    gen.emitGlobalDecl(d);
+}
+
+fn void Generator.genTypeIfNeeded(Generator* gen, QualType qt, bool full) {
+    Decl* d = nil;
+
+    switch (qt.getKind()) {
+    case Builtin:
+        return;
+    case Pointer:
+        PointerType* pt = (PointerType*)qt.getType();
+        gen.genTypeIfNeeded(pt.getInner(), false);
+        return;
+    case Array:
+        ArrayType* at = (ArrayType*)qt.getType();
+        gen.genTypeIfNeeded(at.getElemType(), true);
+        return;
+    case Struct:
+        StructType* st = (StructType*)qt.getType();
+        if (!full) return;
+        d = (Decl*)st.getDecl();
+        break;
+    case Enum:
+        EnumType* et = (EnumType*)qt.getType();
+        d = (Decl*)et.getDecl();
+        break;
+    case Function:
+        FunctionType* ft = (FunctionType*)qt.getType();
+        FunctionDecl* fd = ft.getDecl();
+        d = (Decl*)fd;
+        break;
+    case Alias:
+        AliasType* at = (AliasType*)qt.getType();
+        d = (Decl*)at.getDecl();
+        break;
+    case Module:
+        assert(0);
+        return;
+    }
+
+    if (!d.isGenerated()) gen.emitGlobalDecl(d);
+}
+
+fn void Generator.emitStructMember(Generator* gen, string_buffer.Buf* out, Decl* d, u32 indent) {
+    if (d.isVariable()) {
+        out.indent(indent);
+
+        QualType qt = d.getType();
+        if (qt.isFunction()) {
+            FunctionType* ft = qt.getFunctionType();
+            FunctionDecl* fd = ft.getDecl();
+            if (fd.isMemberType()) {
+                gen.gen_member_type_func(fd, out, d.getName());
+                return;
+            }
+        }
+        gen.genTypeIfNeeded(qt, true);
+
+        gen.emitTypePre(out, qt);
+        out.space();
+        if (d.getNameIdx()) out.add(d.getName());
+        gen.emitTypePost(out, qt);
+
+        VarDecl* vd = (VarDecl*)d;
+        Expr* bitfield = vd.getBitfield();
+        if (bitfield) {
+            out.add(" : ");
+            // C does not allow using constants here, so generate CTV Value
+            gen.emitCtv(out, bitfield);
+        }
+        out.add(";\n");
+    } else {
+        assert(d.isStructType());
+        gen.emitStruct(out, d, indent);
+    }
+}
+
+fn void Generator.emitStruct(Generator* gen, string_buffer.Buf* out, Decl* d, u32 indent) {
+    StructTypeDecl* std = (StructTypeDecl*)d;
+    if (std.isGlobal()) {
+        if (std.isStruct()) out.add("struct ");
+        else out.add("union ");
+        gen.emitCName(out, d);
+        if (!std.hasAttrNoTypeDef()) out.add1('_'); // either generate 'struct stat_' or 'struct stat'
+    } else {
+        out.indent(indent);
+        if (std.isStruct()) out.add("struct");
+        else out.add("union");
+    }
+    out.add(" {\n");
+
+    u32 num_members = std.getNumMembers();
+    Decl** members = std.getMembers();
+    for (u32 i=0; i<num_members; i++) {
+        gen.emitStructMember(out, members[i], indent+1);
+    }
+
+    if (std.isGlobal()) {
+        out.add1('}');
+        if (std.isPacked()) out.add(" __attribute__((packed))");
+        out.add(";\n\n");
+    } else {
+        out.indent(indent);
+        out.add1('}');
+        if (d.getNameIdx()) {
+            out.space();
+            out.add(d.getName());
+        }
+        out.add(";\n");
+    }
+}
+
+fn void Generator.emitFunctionType(Generator* gen, string_buffer.Buf* out, Decl* d) {
+    FunctionTypeDecl* ftd = (FunctionTypeDecl*)d;
+    FunctionDecl* fd = ftd.getDecl();
+    fd.asDecl().setGenerated();
+
+    out.add("typedef ");
+    gen.emitTypePre(out, fd.getRType());
+    out.add(" (*");
+    gen.emitCName(out, d);
+    out.add(")(");
+    u32 num_params = fd.getNumParams();
+    VarDecl** params = fd.getParams();
+    for (u32 i=0; i<num_params; i++) {
+        Decl* arg = (Decl*)params[i];
+        if (i != 0) out.add(", ");
+        gen.emitTypePre(out, arg.getType());
+        const char* name = arg.getName();
+        out.space();
+        if (name) out.add(name);
+        else out.print("_arg%d", i);
+    }
+    if (fd.isVariadic()) {
+        if (num_params) out.add(", ");
+        out.add("...");
+    }
+    if (num_params == 0 && !fd.isVariadic()) out.add("void");
+    out.add1(')');
+    if (d.hasAttrUnused()) out.add(" __attribute__((unused))");
+    out.add(";\n\n");
+}
+
+fn bool match_type(const char* s, const char* list, const char** sp) {
+    while (*list) {
+        usize len;
+        for (len = 0; list[len] && list[len] != ','; len++)
+            continue;
+        usize i;
+        for (i = 0; i < len && s[i] == list[i]; i++)
+            continue;
+        if (i == len && (s[i] == '\0' || s[i] == ' ')) {
+            *sp = s + i;
+            return true;
+        }
+        list += len;
+        list += (*list == ',');
+    }
+    return false;
+}
+
+fn bool is_c_type(const char* s) {
+    for (;;) {
+        while (*s == ' ') s++;
+        if (!*s) return true;
+        if (!match_type(s, "const,volatile,unsigned,signed,short,long,"
+                        "_Bool,char,int,float,double,size_t,ssize_t", &s))
+            break;
+    }
+    return false;
+}
+
+fn void Generator.emitAliasType(Generator* gen, string_buffer.Buf* out, Decl* d) {
+    const char* cname = d.getCName();
+    if (cname && is_c_type(cname))
+        return;
+    // For now, just generate canonicalType as RHS
+    QualType qt = d.getType();
+    qt = qt.getCanonicalType(); // just generate final type
+    out.add("typedef ");
+    gen.emitTypePre(out, qt);
+    gen.emitTypePost(out, qt);
+    out.space();
+    gen.emitCName(out, d);
+    out.add(";\n");
+}
+
+fn bool emitAsDefine(const VarDecl* vd) {
+    const Decl* d = (Decl*)vd;
+    QualType qt = d.getType();
+    QualType canon = qt.getCanonicalType();
+    if (vd.isAddrUsed()) return false;
+
+    const Expr* initExpr = vd.getInit();
+    if (!initExpr) return false;
+
+    if (canon.isArray()) {
+        ArrayType* at = canon.getArrayType();
+        QualType et = at.getElemType();
+        if (!et.isBuiltin()) return false;
+        if (et.isVolatile()) return false;
+        if (!et.isConst()) return false;
+        if (initExpr.isStringLiteral() && d.isExternal()) return true;
+    } else {
+        if (!qt.isConst()) return false;
+        if (qt.isVolatile()) return false;
+        if (canon.isBuiltin() || canon.isEnum()) return true;
+    }
+    return false;
+}
+
+fn void Generator.emitConstExpr(Generator* gen, string_buffer.Buf* out, Expr* e, C_Prec prec) {
+    gen.need_const_expr++;
+    gen.emitExpr2(out, e, prec);
+    gen.need_const_expr--;
+}
+
+fn void Generator.emitGlobalVarDeclCommon(Generator* gen, string_buffer.Buf* out, Decl* d) {
+    const char* cdef = d.getCDef();
+    if (cdef) {
+        out.add(cdef);
+    } else {
+        QualType qt = d.getType();
+        gen.emitTypePre(out, qt);
+        out.space();
+        gen.emitCName(out, d);
+        gen.emitTypePost(out, qt);
+    }
+    VarDecl* vd = (VarDecl*)d;
+    if (vd.hasAttrWeak()) out.add(" __attribute__((weak))");
+
+    const char* section = d.getSection();
+    if (section) {
+        out.space();
+        gen.emitSectionAttr(out, section);
+    }
+}
+
+fn bool Generator.emitGlobalVarDecl(Generator* gen, string_buffer.Buf* out, Decl* d) {
+    VarDecl* vd = (VarDecl*)d;
+
+    // emit 'simple'-constants as a defines
+    if (emitAsDefine(vd)) {
+        out.add("#define ");
+        gen.emitCName(out, d);
+        out.space();
+        gen.emitConstExpr(out, vd.getInit(), Postfix);
+        out.newline();
+        return true;
+    }
+
+    /*
+        Normal build:
+        - cur_external -> extern (in .c)
+        - !exported -> static (in .c)
+        - else _ (in .c)
+
+        Fast build:
+        - cur_external -> extern (in .h)
+        - non-public: static in .c
+        - public: _ in .c, extern in .h
+    */
+
+    bool emit_header = gen.fast_build && d.isPublic();
+    if (emit_header) {
+        // generate extern declaration to header file
+        Fragment* f = gen.getFragment();
+        f.buf.add("extern ");
+        gen.emitGlobalVarDeclCommon(f.buf, d);
+        f.buf.add(";\n");
+        gen.addFragment(f, true);
+    }
+
+    if (gen.cur_external) {
+        // generate extern declaration for interface file
+        out.add("extern ");
+        gen.emitGlobalVarDeclCommon(out, d);
+        out.add(";\n");
+        return false;    // put this part in .c file
+    }
+
+    if (!d.isExternal()) {
+        // generate definition to c file
+        if (!d.isExported() && !emit_header) out.add("static ");
+        gen.emitGlobalVarDeclCommon(out, d);
+        out.add(" = ");
+        Expr* ie = vd.getInit();
+        if (ie) {
+            gen.emitConstExpr(out, ie, Assignment);
+        } else {
+            // auto-initialize (only required for embedded targets)
+            gen.emitAutoInit(out, d.getType());
+        }
+        out.add(";\n");
+    }
+    return false;    // put this part in .c file
+}
+
+fn bool Generator.emitExprValue(Generator* gen, string_buffer.Buf* out, Expr* e) {
+    Value result = ast.evalExpr(e);
+    if (result.kind == ValueKind.Error) {
+        gen.diags.errorRange(e.getLoc(), e.getRange(), "%s", result.error_msg);
+        return false;
+    }
+    out.add(result.str());
+    return true;
+}
+
+fn void Generator.emitSectionAttr(Generator* gen, string_buffer.Buf* out, const char* name) {
+    out.print("__attribute__((section(\"%s\")))", name);
+}
+
+fn void Generator.emitAutoInit(Generator* gen, string_buffer.Buf* out, QualType qt) {
+    qt = qt.getCanonicalType();
+    if (qt.isArray() || qt.isStruct()) {
+        out.add("{ }");
+    } else if (qt.isPointer()) {
+        out.add("NULL");
+    } else {
+        out.add1('0');
+    }
+}
+
+fn void Generator.on_public_import_decl(void* arg, ImportDecl* i) {
+    Generator* gen = arg;
+    Decl* d = (Decl*)i;
+
+    if (!d.isUsedPublic()) return;
+
+    u32 name_idx = d.getNameIdx();
+    if (gen.imports.contains_idx(name_idx)) return;
+
+    gen.imports.add(name_idx);
+    gen.header.print("#include \"%s.h\"\n", d.getName());
+}
+
+fn void Generator.on_private_import_decl(void* arg, ImportDecl* i) {
+    Generator* gen = arg;
+    Decl* d = (Decl*)i;
+
+    if (d.isUsedPublic()) return;
+
+    u32 name_idx = d.getNameIdx();
+    if (gen.imports.contains_idx(name_idx)) return;
+
+    gen.imports.add(name_idx);
+    gen.out.print("#include \"%s.h\"\n", d.getName());
+}
+
+fn void Generator.on_forward_structs(void* arg, Decl* d) {
+    Generator* gen = arg;
+
+    if (!d.isUsed()) return;
+    if (!d.isStructType()) return;
+    if (gen.cur_external && !d.isUsed()) return;
+
+    gen.emitForwardStructDecl(d, gen.getBuf(d.isPublic()));
+}
+
+fn void Generator.emitForwardStructDecl(Generator* gen, Decl* d, string_buffer.Buf* out) {
+    StructTypeDecl* std = (StructTypeDecl*)d;
+    if (std.hasAttrNoTypeDef()) return;
+
+    out.add("typedef ");
+    if (std.isStruct()) out.add("struct");
+    else out.add("union");
+    out.space();
+    gen.emitCName(out, d);
+    out.add("_ ");
+    gen.emitCName(out, d);
+    out.add(";\n");
+}
+
+fn void Generator.emitGlobalDecl(Generator* gen, Decl* d) {
+    assert(!d.isGenerated());
+
+    // dont generate unused external decls
+    if (gen.cur_external && !d.isUsed()) {
+        d.setGenerated();
+        return;
+    }
+
+    switch (d.getKind()) {
+    case Function:
+        FunctionDecl* fd = (FunctionDecl*)d;
+        if (fd.isTemplate()) break;
+
+        string_buffer.Buf* out = gen.getBuf(d.isPublic());
+        gen.gen_func_proto(fd, out);
+        // TODO do in 'normal' body generation step? (also for interfaces)
+        if (fd.isInline()) {
+            gen.cur_function = fd;
+            d.setGenerated();  // for recursive inline functions
+            out.newline();
+            string_buffer.Buf* saved = gen.out;
+            gen.out = out;
+            gen.emitStmt((ast.Stmt*)fd.getBody(), 0, true);
+            gen.out = saved;
+            out.newline();
+            gen.cur_function = nil;
+        } else {
+            out.add(";\n");
+        }
+        break;
+    case Import:
+        break;
+    case StructType:
+        StructTypeDecl* std = (StructTypeDecl*)d;
+        Fragment* f = gen.getFragment();
+        gen.emitStruct(f.buf, d, 0);
+        gen.addFragment(f, d.isPublic() && !std.isOpaque());
+        break;
+    case EnumType:
+        Fragment* f = gen.getFragment();
+        gen.emitEnumType(f.buf, d);
+        gen.addFragment(f, d.isPublic());
+        break;
+    case EnumConstant:
+        // Can happen, we need to generate the containing enum then
+        // TODO
+        console.warn("TODO gen enum %d", d.isGenerated());
+/*
+        // Q: move this part to enum_constant_decl.c2? or ast_utils?
+        QualType qt = d.getType();
+        EnumType* et = qt.getEnumTypeOrNil();
+        EnumTypeDecl* etd = et.getDecl();
+*/
+        break;
+    case FunctionType:
+        Fragment* f = gen.getFragment();
+        gen.emitFunctionType(f.buf, d);
+        gen.addFragment(f, d.isPublic());
+        break;
+    case AliasType:
+        Fragment* f = gen.getFragment();
+        gen.emitAliasType(f.buf, d);
+        gen.addFragment(f, d.isPublic());
+        break;
+    case Variable:
+        Fragment* f = gen.getFragment();
+        bool in_header = gen.emitGlobalVarDecl(f.buf, d);
+        gen.addFragment(f, in_header);
+        break;
+    }
+
+    d.setGenerated();
+    gen.flattenFragments();
+}
+
+fn void Generator.flattenFragments(Generator* gen) {
+    while (!gen.used_list.isEmpty()) {
+        linked_list.Element* e = gen.used_list.popFront();
+        Fragment* f = to_container(Fragment, list, e);
+        gen.out.add2(f.buf.data(), f.buf.size());
+        gen.freeFragment(f);
+    }
+
+    if (!gen.fast_build) {
+        assert(gen.header_fragments.isEmpty());
+    }
+
+    while (!gen.header_fragments.isEmpty()) {
+        linked_list.Element* e = gen.header_fragments.popFront();
+        Fragment* f = to_container(Fragment, list, e);
+        gen.header.add2(f.buf.data(), f.buf.size());
+        gen.freeFragment(f);
+    }
+}
+
+fn void Generator.on_decl(void* arg, Decl* d) {
+    if (d.isGenerated() || !d.isUsed()) return;
+
+    Generator* gen = arg;
+
+    if (d.isImport()) {
+        // no need to generate includes in normal build since everything is in a single file
+        if (!gen.fast_build) return;
+        // dont generate include "x.h" in x.h
+        ImportDecl* id = (ImportDecl*)d;
+        if (gen.cur_external && gen.mod == id.getDest()) return;
+    }
+
+    gen.deps.check(d);  // generate dependencies first
+
+    gen.emitGlobalDecl(d);
+}
+
+fn void Generator.on_ast_decl(void* arg, AST* a) {
+    a.visitDecls(Generator.on_decl, arg);
+}
+
+fn void Generator.gen_member_type_func(Generator* gen, FunctionDecl* fd, string_buffer.Buf* out, const char* name) {
+    // generate something like: void (*name)(void* arg);\n
+    Decl* d = (Decl*)fd;
+
+    gen.emitTypePre(out, fd.getRType());
+    out.print(" (*%s)", name);
+    gen.emitFuncParams(fd, out);
+    out.add(";\n");
+}
+
+fn void Generator.gen_func_proto(Generator* gen, FunctionDecl* fd, string_buffer.Buf* out) {
+    Decl* d = (Decl*)fd;
+
+    // TODO: add function definition location to gen.funcdata
+
+    // template are generated as late as possible, since the Type might not be known yet
+    if (fd.isTemplate()) return;
+
+    const char* section = d.getSection();
+    if (section) {
+        gen.emitSectionAttr(out, section);
+        out.space();
+    }
+    if (fd.hasAttrInline()) {
+        // Note: inline functions are always static
+        //out.add("__inline__ ");
+        out.add("static inline ");
+    }
+    if (fd.hasAttrWeak()) {
+        out.add("__attribute__((weak)) ");
+    }
+    if (fd.hasAttrConstructor()) {
+        out.add("__attribute__((constructor)) ");
+    }
+    if (fd.hasAttrDestructor()) {
+        out.add("__attribute__((destructor)) ");
+    }
+
+    u8 printf_arg = fd.getAttrPrintf();
+    if (printf_arg) {
+        out.print("__attribute__((__format__(printf, %d, %d))) ", printf_arg, fd.getNumParams() +1);
+    }
+    if (out.endsWith(' ')) {
+        out.trim(1);
+        out.newline();
+    }
+
+    if (d == gen.mainFunc) {
+        out.add("int32_t main");
+    } else {
+        // 2 options:
+        // - external .c2i files
+        // - exported .c2 function that is public and inline
+        // also:
+        // - generate lib.h for library
+        // - generate module.h in cgen
+        if (!fd.hasAttrInline() && !gen.cur_external && !d.isExported() && !(gen.fast_build && d.isPublic())) out.add("static ");
+        gen.emitTypePre(out, fd.getRType());
+        out.space();
+        gen.emitCName(out, d);
+    }
+    gen.emitFuncParams(fd, out);
+}
+
+fn void Generator.emitFuncParams(Generator* gen, FunctionDecl* fd, string_buffer.Buf* out) {
+    out.lparen();
+    u32 num_params = fd.getNumParams();
+
+    VarDecl** params = fd.getParams();
+    for (u32 i=0; i<num_params; i++) {
+        Decl* argx = (Decl*)params[i];
+        if (i != 0) out.add(", ");
+        gen.emitTypePre(out, argx.getType());
+        out.space();
+        const char* name = argx.getName();
+        if (name) out.add(name);
+        else out.print("_arg%d", i);
+    }
+    if (fd.isVariadic()) {
+        if (num_params) out.add(", ");
+        out.add("...");
+    } else {
+        if (num_params == 0) out.add("void");
+    }
+    out.rparen();
+}
+
+fn void Generator.emitFunction(Generator* gen, FunctionDecl* fd) {
+    Fragment* f = gen.getFragment();
+    string_buffer.Buf* out = f.buf;
+
+    gen.gen_func_proto(fd, out);
+    out.newline();
+
+    // work-around Stmts using gen.out
+    string_buffer.Buf* saved = gen.out;
+    gen.out = out;
+
+    gen.emitStmt((ast.Stmt*)fd.getBody(), 0, true);
+    out.newline();
+
+    gen.out = saved;    // restore saved gen.out
+    gen.addFragment(f, false);
+}
+
+fn void Generator.gen_full_func(void* arg, FunctionDecl* fd) {
+    if (!fd.asDecl().isUsed()) return;
+    if (!fd.getBody()) return;
+
+    Generator* gen = arg;
+    // Note: there could be template functions that need to be generated, so generate full function in fragment
+
+    // template are generated as late as possible, since the Type might not be known yet
+    if (fd.isTemplate()) return;
+    if (fd.isInline()) return;
+
+    gen.cur_function = fd;
+
+    gen.emitFunction(fd);
+
+    gen.cur_function = nil;
+
+    gen.flattenFragments();
+}
+
+fn void Generator.gen_full_funcs(void* arg, AST* a) {
+    a.visitFunctions(Generator.gen_full_func, arg);
+}
+
+fn void Generator.on_interface_import(void* arg, ImportDecl* i) {
+    Generator* gen = arg;
+    Decl* d = (Decl*)i;
+
+    if (!d.isUsedPublic()) return;
+
+    // filter duplicate imports between different ASTs
+    u32 name_idx = d.getNameIdx();
+    if (gen.imports.contains_idx(name_idx)) return;
+    gen.imports.add(name_idx);
+
+    gen.header.print("#include \"%s.h\"\n", d.getName());
+}
+
+fn void Generator.create_interface_imports(void* arg, AST* a) {
+    a.visitImports(Generator.on_interface_import, arg);
+}
+
+fn void Generator.on_interface_decl(void* arg, Decl* d) {
+    Generator* gen = arg;
+
+    if (!d.isExported()) return;
+    if (d.isImport()) return;
+
+    // create forward decl for structs
+    if (d.isStructType()) {
+        gen.emitForwardStructDecl(d, gen.header);
+        gen.header.newline();
+        StructTypeDecl* std = (StructTypeDecl*)d;
+        if (std.isOpaque()) return; // dont add
+    }
+    // For C header we need to sort the decls, just collect all decls first
+    gen.decls.add(d);
+}
+
+fn void Generator.create_interface_decls(void* arg, AST* a) {
+    a.visitDecls(Generator.on_interface_decl, arg);
+}
+
+fn void Generator.on_public_ast_imports(void* arg, AST* a) {
+    a.visitImports(Generator.on_public_import_decl, arg);
+}
+
+fn void Generator.on_private_ast_imports(void* arg, AST* a) {
+    a.visitImports(Generator.on_private_import_decl, arg);
+}
+
+fn void Generator.on_ast_structs(void* arg, AST* a) {
+    //Generator* gen = arg;
+    a.visitTypeDecls(Generator.on_forward_structs, arg);
+}
+
+fn void Generator.decl_mark_generated(void* /*arg*/, Decl* d) {
+    d.setGenerated();
+}
+
+fn void Generator.decl_clear_generated(void* /*arg*/, Decl* d) {
+    d.clearGenerated();
+}
+
+fn void Generator.ast_mark_generated(void* arg, AST* a) {
+    a.visitDecls(Generator.decl_mark_generated, arg);
+}
+
+fn void Generator.ast_clear_generated(void* arg, AST* a) {
+    a.visitDecls(Generator.decl_clear_generated, arg);
+}
+
+
+fn void Generator.on_header_decl(void* arg, Decl* d) {
+    if (d.isGenerated()) return;
+
+    Generator* gen = arg;
+    gen.deps.check(d);  // generate dependencies first
+
+    gen.emitHeaderDecl(d);
+    d.setGenerated();
+}
+
+fn void Generator.emitHeaderDecl(Generator* gen, Decl* d) {
+    string_buffer.Buf* out = gen.header;
+
+    // TODO refactor to common code with normal C generation (currently uses fragments)
+    switch (d.getKind()) {
+    case Function:
+        FunctionDecl* fd = (FunctionDecl*)d;
+        if (fd.isTemplate()) break;
+        gen.gen_func_proto(fd, out);
+        if (fd.isInline()) {
+            out.newline();
+            gen.emitStmt((ast.Stmt*)fd.getBody(), 0, true);
+            out.newline();
+        } else {
+            out.add(";\n");
+        }
+        out.newline();
+        break;
+    case Import:
+        assert(0); // cannot happen
+        return;
+    case StructType:
+        gen.emitStruct(out, d, 0);
+        break;
+    case EnumType:
+        gen.emitEnumType(out, d);
+        break;
+    case EnumConstant:
+        assert(0);
+        return;
+    case FunctionType:
+        gen.emitFunctionType(out, d);
+        break;
+    case AliasType:
+        gen.emitAliasType(out, d);
+        break;
+    case Variable:
+        gen.emitGlobalVarDecl(out, d);
+        break;
+    }
+}
+
+fn void add_gen_warning(string_buffer.Buf* out) {
+    out.add("// WARNING: this file is auto-generated by the C2 compiler.\n");
+    out.add("// Any changes you make might be lost!\n\n");
+}
+
+fn void Generator.generateInterfaceFiles(Generator* gen, Module* m) {
+    gen.imports.clear();
+    gen.header.clear();
+    gen.decls.clear();
+
+    string_buffer.Buf* hdr = gen.header;
+    add_gen_warning(hdr);
+    char[32] upper_name;
+    string_utils.toUpper(m.getName(), upper_name);
+    hdr.print("#ifndef %s_H\n", upper_name);
+    hdr.print("#define %s_H\n\n", upper_name);
+    hdr.add("#include \"c2types.h\"\n\n");
+    hdr.add("#ifdef __cplusplus\nextern \"C\" {\n#endif\n");
+
+    gen.cur_external = true;
+    m.visitASTs(Generator.ast_clear_generated, gen);
+    m.visitASTs(Generator.create_interface_imports, gen);
+    hdr.newline();
+    m.visitASTs(Generator.create_interface_decls, gen);
+
+    gen.deps.init(m, gen, Generator.on_header_decl);
+    string_buffer.Buf* saved = gen.out;
+    gen.out = hdr;
+    for (u32 i=0; i<gen.decls.size(); i++) {
+        Generator.on_header_decl(gen, gen.decls.get(i));
+    }
+    gen.out = saved;
+
+    hdr.add("#ifdef __cplusplus\n}\n#endif\n\n");
+    hdr.add("#endif\n");
+
+    file_utils.File file.init_ext(gen.results_dir, m.getName(), ".h");
+    if (!file.write(hdr.data(), hdr.size())) {
+        console.error("cannot write to %s: %s", file.path, file.getError());
+    }
+    gen.cur_external = false;
+}
+
+fn void Generator.on_module(void* arg, Module* m) {
+    if (!m.isUsed()) return;
+
+    Generator* gen = arg;
+    string_buffer.Buf* out = gen.out;
+
+    gen.mod_name = m.getName();
+    gen.mod = m;
+
+    // Temporary disable call tracing when compiling the c2_trace module
+    gen.no_trace = !string.strcmp(gen.mod_name, "c2_trace");
+
+    if (gen.fast_build) {
+        out.clear();
+        gen.header.clear();
+        add_gen_warning(gen.header);
+        char[32] upper_name;
+        string_utils.toUpper(gen.mod_name, upper_name);
+        gen.header.print("#ifndef %s_H\n", upper_name);
+        gen.header.print("#define %s_H\n\n", upper_name);
+        gen.header.add("#include \"_external.h\"\n\n");
+
+        add_gen_warning(out);
+    } else {
+        out.print("\n// --- module %s ---\n", gen.mod_name);
+    }
+
+    // Note: special case for stdarg.h va_list
+    if (m.getNameIdx() == gen.varargsName) {
+        if (gen.fast_build) out = gen.header;
+        const char[] builtin_defs =
+        ```c
+        // Note: this module is a special case and is custom generated
+        #define va_list __builtin_va_list
+        #define va_start __builtin_va_start
+        #define va_end __builtin_va_end
+
+        ```;
+        out.add(builtin_defs);
+
+        // set all decls to generated
+        m.visitASTs(Generator.ast_mark_generated, arg);
+
+        if (gen.fast_build) gen.write_files();
+        return;
+    }
+
+    if (gen.fast_build) {
+        // generate self include
+        out.print("#include \"%s.h\"\n", gen.mod_name);
+        // For now just iterate twice, possibly generating same include twice
+        // if used public and non-public by other ASTs
+
+        // collect all public includes, strip duplicates and emit
+        gen.imports.clear();
+        m.visitASTs(Generator.on_public_ast_imports, gen);
+
+        // collect all non-public includes, strip duplicates and emit
+        gen.imports.clear();
+        m.visitASTs(Generator.on_private_ast_imports, gen);
+    }
+
+    m.visitASTs(Generator.ast_clear_generated, gen);
+    // generate forward decls of structs
+    m.visitASTs(Generator.on_ast_structs, arg);
+    gen.out.newline();
+
+    gen.deps.init(m, gen, Generator.on_decl);
+    m.visitASTs(Generator.on_ast_decl, arg);
+
+    gen.out.newline();
+    m.visitASTs(Generator.gen_full_funcs, arg);
+
+    if (gen.fast_build) gen.write_files();
+
+    if (m.isExported()) gen.generateInterfaceFiles(m);
+}
+
+fn void Generator.write_files(Generator* gen) {
+    assert(gen.fast_build);
+    gen.header.add("\n#endif\n\n");
+
+    char[64] outfile;
+    if (!gen.cur_external) {
+        stdio.sprintf(outfile, "%s.c", gen.mod_name);
+        gen.write(gen.cgen_dir, outfile, gen.out);
+    }
+
+    stdio.sprintf(outfile, "%s.h", gen.mod_name);
+    gen.write(gen.cgen_dir, outfile, gen.header);
+
+    gen.out.clear();
+    gen.header.clear();
+}
+
+fn void Generator.init(Generator* gen,
+                       string_pool.Pool* astPool,
+                       const char* target,
+                       build_target.Kind kind,
+                       const char* results_dir,       // output/<target>/
+                       const char* output_dir,        // output/<target>/cgen/
+                       diagnostics.Diags *diags,
+                       source_mgr.SourceMgr* sm,
+                       const build_file.Info* build_info,
+                       Decl* mainFunc)
+{
+    string.memset(gen, 0, sizeof(Generator));
+    gen.out = string_buffer.create(256*1024, false, 3);
+    gen.target = target;
+    gen.target_kind = kind;
+    gen.results_dir = results_dir;
+    gen.output_dir = output_dir;
+    gen.diags = diags;
+    gen.sm = sm;
+    gen.build_info = build_info;
+    gen.mainFunc = mainFunc;
+    gen.free_list.init();
+    gen.used_list.init();
+    gen.header_fragments.init();
+    gen.header = string_buffer.create(8192, false, 2);
+    gen.imports.init(nil);  // note: cannot get string values! (not needed)
+    gen.decls.init();
+
+    gen.astPool = astPool;
+    gen.varargsName = astPool.addStr("varargs", true);
+}
+
+fn void Generator.free(Generator* gen) {
+    while (!gen.free_list.isEmpty()) {
+        linked_list.Element* e = gen.free_list.popFront();
+        Fragment* f = to_container(Fragment, list, e);
+        f.free();
+    }
+    gen.out.free();
+    gen.header.free();
+    gen.imports.free();
+    gen.decls.free();
+    gen.calls.free();
+    gen.filenames.free();
+    gen.funcnames.free();
+}
+
+fn void Generator.write(Generator* gen, const char* output_dir, const char* filename, const string_buffer.Buf* buf) {
+    file_utils.File file.init(output_dir, filename);
+    if (!file.write(buf.udata(), buf.size())) {
+        console.error("cannot write to %s: %s", file.path, file.getError());
+    }
+}
+
+public fn void generate(string_pool.Pool* astPool,
+                        string_pool.Pool* auxPool,
+                        const char* target,
+                        build_target.Kind kind,
+                        const char* output_dir,
+                        diagnostics.Diags *diags,
+                        source_mgr.SourceMgr* sm,
+                        const build_file.Info* build_info,
+                        const target_info.Info* targetInfo,
+                        component.List* comps,
+                        Decl* mainFunc,
+                        string_list.List* asm_files,
+                        bool enable_asserts,
+                        bool fast_build, bool asan, bool msan, bool ubsan,
+                        bool test_mode, bool trace_calls)
+{
+    char[file_utils.Max_path] dir;
+    if (!file_utils.make_path(dir, elemsof(dir), output_dir, Dir)
+    ||  file_utils.create_path(dir)) {
+        console.error("cannot create directory %s: %s", dir, string.strerror(errno));
+        return;
+    }
+
+    Generator gen;
+    gen.init(astPool, target, kind, output_dir, dir, diags, sm, build_info, mainFunc);
+    gen.auxPool = auxPool;
+    gen.enable_asserts = enable_asserts;
+    gen.fast_build = fast_build;
+    gen.asan = asan;
+    gen.msan = msan;
+    gen.ubsan = ubsan;
+    gen.trace_calls = trace_calls;
+    gen.targetInfo = targetInfo;
+    gen.cgen_dir = dir;
+    string_buffer.Buf* out = gen.out;
+
+    if (!fast_build) {
+        add_gen_warning(out);
+    }
+
+    // generate C2-internal and external lib stuff in external.h, the main component in build.c
+    gen.emit_external_header(enable_asserts, target);
+
+    if (fast_build) {
+        gen.write(gen.cgen_dir, "_external.h", gen.out);
+        out.clear();
+
+        gen.cur_external = true;
+    }
+
+    // re-mark used globals from entry points recursively
+    component.Component* mainComp = comps.getLast();
+
+    if (gen.target_kind != build_target.Kind.Executable) {
+        gen.generateC2TypesHeader();
+    }
+
+    // generate external components
+    for (u32 i=0; i<comps.size()-1; i++) {
+        component.Component* c = comps.get(i);
+        gen.cur_external = c.isExternalLibrary();
+        c.visitModules(Generator.on_module, &gen);
+    }
+
+    // generate main module
+    gen.cur_external = false;
+
+    mainComp.visitModules(Generator.on_module, &gen);
+
+    if (fast_build) {
+        if (gen.trace_calls) {
+            gen.out.clear();
+            gen.out.add("#include \"c2_trace_tables.h\"\n\n");
+            gen.writeCalls(gen.out);
+            gen.write(dir, "c2_trace_tables.c", gen.out);
+        }
+    } else {
+        if (gen.trace_calls) {
+            gen.writeCalls(gen.out);
+        }
+        gen.write(dir, "build.c", gen.out);
+    }
+
+    u32 libc_name = auxPool.addStr("libc", true);
+
+    gen.createMakefile(dir, comps, asm_files, enable_asserts, libc_name);
+    gen.createExportsFile(dir, comps.get(comps.size()-1));
+
+    if (mainComp.isLibrary()) manifest_writer.write(output_dir, mainComp, constants.manifest_name);
+
+    gen.free();
+}
+
+public fn void build(const char* output_dir)
+{
+#if SYSTEM_FREEBSD || SYSTEM_OPENBSD
+    const char* make = "gmake";
+#else
+    const char* make = "make";
+#endif
+
+    char[file_utils.Max_path] dir;
+    if (!file_utils.make_path_ext(dir, elemsof(dir), output_dir, Dir, "/")) {
+        console.error("cannot launch C compilation: %s", string.strerror(errno));
+        return;
+    }
+
+    i32 retval = process_utils.run_args(dir, make, "-j", LogFile);
+    if (retval != 0) {
+        console.error("error during external C compilation");
+        console.log("see %s%s for details", dir, LogFile);
+    }
+}
+
+const char[] Warning_control =
+    ```c
+    #if defined(__clang__)
+    #  pragma clang diagnostic ignored "-Wincompatible-library-redeclaration"
+    #  pragma clang diagnostic ignored "-Wunknown-warning-option"
+    #  pragma clang diagnostic ignored "-Wparentheses-equality"
+    #  pragma clang diagnostic ignored "-Wsometimes-uninitialized"
+    #  pragma clang diagnostic ignored "-Wtypedef-redefinition"
+    #  pragma clang diagnostic ignored "-Wstring-plus-int"
+    #  if (__clang_major__ >= 10)
+    #    define fallthrough  __attribute__((fallthrough))
+    #  endif
+    #elif defined(__GNUC__)
+    #  if (__GNUC__ >= 11)
+    #    define fallthrough  [[fallthrough]]
+    #  elif (__GNUC__ >= 7)
+    #    define fallthrough  __attribute__((fallthrough))
+    #  endif
+    #  pragma GCC diagnostic ignored "-Wmain"
+    #  if (__GNUC__ >= 10)
+    #    pragma GCC diagnostic ignored "-Wzero-length-bounds"
+    #  endif
+    #  if (__GNUC__ >= 7)
+    #    pragma GCC diagnostic ignored "-Wformat-overflow"
+    #    pragma GCC diagnostic ignored "-Wstringop-overflow"
+    #  endif
+    #endif
+
+    #ifndef fallthrough
+    #  define fallthrough
+    #endif
+
+    ```;
+
+const char[] Include_guard1 =
+    ```c
+    #ifndef EXTERNAL_H
+    #define EXTERNAL_H
+
+    ```;
+
+const char[] C_types =
+    ```c
+    // --- internally added ---
+    typedef signed char int8_t;
+    typedef unsigned char uint8_t;
+    typedef signed short int16_t;
+    typedef unsigned short uint16_t;
+    typedef signed int int32_t;
+    typedef unsigned int uint32_t;
+    ```;
+const char[] C_defines =
+    ```c
+    #define true 1
+    #define false 0
+
+    #define NULL ((void*)0)
+    #define ARRAY_SIZE(x) (sizeof(x)/sizeof((x)[0]))
+    ```;
+
+const char[] C2_assert =
+    ```c
+    int dprintf(int fd, const char *format, ...);
+    void abort(void);
+    static int c2_assert(const char* filename, int line, const char* funcname, const char* condstr) {
+        dprintf(2, "%s:%d: function %s: Assertion failed: %s\n", filename, line, funcname, condstr);
+        abort();
+        return 0;
+    }
+    ```;
+
+const char[] C2_strswitch =
+    ```c
+    static int c2_strswitch(const char* s1, const char* s2) {
+        if (!s1) return 0;  // nil
+        if (!*s1) return 1; // ""
+        int idx = 2;
+        while (*s2) {
+            unsigned len = *s2++ & 0xFF;
+            for (unsigned i = 0;; i++) {
+                if (i == len) {
+                    if (s1[i] == '\0')
+                        return idx;
+                    break;
+                }
+                if (s1[i] != s2[i])
+                    break;
+            }
+            s2 += len;
+            idx++;
+        }
+        return idx;
+    }
+    ```;
+
+fn void Generator.emit_external_header(Generator* gen, bool enable_asserts, const char* target) {
+    string_buffer.Buf* out = gen.out;
+
+    out.add(Include_guard1);
+    out.add(Warning_control);
+    out.add(C_types);
+    if (ast.getWordSize() == 4) {
+        // ILP32 (32-bit int, long and pointers)
+        out.add(```c
+                typedef signed long long int64_t;
+                typedef unsigned long long uint64_t;
+                typedef signed long ssize_t;
+                typedef unsigned long size_t;
+                ```);
+    } else {
+        // LP64 (64-bit long and pointers)
+        out.add(```c
+                typedef signed long int64_t;
+                typedef unsigned long uint64_t;
+                typedef signed long ssize_t;
+                typedef unsigned long size_t;
+                ```);
+#if 0
+        // TODO support LLP64 (64-bit long long and pointers, but 32-bit long)
+        out.add(```c
+                typedef signed long long int64_t;
+                typedef unsigned long long uint64_t;
+                typedef signed long long ssize_t;
+                typedef unsigned long long size_t;
+                ```);
+#endif
+    }
+    out.add(C_defines);
+#if 1
+    // __builtin_offsetof is supported by gcc and clang and is necessary
+    // for -fsanitary=undefined to prevent null pointer arithmetics warnings.
+    out.add("#define offsetof(type, member) __builtin_offsetof(type, member)\n");
+#else
+    out.add("#define offsetof(type, member) ((size_t) &((type*)0)->member)\n");
+#endif
+    out.add("#define to_container(type, member, ptr) ((type*)((char*)(ptr) - offsetof(type, member)))\n\n");
+
+    if (enable_asserts) {
+        out.add(C2_assert);
+    }
+
+    // for switch(str):
+    // String format: strings are prefixed by a length byte and concatenated as a single character array.
+    // This minimizes memory use, cache misses and avoids extra symbols.
+    // nil string condition must be tested first to avoid UB
+    // empty string condition is handled separately to avoid extra count argument
+    // return 0 for nil
+    // return 1 for empty string
+    // return 2..n-1 for other string matches
+    // return n for no match
+    out.add(C2_strswitch);
+
+    if (gen.trace_calls) gen.writeCallExterns(out);
+
+    out.add("#endif\n");
+}
+

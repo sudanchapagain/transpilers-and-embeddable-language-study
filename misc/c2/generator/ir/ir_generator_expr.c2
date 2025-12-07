@@ -1,0 +1,676 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ir_generator;
+
+import ast local;
+import ir local;
+import ir_context local;
+import ir_gen_locals local;
+import ctv_analyser;
+
+fn void Generator.emitExpr(Generator* gen, ir.Ref* result, const Expr* e) {
+    if (e.isCtv()) {
+        Value v = ctv_analyser.get_value(e);
+        // TEMP as u32 TODO
+        *result = gen.ctx.addIntegerConstant(v.as_u32());
+        return;
+    }
+
+    switch (e.getKind()) {
+    case IntegerLiteral:
+    case FloatLiteral:
+    case BooleanLiteral:
+    case CharLiteral:
+        assert(0);  // should be handled by CTV above
+        break;
+    case StringLiteral:
+        StringLiteral* s = (StringLiteral*)e;
+
+        SymbolId id = gen.ctx.addStringLiteral(gen.createStringVar(), s.getText(), s.getSize());
+        ir.Ref ref;
+        ref.init(RefKind.Symbol, id);
+        *result = ref;
+        break;
+    case Nil:
+        result.init(RefKind.Value, 0);
+        break;
+    case Identifier:
+        gen.emitIdentifier(result, e);
+        break;
+    case Type:
+        assert(0);
+        break;
+    case Call:
+        gen.emitCallExpr(result, e);
+        break;
+    case InitList:
+        result.init(RefKind.Value, 0);
+        break;
+    case FieldDesignatedInit:
+    case ArrayDesignatedInit:
+        assert(0);
+        break;
+    case BinaryOperator:
+        gen.emitBinaryOperator(result, e);
+        break;
+    case UnaryOperator:
+        gen.emitUnaryOperator(result, e);
+        break;
+    case ConditionalOperator:
+        gen.emitCondOperator(result, e);
+        break;
+    case Builtin:
+        gen.emitBuiltin(result, e);
+        break;
+    case ArraySubscript:
+        gen.emitArraySubscript(result, e);
+        break;
+    case Member:
+        gen.emitMemberExpr(result, e);
+        break;
+    case Paren:
+        ParenExpr* p = (ParenExpr*)e;
+        gen.emitExpr(result, p.getInner());
+        break;
+    case BitOffset:
+        assert(0); // TODO
+        break;
+    case ExplicitCast:
+        ExplicitCastExpr* ec = (ExplicitCastExpr*)e;
+        gen.emitExpr(result, ec.getInner());
+        break;
+    case ImplicitCast:
+        ImplicitCastExpr* ic = (ImplicitCastExpr*)e;
+        switch (ic.getKind()) {
+        case ArrayToPointerDecay:
+            // just ignore, pass inner
+            gen.emitExpr(result, ic.getInner());
+            break;
+        case LValueToRValue:
+            // turn into load
+            ir.Ref src;
+            gen.emitExpr(&src, ic.getInner());
+            // TODO get type for Expr
+            *result = gen.ctx.addLoadInstr(ir.Type.I32, src);
+            break;
+        case PointerToBoolean:
+            gen.emitExpr(result, ic.getInner());
+            //assert(0);
+            break;
+        case PointerToInteger:
+            assert(0);
+            break;
+        case IntegralCast:
+            //stdio.printf("WARNING: IntegralCast (skipping for now)\n");
+            gen.emitExpr(result, ic.getInner());
+            break;
+        case BitCast:
+            assert(0);
+            break;
+        }
+        break;
+    case Range:
+        assert(0);  // should not happen
+        break;
+    case NamedArgument:
+        NamedArgument* n = (NamedArgument*)e;
+        gen.emitExpr(result, n.getInner());
+        break;
+    }
+}
+
+fn void Generator.emitIdentifier(Generator* gen, ir.Ref* result, const Expr* e) {
+    IdentifierExpr* i = (IdentifierExpr*)e;
+
+    switch (i.getKind()) {
+    case Unresolved:
+    case Module:
+        assert(0);
+        break;
+    case Function:
+        gen.emitSymbol(result, i.getDecl());
+        break;
+    case Type:
+        assert(0);
+        break;
+    case Var:
+        gen.emitVarDecl(result, i.getDecl());
+        break;
+    case EnumConstant:
+        assert(0); // is CTV so should not come here
+        break;
+    case StructMember:
+    case Label:
+        assert(0);
+        break;
+    }
+}
+
+fn void Generator.emitSymbol(Generator* gen, ir.Ref* result, Decl* d) {
+    SymbolId sid = gen.createSymbol(d);
+    ir.Ref ref;
+    ref.init(RefKind.Symbol, sid);
+    *result = ref;
+}
+
+fn void Generator.emitVarDecl(Generator* gen, ir.Ref* result, Decl* d) {
+    const VarDecl* vd = (VarDecl*)d;
+    if (vd.isGlobal()) {
+        gen.emitSymbol(result, d);
+    } else if (vd.hasLocalQualifier()) {
+        u32 gen_idx = d.getGenIdx();
+        if (!gen_idx) {
+            QualType qt = d.getType();
+            gen_idx = gen.ctx.addGlobalVar(gen.createLocalName(d), qt.getAlignment(), gen.isExternal(d));
+            d.setGenIdx(gen_idx);
+        }
+        ir.Ref ref;
+        ref.init(RefKind.Symbol, gen_idx);
+        *result = ref;
+    } else if (vd.isLocal() || vd.isParameter()) {
+        StackVar* var = gen.locals.find(vd);
+        *result = var.ref;
+    } else {
+        assert(0);
+    }
+}
+
+fn void Generator.emitCondOperator(Generator* gen, ir.Ref* result, const Expr* e) {
+    ir_context.Context* c = gen.ctx;
+    const ConditionalOperator* co = (ConditionalOperator*)e;
+
+    //a = cond ? b : c;
+    // ->
+    // if (cond) a = b;
+    // else a = c;
+
+    BlockId then_blk = c.createBlock(BlockKind.CondTrue);
+    BlockId else_blk = c.createBlock(BlockKind.CondFalse);
+    BlockId join_blk = c.createBlock(BlockKind.CondJoin);
+
+    // cond
+    gen.emitCond(co.getCond(), then_blk, else_blk, then_blk);
+
+    // true
+    ir.Ref ref1;
+    gen.emitExpr(&ref1, co.getLHS());
+
+    if (!c.isBlockTerminated()) c.addJmpInstr(join_blk);
+    c.endBlock();
+
+    // false
+    c.startBlock(else_blk);
+    ir.Ref ref2;
+    gen.emitExpr(&ref2, co.getRHS());
+    if (!c.isBlockTerminated()) c.addJmpInstr(join_blk);
+    c.endBlock();
+
+    // join block
+    c.startBlock(join_blk);
+
+    *result = gen.ctx.addPhi2Instr(then_blk, ref1, else_blk, ref2);
+}
+
+fn void Generator.emitUnaryOperator(Generator* gen, ir.Ref* result, const Expr* e) {
+    const UnaryOperator* uo = (UnaryOperator*)e;
+
+    switch (uo.getOpcode()) {
+    case PostInc:
+    case PostDec:
+    case PreInc:
+    case PreDec:
+        // TODO what if (*cp)++ ?
+        ir.Ref left;
+        gen.emitExpr(&left, uo.getInner());
+
+        // create load
+        ir.Type t = ir.Type.I32; // TODO get type from Expr
+        ir.Ref left_val = gen.ctx.addLoadInstr(t, left);
+
+        // add/sub
+        ir.Ref value;
+        value.init(RefKind.Value, 1);
+        InstrKind k;
+        if (uo.getOpcode() == UnaryOpcode.PostInc || uo.getOpcode() == UnaryOpcode.PreInc) {
+            k = InstrKind.Add;
+        } else {
+            k = InstrKind.Sub;
+        }
+        ir.Ref right = gen.ctx.addBinaryInstr(k, left_val, value);
+
+        // store
+        gen.ctx.addStoreInstr(t, right, left);
+        if (uo.getOpcode() <= UnaryOpcode.PostDec) {
+            *result = left_val;
+        } else {
+            *result = right;
+        }
+        break;
+    case AddrOf:
+    case Deref:
+        // Note: deref has LValueToRValue to creates load, voila
+        gen.emitExpr(result, uo.getInner());
+        break;
+    case Plus:
+        // just ignore
+        assert(!e.isCtv());
+        gen.emitExpr(result, uo.getInner());
+        break;
+    case Minus:
+        // Expr like '-f' still come here, where f is non-CTV
+        assert(!e.isCtv());
+        // emit: sub 0, <expr>
+        ir.Ref left;
+        left.init(RefKind.Value, 0);
+        ir.Ref right;
+        gen.emitExpr(&right, uo.getInner());
+        *result = gen.ctx.addBinaryInstr(InstrKind.Sub, left, right);
+        break;
+    case Not:
+        ir.Ref lhs;
+        gen.emitExpr(&lhs, uo.getInner());
+
+        // xor with -1
+        ir.Ref rhs = gen.ctx.addIntegerConstant(-1);
+        *result = gen.ctx.addBinaryInstr(InstrKind.Xor, lhs, rhs);
+        break;
+    case LNot:
+        ir.Ref lhs;
+        gen.emitExpr(&lhs, uo.getInner());
+
+        // convert integer to bool: compare to 0
+        ir.Ref zero;
+        zero.init(RefKind.Value, 0);
+        ir.Ref rhs = gen.ctx.addBinaryInstr(InstrKind.CmpNe, lhs, zero);
+
+        // invert: xor with 1
+        ir.Ref one;
+        one.init(RefKind.Value, 1);
+        rhs = gen.ctx.addBinaryInstr(InstrKind.Xor, rhs, one);
+
+        // TODO zext i1 -> i32
+        *result = rhs;
+        break;
+    }
+}
+
+// EmitCond will end with the true_blk started
+fn void Generator.emitCond(Generator* gen, const Expr* e, BlockId true_blk, BlockId false_blk, BlockId start_blk) {
+    ir_context.Context* c = gen.ctx;
+
+    if (e.isCtv()) {
+        Value v = ctv_analyser.get_value(e);
+        if (v.isZero()) {
+            c.addJmpInstr(false_blk);
+        } else {
+            c.addJmpInstr(true_blk);
+        }
+        c.endBlock();
+        c.startBlock(start_blk);
+        return;
+    }
+
+    ir.Ref ref;
+
+    switch (e.getKind()) {
+    case IntegerLiteral:
+    case FloatLiteral:
+    case BooleanLiteral:
+    case CharLiteral:
+    case StringLiteral:
+    case Nil:
+        assert(0);  // CTV
+        break;
+    case Identifier:
+        assert(0); // should have cast?
+        break;
+    case Type:
+        assert (0);
+        break;
+    case Call:
+        break;
+    case InitList:
+    case FieldDesignatedInit:
+    case ArrayDesignatedInit:
+        assert (0);
+        break;
+    case BinaryOperator:
+        if (gen.emitBinaryCond(e, true_blk, false_blk, start_blk)) return;
+        break;
+    case UnaryOperator:
+        break;
+    case ConditionalOperator:
+        assert(0);
+        break;
+    case Builtin:
+        assert(0);  // CTV
+        break;
+    case ArraySubscript:
+    case Member:
+        break;
+    case Paren:
+        ParenExpr* p = (ParenExpr*)e;
+        gen.emitCond(p.getInner(), true_blk, false_blk, start_blk);
+        return;
+    case BitOffset:
+    case ExplicitCast:
+    case ImplicitCast:
+        break;
+    case Range:
+        assert(0);  // should not happen
+        break;
+    case NamedArgument:
+        NamedArgument* n = (NamedArgument*)e;
+        gen.emitCond(n.getInner(), true_blk, false_blk, start_blk);
+        break;
+    }
+    gen.emitExpr(&ref, e);
+    ir.Ref zero;
+    zero.init(RefKind.Value, 0);
+    ir.Ref cond = gen.ctx.addBinaryInstr(InstrKind.CmpNe, ref, zero);
+    c.addJmpIfInstr(cond, true_blk, false_blk);
+    c.endBlock();
+    c.startBlock(start_blk);
+}
+
+fn void Generator.emitAssignCond(Generator* gen, ir.Type t, ir.Ref lhs, ir.Ref rhs, BlockId left, BlockId right, BlockId start) {
+    ir_context.Context* c = gen.ctx;
+    // if (a = getchar()), emit:
+    //   %x = getchar()
+    //   store a, %x
+    //   icmp ne %x, 0
+    c.addStoreInstr(t, rhs, lhs);
+    ir.Ref zero;
+    zero.init(RefKind.Value, 0);
+    ir.Ref cond = gen.ctx.addBinaryInstr(InstrKind.CmpNe, rhs, zero);
+    c.addJmpIfInstr(cond, left, right);
+    c.endBlock();
+    c.startBlock(start);
+}
+
+// return true if it was handled
+fn bool Generator.emitBinaryCond(Generator* gen, const Expr* e, BlockId left, BlockId right, BlockId start) {
+    const BinaryOperator* b = (BinaryOperator*)e;
+
+    InstrKind k;
+    switch (b.getOpcode()) {
+    case LessThan:
+        k = InstrKind.CmpLt;
+        break;
+    case GreaterThan:
+        k = InstrKind.CmpGt;
+        break;
+    case LessEqual:
+        k = InstrKind.CmpLe;
+        break;
+    case GreaterEqual:
+        k = InstrKind.CmpGe;
+        break;
+    case Equal:
+        k = InstrKind.CmpEq;
+        break;
+    case NotEqual:
+        k = InstrKind.CmpNe;
+        break;
+    case LAnd:
+        gen.emitAndCond(b, left, right, start);
+        return true;
+    case LOr:
+        gen.emitOrCond(b, left, right, start);
+        return true;
+    case Assign:
+        // TODO should check for CTV values
+        ir.Ref rhs;
+        gen.emitExpr(&rhs, b.getRHS());
+        ir.Ref lhs;
+        gen.emitExpr(&lhs, b.getLHS());
+        ir.Type t = ir.Type.I32; // TODO get type
+        gen.emitAssignCond(t, lhs, rhs, left, right, start);
+        return true;
+    default:
+        return false;
+    }
+
+    ir.Ref lhs;
+    gen.emitExpr(&lhs, b.getLHS());
+    ir.Ref rhs;
+    gen.emitExpr(&rhs, b.getRHS());
+    ir.Ref cond = gen.ctx.addBinaryInstr(k, lhs, rhs);
+    ir_context.Context* c = gen.ctx;
+    c.addJmpIfInstr(cond, left, right);
+    c.endBlock();
+    c.startBlock(start);
+    return true;
+}
+
+fn void Generator.emitAndCond(Generator* gen, const BinaryOperator* b, BlockId true_blk, BlockId false_blk, BlockId start_blk) {
+    BlockId and_true = gen.ctx.createBlock(BlockKind.AndTrue);
+
+    gen.emitCond(b.getLHS(), and_true, false_blk, and_true);
+    gen.emitCond(b.getRHS(), true_blk, false_blk, start_blk);
+}
+
+fn void Generator.emitOrCond(Generator* gen, const BinaryOperator* b, BlockId true_blk, BlockId false_blk, BlockId start_blk) {
+    BlockId or_false = gen.ctx.createBlock(BlockKind.OrFalse);
+
+    gen.emitCond(b.getLHS(), true_blk, or_false, or_false);
+    gen.emitCond(b.getRHS(), true_blk, false_blk, start_blk);
+}
+
+fn void Generator.emitBuiltin(Generator* gen, ir.Ref* result, const Expr* e) {
+    const BuiltinExpr* bi = (BuiltinExpr*)e;
+    switch (bi.getKind()) {
+    case Sizeof:
+    case Elemsof:
+    case EnumMin:
+    case EnumMax:
+    case OffsetOf:
+        e.dump();
+        assert(0);
+        break;
+    case ToContainer: {
+            ir.Ref ptr_ref;
+            gen.emitExpr(&ptr_ref, bi.getToContainerPointer());
+            Value v = bi.getValue();
+            u32 offset = v.as_u32();
+            if (offset == 0) {
+                *result = ptr_ref;
+            } else {
+                ir.Ref offset_ref = gen.ctx.addIntegerConstant(offset);
+                *result = gen.ctx.addBinaryInstr(InstrKind.Sub, ptr_ref, offset_ref);
+            }
+            break;
+        }
+    }
+}
+
+fn void Generator.emitArraySubscript(Generator* gen, ir.Ref* result, const Expr* e) {
+    const ArraySubscriptExpr* a = (ArraySubscriptExpr*)e;
+    Expr* base = a.getBase();
+    Expr* index = a.getIndex();
+    QualType qt = base.getType();
+    u32 base_size = qt.getSize(true);
+
+    if (index.isCtv()) {
+        ir.Ref base_ref;
+        gen.emitExpr(&base_ref, base);
+
+        // offset = value * base_size;
+        Value v = ctv_analyser.get_value(index);
+        u32 offset = v.as_u32() * base_size;
+        if (offset == 0) {
+            *result = base_ref;
+        } else {
+            ir.Ref offset_ref = gen.ctx.addIntegerConstant(offset);
+            // add base and offset
+            *result = gen.ctx.addBinaryInstr(InstrKind.Add, base_ref, offset_ref);
+        }
+    } else {
+        ir.Ref base_ref;
+        gen.emitExpr(&base_ref, base);
+
+        ir.Ref idx_ref;
+        gen.emitExpr(&idx_ref, index);
+
+        // offset = value * base_size;
+        if (base_size == 1) {
+            *result = gen.ctx.addBinaryInstr(InstrKind.Add, base_ref, idx_ref);
+        } else {
+            ir.Ref size_ref = gen.ctx.addIntegerConstant(base_size);
+            ir.Ref offset_ref = gen.ctx.addBinaryInstr(InstrKind.Mul, idx_ref, size_ref);
+            // add base and offset
+            *result = gen.ctx.addBinaryInstr(InstrKind.Add, base_ref, offset_ref);
+        }
+    }
+}
+
+// TODO handle larger structs
+fn ir.Type size2type(u32 size) {
+    // TEMP always signed for now
+    switch (size) {
+    case 1:
+        return ir.Type.I8;
+    case 2:
+        return ir.Type.I16;
+    case 4:
+        return ir.Type.I32;
+    default:
+        break;
+    }
+    return ir.Type.I64;
+}
+
+fn void Generator.emitStructInitExpr(Generator* gen, const StackVar* var, const Expr* e) {
+    const InitListExpr* ile = (InitListExpr*)e;
+
+    QualType qt = e.getType();
+    StructType* st = qt.getStructType();
+    StructTypeDecl* std = st.getDecl();
+
+    u32 num_values = ile.getNumValues();
+    const Expr** values = ile.getValues2();
+
+    if (e.isCtc()) {
+        // TODO if all members are CTC/CTV, generate a 'global' and copy that
+        // Note: also includes empty list: { }
+    }
+
+    if (ile.hasDesignators()) {
+        FieldStructLayouter layouter;
+        layouter.init(gen, std.getSize(), std.getDesigMemberCount());
+        for (u32 i=0; i<num_values; i++) {
+            FieldDesignatedInitExpr* fdi = (FieldDesignatedInitExpr*)values[i];
+            const FieldInitField* fif = fdi.getMemberInfo();
+            if (!fif.isZeroSizeBitfield()) {
+                layouter.add(fif, fdi.getInit());
+            }
+        }
+        layouter.finalizeExpr(std, var.ref);
+        return;
+    }
+
+    // TODO aggregate bit-fields
+    u32 num_members = std.getNumMembers();
+    const StructLayout* layout = std.getLayout();
+    u32 i;
+    u32 offset = 0;
+    ir.Ref dest_ref = var.ref;
+    for (i = 0; i < num_values; i++) {
+        const StructMemberLayout* ml = &layout.members[i];
+        ir.Ref value_ref;
+        gen.emitExpr(&value_ref, values[i]);
+        if (ml.offset != 0) {
+            ir.Ref offset_ref = gen.ctx.addIntegerConstant(ml.offset - offset);
+            offset = ml.offset;
+            dest_ref = gen.ctx.addBinaryInstr(InstrKind.Add, dest_ref, offset_ref);
+        }
+        gen.ctx.addStoreInstr(size2type(ml.size), value_ref, dest_ref);
+
+    }
+
+    ir.Ref value_ref = gen.ctx.addIntegerConstant(0);
+    while (i < num_members) {
+        const StructMemberLayout* ml = &layout.members[i];
+        if (ml.offset != 0) {
+            ir.Ref offset_ref = gen.ctx.addIntegerConstant(ml.offset - offset);
+            offset = ml.offset;
+            dest_ref = gen.ctx.addBinaryInstr(InstrKind.Add, dest_ref, offset_ref);
+        }
+        gen.ctx.addStoreInstr(size2type(ml.size), value_ref, dest_ref);
+        i++;
+    }
+}
+
+fn void Generator.emitArrayInitExpr(Generator* gen, const StackVar* var, const Expr* e) {
+    const InitListExpr* ile = (InitListExpr*)e;
+    ir_context.Context* ctx = gen.ctx;
+
+    if (e.isCtc()) {
+        // TODO if all members are CTC/CTV, generate a 'global' and copy that
+    }
+
+    if (ile.hasDesignators()) {
+        assert(0); // TODO
+    } else {
+        const u32 elem_size = var.ir_type.size();
+        ir.Ref dest_ref = var.ref;
+        ir.Ref step_ref = ctx.addIntegerConstant(elem_size);
+        u32 offset = 0;
+        u32 num_values = ile.getNumValues();
+        const Expr** values = ile.getValues2();
+        for (u32 i = 0; i < num_values; i++) {
+            if (i != 0) {
+                dest_ref = ctx.addBinaryInstr(InstrKind.Add, dest_ref, step_ref);
+            }
+
+            ir.Ref value_ref;
+            gen.emitExpr(&value_ref, values[i]);
+            ctx.addStoreInstr(var.ir_type, value_ref, dest_ref);
+
+            offset += elem_size;
+        }
+
+        ir.Ref value_ref = ctx.addIntegerConstant(0);
+        while (offset != var.size) {
+            if (offset != 0) {
+                dest_ref = ctx.addBinaryInstr(InstrKind.Add, dest_ref, step_ref);
+            }
+            ctx.addStoreInstr(var.ir_type, value_ref, dest_ref);
+            offset += elem_size;
+        }
+    }
+}
+
+fn void Generator.emitInitExpr(Generator* gen, const VarDecl* vd, const Expr* ie) {
+    StackVar* var = gen.locals.find(vd);
+
+    if (ie.isInitList()) {
+        // can be array (with/without designators), init (with/without field-init) (or combination)
+        const InitListExpr* ile = (InitListExpr*)ie;
+        if (ile.isArray()) {
+            gen.emitArrayInitExpr(var, ie);
+        } else {
+            gen.emitStructInitExpr(var, ie);
+        }
+    } else {
+        ir.Ref res;
+        gen.emitExpr(&res, ie);
+        if (!vd.hasInitCall()) { // otherwise already handled
+            gen.ctx.addStoreInstr(var.ir_type, res, var.ref);
+        }
+    }
+}
+

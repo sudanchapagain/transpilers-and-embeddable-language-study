@@ -1,0 +1,5 @@
+// @warnings{no-unused}
+module test;
+
+isize q = isize.max + 1; // @error{constant value 9223372036854775808 out-of-bounds for type 'isize', range [-9223372036854775808, 9223372036854775807]}
+

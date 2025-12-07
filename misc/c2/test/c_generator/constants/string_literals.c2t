@@ -1,0 +1,41 @@
+// @recipe bin
+    $warnings no-unused
+    $backend c no-build
+
+// @file{file1}
+module test1;
+
+// const with inits
+public const char[] AAA = "aaa";
+public const char[4] BBB = "bbb";
+//public const char* ccc = "ccc";
+
+// non-const with inits
+public char[] ddd = "ddd";
+public char[4] eee = "eee";
+public const char* fff = "fff";
+
+// 'const' without init (actually non-const)
+public const char* ggg;
+
+// non-const without init
+public char[3] hhh;
+public char* iii;
+
+public fn i32 main(i32 argc, const i8** argv) {
+    return 0;
+}
+
+// @expect{atleast, cgen/build.c}
+
+static const char test1_AAA[4] = "aaa";
+
+static const char test1_BBB[4] = "bbb";
+
+static char test1_ddd[4] = "ddd";
+static char test1_eee[4] = "eee";
+static const char* test1_fff = "fff";
+static const char* test1_ggg = NULL;
+static char test1_hhh[3] = { };
+static char* test1_iii = NULL;
+

@@ -1,0 +1,2 @@
+#define COMPILER_VERSION "0.7.9"
+#define PRERELEASE 1

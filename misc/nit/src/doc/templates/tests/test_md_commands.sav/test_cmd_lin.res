@@ -1,0 +1,9 @@
+* `platform$Object$init`
+* `races$Race$init`
+* `careers$Career$init`
+* `races$Human$init`
+* `races$Elf$init`
+* `careers$Warrior$init`
+* `careers$Magician$init`
+* `careers$Alcoholic$init`
+* `races$Dwarf$init`

@@ -1,0 +1,277 @@
+=== test_case1
+--- main.n
+fn callee(int a, int b, float c):float {
+    return c + (a + b) as float
+}
+
+fn main() {
+    var a = 3.14
+    var b = callee(1, 2, a)
+}
+
+=== test_case2_stack
+--- main.n
+fn callee(int a1, int a2, int a3, int a4, int a5, int a6, int a7, int a8, int a9, i8 a10, float f11):float {
+    return f11
+}
+
+fn main() {
+    var b = callee(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 3.1)
+}
+
+=== test_case3_mix_stack
+--- main.n
+fn callee(int a1, int a2, int a3, int a4, int a5, int a6, int a7, int a8, int a9, i8 a10, float f1, float f2,
+    float f3, float f4, float f5, float f6, float f7, float f8, float f9):float {
+    return f9
+}
+
+fn main() {
+    var b = callee(1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 1.1, 2.2, 3.3, 4.4, 5.5, 6.6, 7.7, 8.8, 9.9)
+}
+
+--- test_struct_case1
+--- main.n
+type test_t = struct{
+    i32 a
+    i32 b
+}
+
+fn callee(test_t t) {
+}
+
+fn main() {
+    var t = test_t{}
+    callee(t)
+}
+
+--- test_struct_case2
+--- main.n
+type test_t = struct{
+    i32 a
+    i32 b
+    i32 c
+}
+
+fn callee(test_t t) {
+}
+
+fn main() {
+    var t = test_t{}
+    callee(t)
+}
+
+--- test_struct_case3
+--- main.n
+type test_t = struct{
+    f32 a
+    f32 b
+}
+
+fn callee(test_t t) {
+}
+
+fn main() {
+    var t = test_t{}
+    callee(t)
+}
+
+--- test_struct_case4
+--- main.n
+type test_t = struct{
+    f32 a
+    f32 b
+    f32 c
+}
+
+fn callee(test_t t) {
+}
+
+fn main() {
+    var t = test_t{}
+    callee(t)
+}
+
+
+=== test_struct_case5
+--- main.n
+type test_t = struct{
+    i64 a
+    i64 b
+}
+
+fn callee(int a1, int a2, int a3, int a4, int a5, int a6, int a7, test_t t) {
+    println(a1, a2, a3, a4, a5, a6, a7, t.a, t.b)
+}
+
+fn main() {
+    var t = test_t{a: 8, b: 9}
+    callee(1, 2, 3, 4, 5, 6, 7, t)
+}
+
+--- output.txt
+1 2 3 4 5 6 7 8 9
+
+=== test_struct_case6
+--- main.n
+type test_t = struct{
+    i32 a
+    i64 b
+}
+
+fn callee(int a1, int a2, int a3, int a4, int a5, int a6, int a7, test_t t) {
+}
+
+fn main() {
+    var t = test_t{}
+    callee(1, 2, 3, 4, 5, 6, 7, t)
+}
+
+=== test_struct_case7
+--- main.n
+type test_t = struct{
+    i64 a
+    i64 b
+    int c
+}
+
+fn callee(int a1, int a2, int a3, int a4, int a5, int a6, int a7, int a8, test_t test):i64 {
+    return test.a + test.b + test.c
+}
+
+fn main() {
+    var result = callee(1, 2, 3, 4, 5, 6, 7, 8, test_t{a: 1, b: 2, c: 3})
+    println(result)
+    assert(result == 6)
+}
+
+=== test_struct_case8
+--- main.n
+// 触发扁平化，通过栈直接传递值
+type test_t = struct{
+    i32 a
+    i32 b
+}
+
+fn callee(int a1, int a2, int a3, int a4, int a5, int a6, int a7, int a8, test_t test):i32 {
+    return test.a + test.b
+}
+
+fn main() {
+    var foo = test_t{}
+    callee(1, 2, 3, 4, 5, 6, 7, 8, foo)
+}
+
+=== test_struct_case9
+--- main.n
+// 触发扁平化，通过栈直接传递值
+type test_t = struct{
+    f32 a
+    int b
+}
+
+fn callee(f32 a1, f32 a2, f32 a3, f32 a4, f32 a5, f32 a6, f32 a7, test_t test):f32 {
+    return test.a + test.b as f32
+}
+
+fn main() {
+    var foo = test_t{}
+    callee(1, 2, 3, 4, 5, 6, 7, foo)
+}
+
+=== test_struct_case10
+--- main.n
+// 浮点寄存器不足时，扁平化退化为 int 类型计算
+type test_t = struct{
+    f32 a
+    f32 b
+}
+
+fn callee(f32 a1, f32 a2, f32 a3, f32 a4, f32 a5, f32 a6, f32 a7, f32 a8, test_t test):f32 {
+    return test.a + test.b
+}
+
+fn main() {
+    var foo = test_t{}
+    callee(1, 2, 3, 4, 5, 6, 7, 8, foo)
+}
+
+=== test_struct_case11
+--- main.n
+// 浮点寄存器不足时，扁平化退化为 int 类型计算
+type test_t = struct{
+    f32 a
+    f32 b
+}
+
+fn callee(f32 a1, f32 a2, f32 a3, f32 a4, f32 a5, f32 a6, test_t test):f32 {
+    return test.a + test.b
+}
+
+fn main() {
+    var foo = test_t{}
+    callee(1, 2, 3, 4, 5, 6, foo)
+}
+
+=== test_lower_in_amd64
+--- main.n
+type body_t = struct{
+    string title
+    string content
+    [string] images
+    string? video
+    {string:any} layout
+}
+
+type document_t = struct{
+    int id
+    int created_at
+    int updated_at
+    int user_id
+    string title
+    string content
+    [string] images
+    string? video
+    {string:any} layout
+}
+
+fn create(int user_id, string title, string content, [string] images, string? video, {string:any} layout):document_t! {
+    println(user_id)
+    return document_t{
+        layout: layout,
+    }
+}
+
+fn main() {
+    var body = body_t{
+        layout: {
+            'a': 12,
+            'b': 14,
+        },
+    }
+    var result = create(1, body.title, body.content, body.images, body.video, body.layout)
+    println(result.layout['a'], result.layout['b'])
+}
+
+--- output.txt
+1
+12 14
+
+=== test_global_symbol
+--- main.n
+var cache_load = false
+
+fn load():bool {
+    if cache_load {
+        return false
+    }
+
+    cache_load = true
+    return true
+}
+
+fn main() {
+    load()
+    println(cache_load)
+    assert(cache_load == true)
+}

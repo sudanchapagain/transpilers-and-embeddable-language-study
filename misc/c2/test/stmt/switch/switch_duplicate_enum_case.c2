@@ -1,0 +1,16 @@
+// @warnings{no-unused}
+module test;
+
+type Foo enum i8 {
+    A,
+}
+
+fn void test1(Foo f) {
+    switch (f) {
+    case A:         // @note{previous case is here}
+        break;
+    case A:         // @error{duplicate case value 'A'}
+        break;
+    }
+}
+

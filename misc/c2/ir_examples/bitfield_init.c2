@@ -1,0 +1,19 @@
+module test;
+
+type Iter struct {
+    u32 kind : 4;
+    u32 value : 28;
+}
+
+//Iter i1 = { .ids = 100, .count = 200 }
+
+fn Iter test1(u32 a, u32 b) {
+    Iter iter = { .kind = a, .value = b }
+    return iter;
+}
+
+fn Iter test2() {
+    Iter iter = { .kind = 2, .value = 0x123456 }
+    return iter;
+}
+

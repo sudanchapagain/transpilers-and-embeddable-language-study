@@ -1,0 +1,91 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+
+import string local;
+import stdlib local;
+
+/*
+    This pool is used to lookup pointers to a certain type. It keeps 4 variants:
+        *
+        const*
+        volatile*
+        const volatile*
+*/
+
+type StringTypeSlot struct {
+    u32 len;
+    Type* type_;
+}
+
+type StringTypePool struct {
+    u32 count;
+    u32 capacity;
+    StringTypeSlot* slots;
+
+    ast_context.Context* context;
+}
+
+fn void StringTypePool.init(StringTypePool* p, ast_context.Context* c) {
+    p.count = 0;
+    p.capacity = 0;
+    p.slots = nil;
+    p.context = c;
+    p.resize(8);
+}
+
+fn void StringTypePool.clear(StringTypePool* p) {
+    free(p.slots);
+    p.count = 0;
+    p.capacity = 0;
+    p.slots = nil;
+}
+
+fn void StringTypePool.resize(StringTypePool* p, u32 cap) {
+    p.capacity = cap;
+    StringTypeSlot* slots2 = malloc(p.capacity * sizeof(StringTypeSlot));
+    if (p.count) {
+        memcpy(slots2, p.slots, p.count * sizeof(StringTypeSlot));
+        free(p.slots);
+    }
+    p.slots = slots2;
+}
+
+fn QualType StringTypePool.get(StringTypePool* p, u32 len) {
+    // Note: re-use char[x] existing types
+    for (u32 i=0; i<p.count; i++) {
+        StringTypeSlot* s = &p.slots[i];
+        if (s.len == len) {
+            QualType qt = QualType.create(s.type_);
+            qt.setConst();
+            return qt;
+        }
+    }
+    if (p.count == p.capacity) p.resize(p.capacity * 2);
+
+    Type* t = (Type*)ArrayType.create(p.context, builtins[BuiltinKind.Char], true, len);
+    u32 idx = p.count;
+    p.slots[idx].len = len;
+    p.slots[idx].type_ = t;
+    p.count++;
+    QualType qt = QualType.create(t);
+    t.setCanonicalType(qt);
+    qt.setConst();
+    return qt;
+}
+

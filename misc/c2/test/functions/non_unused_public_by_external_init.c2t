@@ -1,0 +1,15 @@
+// @recipe bin
+    $warnings no-unused-variable no-unused-module
+
+// @file{file1}
+module foo;
+
+public fn void test1() {}
+
+// @file{file2}
+module bar;
+import foo local;
+
+public type Func fn void();
+public Func f1 = test1;
+

@@ -1,0 +1,62 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ref_list;
+
+import ir;
+
+import string local;
+import stdlib;
+
+public type RefList struct {
+    u32 count;
+    u32 capacity;
+    ir.Ref* refs;
+    ir.Ref[4] stack;
+}
+
+public fn void RefList.init(RefList* l) {
+    l.count = 0;
+    l.capacity = elemsof(l.stack);
+    l.refs = l.stack;
+}
+
+public fn void RefList.free(RefList* l) {
+    if (l.count > elemsof(l.stack)) stdlib.free(l.refs);
+}
+
+fn void RefList.resize(RefList* l, u32 cap) {
+    ir.Ref* refs2 = stdlib.malloc(cap * sizeof(ir.Ref));
+    if (l.count != 0) memcpy(refs2, l.refs, l.count * sizeof(ir.Ref));
+    if (l.capacity > elemsof(l.stack)) stdlib.free(l.refs);
+    l.capacity = cap;
+    l.refs = refs2;
+}
+
+public fn void RefList.add(RefList* l, ir.Ref ref) {
+    if (l.count == l.capacity) l.resize(l.capacity * 2);
+
+    l.refs[l.count] = ref;
+    l.count++;
+}
+
+public fn u32 RefList.getCount(const RefList* l) {
+    return l.count;
+}
+
+public fn const ir.Ref* RefList.get(const RefList* l) {
+    return l.refs;
+}
+

@@ -1,0 +1,6 @@
+// @warnings{no-unused}
+module test;
+
+u64 o = u64.min - 1; // @error{constant value -1 out-of-bounds for type 'u64', range [0, 18446744073709551615]}
+// cannot test with max u64 since it wraps
+

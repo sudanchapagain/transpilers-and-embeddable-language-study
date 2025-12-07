@@ -1,0 +1,51 @@
+// @warnings{no-unused}
+module test;
+
+fn void test1(const char* str) {
+    switch (str) {
+    case
+    "0123456789abcdef"
+    "0123456789abcdef"
+    "0123456789abcdef"
+    "0123456789abcdef"
+
+    "0123456789abcdef"
+    "0123456789abcdef"
+    "0123456789abcdef"
+    "0123456789abcdef"
+
+    "0123456789abcdef"
+    "0123456789abcdef"
+    "0123456789abcdef"
+    "0123456789abcdef"
+
+    "0123456789abcdef"
+    "0123456789abcdef"
+    "0123456789abcdef"
+    "0123456789abcde":  // max len 255 bytes
+        break;
+    case
+    "0123456789abcdef"  // @error{string switch case string is loo long (max 255 bytes)}
+    "0123456789abcdef"
+    "0123456789abcdef"
+    "0123456789abcdef"
+
+    "0123456789abcdef"
+    "0123456789abcdef"
+    "0123456789abcdef"
+    "0123456789abcdef"
+
+    "0123456789abcdef"
+    "0123456789abcdef"
+    "0123456789abcdef"
+    "0123456789abcdef"
+
+    "0123456789abcdef"
+    "0123456789abcdef"
+    "0123456789abcdef"
+    "0123456789abcdef":
+    default:
+        break;
+    }
+}
+

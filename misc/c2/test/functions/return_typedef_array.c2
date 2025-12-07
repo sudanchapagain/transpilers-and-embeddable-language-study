@@ -1,0 +1,9 @@
+module test;
+
+type Point i32[2];
+
+fn Point test1() { // @error{functions are not allowed to return array types}
+    Point p;
+    return p;
+}
+

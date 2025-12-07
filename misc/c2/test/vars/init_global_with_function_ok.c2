@@ -1,0 +1,9 @@
+// @warnings{no-unused}
+module test;
+
+type Func fn void();
+
+Func a = function;
+
+fn void function() {}
+

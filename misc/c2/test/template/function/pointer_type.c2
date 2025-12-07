@@ -1,0 +1,19 @@
+// @warnings{no-unused}
+module test;
+
+type A struct {
+    i32 a;
+}
+
+fn void increment(X* x) template X {
+    x.a++;
+}
+
+fn void test1() {
+    A a = { 1 }
+
+    increment<A>(&a);
+
+    assert(a.a == 2);
+}
+

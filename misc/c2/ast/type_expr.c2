@@ -1,0 +1,79 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module ast;
+
+import ast_context;
+import string_buffer;
+import src_loc local;
+
+type TypeExprBits struct {
+    u32 : NumExprBits;
+    u32 src_len : 32 - NumExprBits;
+}
+
+public type TypeExpr struct @(opaque) {
+    Expr base;
+    TypeRef typeRef;    // Note: variable size!
+}
+
+public fn TypeExpr* TypeExpr.create(ast_context.Context* c,
+                                    SrcLoc loc,
+                                    u32 src_len,
+                                    const TypeRefHolder* ref)
+{
+    u32 size = sizeof(TypeExpr) + ref.getExtraSize();
+    TypeExpr* e = c.alloc(size);
+    e.base.init(ExprKind.Type, loc, 0, 0, 0, ValType.NValue);
+    e.base.base.typeExprBits.src_len = src_len;
+    e.typeRef.init(ref);
+#if AstStatistics
+    Stats.addExpr(ExprKind.Type, size);
+#endif
+    return e;
+}
+
+fn Expr* TypeExpr.instantiate(TypeExpr* e, Instantiator* inst) {
+    bool matches = e.typeRef.matchesTemplate(inst.template_name);
+    u32 extra = matches ? inst.ref.getExtraSize() : e.typeRef.getExtraSize();
+    u32 size = sizeof(TypeExpr) + extra;
+    TypeExpr* e2 = inst.c.alloc(size);
+    e2.base = e.base;
+    e2.typeRef.instantiate(&e.typeRef, inst);
+#if AstStatistics
+    Stats.addExpr(ExprKind.Type, size);
+#endif
+    return (Expr*)e2;
+}
+
+public fn TypeRef* TypeExpr.getTypeRef(TypeExpr* e) {
+    return &e.typeRef;
+}
+
+fn SrcLoc TypeExpr.getEndLoc(const TypeExpr* e) {
+    return e.base.base.loc + e.base.base.typeExprBits.src_len;
+}
+
+fn void TypeExpr.print(const TypeExpr* e, string_buffer.Buf* out, u32 indent) {
+    e.base.printKind(out, indent);
+    e.base.printTypeBits(out);
+    out.space();
+    e.typeRef.print(out, true);
+    out.newline();
+}
+
+fn void TypeExpr.printLiteral(const TypeExpr* e, string_buffer.Buf* out) {
+    e.typeRef.printLiteral(out, true);
+}

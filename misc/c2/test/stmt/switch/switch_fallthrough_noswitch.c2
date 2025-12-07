@@ -1,0 +1,7 @@
+// @warnings{no-unused}
+module test;
+
+fn void foo(i32 a) {
+    fallthrough;    // @error{'fallthrough' statement cannot be used here}
+}
+

@@ -1,0 +1,117 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module target_info;
+
+import stdio local;
+import string local;
+
+public type Arch enum u8 { Unknown, I686, Arm, X86_64, Amd64, Arm64, Riscv_32, Riscv_64 }
+public type System enum u8 { Unknown, Linux, Darwin, Cygwin, FreeBSD, OpenBSD }
+public type Vendor enum u8 { Unknown, Apple }
+public type Abi enum u8 { Unknown, GNU, GNU_EABI, MACHO, WIN32, Rv32G, BSD }
+
+const char*[] system_names = { "unknown", "linux", "darwin", "cygwin", "freebsd", "openbsd" }
+static_assert(elemsof(System), elemsof(system_names));
+
+const char*[] arch_names = { "unknown", "i686", "arm", "x86_64", "amd64", "arm64", "riscv32", "riscv64" }
+static_assert(elemsof(Arch), elemsof(arch_names));
+
+const char*[] vendor_names = { "unknown", "apple" }
+static_assert(elemsof(Vendor), elemsof(vendor_names));
+
+const char*[] abi_names = { "unknown", "gnu", "gnueabi", "macho", "win32", "rv32", "bsd" }
+static_assert(elemsof(Abi), elemsof(abi_names));
+
+public fn System str2sys(const char* name) {
+    for (u32 i=0; i<elemsof(system_names); i++) {
+        if (strcasecmp(system_names[i], name) == 0) return (System)i;
+    }
+    return System.Unknown;
+}
+
+public fn Arch str2arch(const char* name) {
+    for (u32 i=0; i<elemsof(arch_names); i++) {
+        if (strcasecmp(arch_names[i], name) == 0) return (Arch)i;
+    }
+    return Arch.Unknown;
+}
+
+public fn Vendor str2vendor(const char* name) {
+    for (u32 i=0; i<elemsof(vendor_names); i++) {
+        if (strcasecmp(vendor_names[i], name) == 0) return (Vendor)i;
+    }
+    return Vendor.Unknown;
+}
+
+public fn Abi str2abi(const char* name) {
+    for (u32 i=0; i<elemsof(abi_names); i++) {
+        if (strcasecmp(abi_names[i], name) == 0) return (Abi)i;
+    }
+    return Abi.Unknown;
+}
+
+public type Info struct {
+    Arch arch;
+    System sys;
+    Vendor vendor;
+    Abi abi;
+
+    u32 intWidth;   // 32/64
+
+    char[80] triple;
+}
+
+public fn void Info.init(Info* info) {
+    switch (info.arch) {
+    case Unknown:
+        info.intWidth = 64;
+        break;
+    case I686:
+    case Arm:
+        info.intWidth = 32;
+        break;
+    case X86_64:
+    case Arm64:
+    case Amd64:
+        info.intWidth = 64;
+        break;
+    case Riscv_32:
+        info.intWidth = 32;
+        break;
+    case Riscv_64:
+        info.intWidth = 64;
+        break;
+    }
+
+    snprintf(info.triple, elemsof(info.triple), "%s-%s-%s-%s",
+             arch_names[info.arch],
+             vendor_names[info.vendor],
+             system_names[info.sys],
+             abi_names[info.abi]);
+}
+
+public fn const char* Info.str(const Info* info) {
+    return info.triple;
+}
+
+public fn const char* Info.getSystemName(const Info* info) {
+    return system_names[info.sys];
+}
+
+public fn const char* Info.getArchName(const Info* info) {
+    return arch_names[info.arch];
+}
+

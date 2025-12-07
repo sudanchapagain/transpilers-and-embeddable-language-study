@@ -1,0 +1,322 @@
+/* Copyright 2022-2025 Bas van den Berg
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *     http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
+module c_generator;
+
+import ast;
+import build_file;
+import build_target;
+import component;
+import console;
+import file_utils;
+import module_list;
+import string_buffer;
+import string_list;
+import target_info;
+
+import string;
+import stdio;
+
+fn void Generator.createMakefile(Generator* gen,
+                                 const char* output_dir,
+                                 component.List* comps,
+                                 string_list.List* asm_files,
+                                 bool enable_asserts,
+                                 u32 libc_name)
+{
+    string_buffer.Buf* out = gen.out;
+    out.clear();
+    out.add("# This makefile is auto-generated, any modifications will be lost\n\n");
+
+    const char* cc = "gcc";
+    const char* cflags = nil;
+    const char* ldflags = "";
+    const char* ldflags2 = "";
+    const char* asmflags = "";
+
+    if (gen.targetInfo.sys == target_info.System.FreeBSD
+    ||  gen.targetInfo.sys == target_info.System.OpenBSD) {
+        cc = "clang";
+    }
+    if (gen.build_info) {
+        const build_file.Info* info = gen.build_info;
+        if (info.getCC()) cc = info.getCC();
+        if (info.getCFlags()) cflags = info.getCFlags();
+        if (info.getLinkerFlags()) ldflags = info.getLinkerFlags();
+        if (info.getLdFlags2()) ldflags2 = info.getLdFlags2();
+        if (info.getAsmFlags()) asmflags = info.getAsmFlags();
+    }
+
+    out.print("CC=%s\n", cc);
+
+    out.add("CFLAGS=-Wall -Wextra -Wno-unused -Wno-switch\n");
+    out.add("CFLAGS+=-Wno-unused-parameter -Wno-missing-field-initializers -Wno-format-zero-length\n");
+    out.add("CFLAGS+=-pipe -std=c99 -funsigned-char\n");
+    if (gen.fast_build)
+        out.add("CFLAGS+=-O0 -g\n");
+    else
+        out.add("CFLAGS+=-O2 -g\n");
+
+    if (!enable_asserts) out.add("CFLAGS+=-DNDEBUG\n");
+    if (cflags) out.print("CFLAGS+=%s\n", cflags);
+
+    out.newline();
+
+    out.print("ASMFLAGS=%s\n", asmflags ? asmflags : "");
+    out.print("LDFLAGS=%s\n", ldflags ? ldflags : "");
+    out.print("LDFLAGS2=%s\n", ldflags2 ? ldflags2 : "");
+    out.newline();
+
+    if (gen.asan) {
+        out.add("CFLAGS+=-fsanitize=address -D__ASAN__ -O0\n");
+        out.add("LDFLAGS+=-fsanitize=address\n");
+    }
+    if (gen.msan) {
+        out.add("CFLAGS+=-fsanitize=memory -D__MSAN__ -O0\n");
+        out.add("LDFLAGS+=-fsanitize=memory\n");
+    }
+    if (gen.ubsan) {
+        out.add("CFLAGS+=-fsanitize=undefined -D__UBSAN__ -O0\n");
+        out.add("LDFLAGS+=-fsanitize=undefined\n");
+    }
+
+    char[file_utils.Max_path] target_name;
+
+    if (gen.fast_build) {
+        // dont add *.c, but add (handy for switching between fast/normal build
+        //out.add("objects := $(patsubst %.c,%.o,$(wildcard *.c))\n");
+        out.add("objects := ");
+        for (u32 i = 0; i != comps.size(); i++) {
+            component.Component* c = comps.get(i);
+            if (c.isExternalLibrary()) continue;    // does NOT include source libraries
+
+            module_list.List* mods = c.getModules();
+            for (u32 j = 0; j < mods.length(); j++) {
+                ast.Module* m = mods.at(j);
+                if (m.isUsed()) out.print(" %s.o", m.getName());
+            }
+        }
+        if (gen.trace_calls) {
+            out.add(" c2_trace_tables.o");
+        }
+        out.newline();
+    } else {
+        out.add("objects := build.o\n");
+    }
+    out.add("headers := $(wildcard *.h)\n\n");
+
+    out.add("%.o: %.c\n");
+    out.add("\t\t$(CC) $(CFLAGS) -o $@ -c $<\n\n");
+
+    switch (gen.target_kind) {
+    case Image:
+    case Executable:
+        string.strcpy(target_name, gen.target);
+        out.print("all: ../%s\n\n", target_name);
+
+        out.print("../%s: $(objects) $(headers)\n", target_name);
+
+        for (u32 i=0; i<asm_files.length(); i++) {
+            const char* filename = asm_files.get(i);
+            // TODO use same way as above, add $(asm_objs) to $(objects)
+            // TODO use $(AS)
+            // TODO strip filepath
+            out.print("\t\t$(CC) $(ASMFLAGS) -o %s.o -c ../../../%s\n", filename, filename);
+        }
+
+        out.print("\t\t$(CC) $(LDFLAGS) -o ../%s $(objects)", target_name);
+
+        // TODO solve in Makefile, just add to asm_objects (also fixed for Static/Dynamic libs then)
+        for (u32 i=0; i<asm_files.length(); i++) {
+            const char* filename = asm_files.get(i);
+            out.print(" %s.o", filename);
+        }
+
+        const char* triplet = gen.targetInfo.str();
+
+        // interate Components in reverse order
+        for (u32 i=comps.size(); i != 0; i--) {
+            component.Component* c = comps.get(i-1);
+            if (!c.isExternal()) continue;
+            const char* linkname = c.getLinkName();
+
+            if (gen.targetInfo.sys == target_info.System.FreeBSD
+            ||  gen.targetInfo.sys == target_info.System.OpenBSD) {
+                // ignore "dl" library on BSD systems: libc handles dlopen etc.
+                if (linkname && !string.strcmp(linkname, "dl")) continue;
+            }
+            if (c.getKind() == ExternalStaticLib) {
+                if (c.getNameIdx() == libc_name) { // special case for static libc
+                    out.add(" --static");
+                } else {
+                    // Can be in recipe (=local path) or system library (=somewhere else)
+                    // Note: for static system libraries, the location differs
+                    // Linux: /lib/x86_64-linux-gnu/libfoo.a
+                    if (c.isForeign()) {
+                        // Assumed to be in system path
+                        out.print(" /lib/%s/", triplet);
+                        if (linkname) {
+                            out.print("lib%s.a", linkname);
+                        } else {
+                            out.print("lib%s.a", c.getName());
+                        }
+                    } else {
+                        out.print(" %s/lib%s.a", c.getPath(), c.getName());
+                    }
+                }
+            } else if (c.getKind() == ExternalDynamicLib) {
+                if (c.getNameIdx() == libc_name) continue;  // libc is loaded by default
+
+                if (!c.isForeign()) {
+                    out.print(" -L%s", c.getPath());
+                }
+                // always use system path even when dynamic is also defined in same recipe, since
+                // loader should also be able to find it
+                if (linkname) out.print(" -l%s", linkname); // libc has no linkname
+            }
+        }
+        out.add(" $(LDFLAGS2)\n");
+        out.newline();
+        break;
+    case StaticLibrary:
+        stdio.sprintf(target_name, "lib%s.a", gen.target);
+        out.print("all: ../%s\n\n", target_name);
+
+        out.print("../%s: $(objects) $(headers)\n", target_name);
+        out.print("\t\tar rcs ../%s $(objects)\n", target_name);
+        break;
+    case DynamicLibrary:
+        out.add("CFLAGS+=-fPIC\n");
+        if (gen.targetInfo.sys == target_info.System.Darwin) {
+            stdio.sprintf(target_name, "lib%s.dylib", gen.target);
+        } else {
+            stdio.sprintf(target_name, "lib%s.so", gen.target);
+        }
+        out.print("all: ../%s\n\n", target_name);
+
+        out.print("../%s: $(objects) $(headers)\n", target_name);
+
+        if (gen.targetInfo.sys == target_info.System.Darwin) {
+            out.print("\t\t$(CC) $(LDFLAGS) $(objects) -shared -o $$(dirname $$(pwd))/%s $(LDFLAGS2)\n", target_name);
+        } else {
+            out.print("\t\t$(CC) $(LDFLAGS) $(objects) -shared -o ../%s -Wl,-soname,%s.1 -Wl,--version-script=exports.version $(LDFLAGS2)\n",
+                target_name, target_name);
+        }
+        break;
+    case SourceLibrary:
+        break;
+    }
+
+    out.newline();
+    out.add("symbols:\n");
+    out.add("\t\tnm -g");
+    if (build_target.has_dynamic(gen.target_kind)) out.add(" -D");
+    out.print(" -C --defined-only ../%s\n\n", target_name);
+
+    out.add("clean:\n");
+    out.print("\t\trm -f *.o *.a ../%s\n\n", target_name);
+
+    gen.write(output_dir, "Makefile", gen.out);
+}
+
+fn void Generator.createExportsFile(Generator* gen, const char* output_dir, component.Component* mainComp) {
+    if (gen.target_kind != build_target.Kind.DynamicLibrary) return;
+
+    string_buffer.Buf* out = gen.out;
+    out.clear();
+
+    out.add("LIB_1.0 {\n");
+    out.add("\tglobal:\n");
+
+    // iterate all mods in main Component
+    module_list.List* mods = mainComp.getModules();
+    u32 count = mods.length();
+
+    for (u32 i=0; i<count; i++) {
+        const ast.SymbolTable* symbols = mods.at(i).getSymbols();
+        ast.Decl** decls = symbols.getDecls();
+        u32 num_symbols = symbols.size();
+        for (u32 j=0; j<num_symbols; j++) {
+            ast.Decl* d = decls[j];
+            if (!d.isExported()) continue;
+            if (!d.isFunction() && !d.isVariable()) continue;
+            out.add("\t\t");
+            gen.emitCNameMod(out, d, d.getModule());
+            out.add(";\n");
+        }
+    }
+
+    out.add("\tlocal:\n\t\t*;\n");
+    out.add("};\n");
+
+    gen.write(output_dir, "exports.version", gen.out);
+}
+
+const char[] C2_types_header =
+    ```c
+    // WARNING: this file is auto-generated by the C2 compiler.
+    // Any changes you make might be lost!
+
+    #ifndef C2TYPES_H
+    #define C2TYPES_H
+
+    #ifdef __cplusplus
+    extern "C" {
+    #endif
+
+    #define NULL ((void*)0)
+    ```
+#if 1
+    // __builtin_offsetof is supported by gcc and clang and is necessary
+    // for -fsanitary=undefined to prevent null pointer arithmetics warnings.
+    ```c
+    #define offsetof(type, member) __builtin_offsetof(type, member)
+    ```
+#else
+    ```c
+    #define offsetof(type, member) ((unsigned long) &((type *)0)->member)
+    ```
+#endif
+    ```c
+    #define to_container(type, member, ptr) ((type *)((char *)(ptr)-offsetof(type, member)))
+
+    // NOTE: 64-bit only for now
+    typedef signed char int8_t;
+    typedef unsigned char uint8_t;
+    typedef signed short int int16_t;
+    typedef unsigned short int uint16_t;
+    typedef signed int int32_t;
+    typedef unsigned int uint32_t;
+    typedef signed long int64_t;
+    typedef unsigned long uint64_t;
+
+    #ifdef __cplusplus
+    }
+    #endif
+    #endif
+    ```;
+
+fn void Generator.generateC2TypesHeader(Generator* gen) {
+    string_buffer.Buf* out = gen.header;
+    out.clear();
+    out.add(C2_types_header);
+
+    file_utils.File file.init(gen.results_dir, "c2types.h");
+    if (!file.write(out.data(), out.size())) {
+        console.error("cannot write to %s: %s", file.path, file.getError());
+    }
+    out.clear();
+}
+
